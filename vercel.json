@@ -11,8 +11,12 @@
   ],
   "routes": [
     {
+      "src": "/api/(.*)",
+      "dest": "next-app/api/$1"
+    },
+    {
       "src": "/(.*)",
-      "dest": "next-app/$1"
+      "dest": "/next-app/$1"
     }
   ]
 } 
