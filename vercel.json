@@ -1,11 +1,16 @@
 {
   "version": 2,
+  "buildCommand": "cd next-app && npm install && npm run build",
+  "installCommand": "cd next-app && npm install",
+  "framework": "nextjs",
   "builds": [
     {
       "src": "next-app/package.json",
       "use": "@vercel/next",
       "config": {
-        "rootDirectory": "next-app"
+        "rootDirectory": "next-app",
+        "buildCommand": "npm run build",
+        "installCommand": "npm install"
       }
     }
   ]
