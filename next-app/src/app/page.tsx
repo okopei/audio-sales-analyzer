@@ -1,54 +1,133 @@
-import Image from "next/image";
+'use client'
+import { useState, useRef } from 'react'
+
+interface TranscriptionResponse {
+  status: string;
+  original_text?: string;
+  error?: string;
+  steps?: {
+    file_received: boolean;
+    speech_recognition_completed: boolean;
+  };
+}
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const [isRecording, setIsRecording] = useState(false)
+  const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null)
+  const [debugInfo, setDebugInfo] = useState('')
+  const [processingStatus, setProcessingStatus] = useState('')
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=pcm'
+      })
+      mediaRecorderRef.current = mediaRecorder
+      chunksRef.current = []
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data)
+          setDebugInfo(prev => prev + `\nChunk received: ${e.data.size} bytes`)
+        }
+      }
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(chunksRef.current, { 
+          type: 'audio/wav'
+        })
+        setDebugInfo(prev => prev + `\nRecording complete. Total size: ${audioBlob.size} bytes`)
+        await sendAudioToServer(audioBlob)
+      }
+
+      mediaRecorder.start()
+      setIsRecording(true)
+      setDebugInfo('Recording started...')
+    } catch (error) {
+      console.error('Error accessing microphone:', error)
+      setDebugInfo(`Error: ${error}`)
+    }
+  }
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop()
+      setIsRecording(false)
+      setDebugInfo(prev => prev + '\nStopping recording...')
+    }
+  }
+
+  const sendAudioToServer = async (audioBlob: Blob) => {
+    try {
+      setProcessingStatus('音声データを送信中...')
+      const formData = new FormData()
+      formData.append('audio', audioBlob)
+      setDebugInfo(prev => prev + '\nSending to server...')
+
+      const response = await fetch('/api/transcribe', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const data: TranscriptionResponse = await response.json()
+      setTranscription(data)
+      
+      if (data.status === 'error') {
+        setProcessingStatus(`エラーが発生しました: ${data.error}`)
+      } else {
+        setProcessingStatus('処理完了')
+      }
+      
+      setDebugInfo(prev => prev + '\nServer response received')
+    } catch (error) {
+      setProcessingStatus('エラーが発生しました')
+      console.error('Error sending audio:', error)
+      setDebugInfo(prev => prev + `\nError sending to server: ${error}`)
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-4 p-8">
+      <button
+        onClick={isRecording ? stopRecording : startRecording}
+        className="px-4 py-2 bg-blue-500 text-white rounded"
+      >
+        {isRecording ? '録音停止' : '録音開始'}
+      </button>
+      
+      {processingStatus && (
+        <div className="mt-4 w-full max-w-lg">
+          <h3 className="font-bold">処理状況:</h3>
+          <div className="mt-2 p-3 bg-blue-50 rounded">
+            <p>{processingStatus}</p>
+            {transcription?.steps && (
+              <ul className="mt-2 space-y-1">
+                <li>✓ ファイル受信: {transcription.steps.file_received ? '完了' : '処理中'}</li>
+                <li>✓ 音声認識: {transcription.steps.speech_recognition_completed ? '完了' : '処理中'}</li>
+              </ul>
+            )}
+          </div>
         </div>
-      </main>
+      )}
+      
+      {transcription?.status === 'success' && (
+        <div className="mt-4 w-full max-w-lg">
+          <div className="mb-4">
+            <h3 className="font-bold">文字起こし結果:</h3>
+            <p className="mt-2 p-3 bg-gray-50 rounded">{transcription.original_text}</p>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-4 p-4 bg-gray-100 rounded-lg w-full max-w-lg">
+        <h3 className="font-bold mb-2">デバッグ情報:</h3>
+        <pre className="whitespace-pre-wrap text-sm">
+          {debugInfo}
+        </pre>
+      </div>
     </div>
-  );
+  )
 }
