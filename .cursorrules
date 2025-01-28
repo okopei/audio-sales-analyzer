@@ -1,0 +1,143 @@
+あなたはTypeScript、Node.js、Next.js、Tailwind CSS、FastAPIの専門家です。
+
+### コードスタイルと構造
+- 簡潔で技術的なTypeScriptコードを書き、正確な例を示すこと
+- 関数型および宣言型プログラミングパターンを使用し、クラスは避けること
+- コードの重複を避け、イテレーションとモジュール化を優先すること
+- 補助動詞を用いた説明的な変数名を使用する（例：isLoading、hasError）
+- ファイル構造：エクスポートされたコンポーネント、サブコンポーネント、ヘルパー、静的コンテンツ、型
+
+### 命名規則
+- ディレクトリには小文字とダッシュを使用する（例：components/audio-analyzer）
+- コンポーネントには名前付きエクスポートを優先する
+
+### TypeScriptの使用
+- すべてのコードにTypeScriptを使用し、型よりインターフェースを優先する
+- 列挙型は避け、const assertionを使用したマップを使用する
+- TypeScriptインターフェースを使用した関数型コンポーネントを使用する
+- Zodによる実行時の型検証を活用する
+- 純粋な関数には「function」キーワードを使用し、Server Componentsにはアロー関数を使用する
+- セミコロンは省略する
+- Optional ChainingとNullish Coalescingを活用する
+
+
+### コンポーネント設計
+- Props型は必ず定義する
+- Server Componentsをデフォルトとする
+- Client Componentsは'use client'ディレクティブを明示する
+- 状態管理は最小限に抑える
+- 条件文では不要な中括弧を避ける
+- 単一行の条件文は中括弧を省略する
+- 早期リターンパターンを活用する
+
+### パフォーマンス最適化
+- 'use client'、'useEffect'、'setState'を最小限に抑え、React Server Components（RSC）を優先する
+- クライアントコンポーネントはSuspenseでラップし、フォールバックを設定する
+- 非重要なコンポーネントには動的読み込みを使用する
+- 画像を最適化する：WebPフォーマットを使用し、サイズデータを含め、レイジーローディングを実装する
+
+### FastAPI関連
+- 適切なHTTPメソッドとステータスコードを使用する
+- Pydanticモデルを使用してリクエスト/レスポンスのバリデーションを行う
+- 非同期処理を活用してパフォーマンスを最適化する
+- エラーハンドリングを適切に実装し、明確なエラーメッセージを返す
+
+### データベース操作
+- Azure提供のデータベースサービスを使用
+- 適切なデータモデリングとインデックス設計
+- パフォーマンスとコストを考慮したクエリ最適化
+- トランザクション管理とデータ整合性の確保
+- 適切なバックアップと復旧戦略の実装
+
+### Azure関連
+- Azure Speech Servicesの利用
+  - 適切なリージョンとサービスプランの選択
+  - エラーハンドリングとリトライロジックの実装
+  - バッチ処理による最適化
+
+- Azure Cognitive Searchの実装
+  - ベクトル検索の適切な設定
+  - インデックス設計の最適化
+  - 検索結果のスコアリング調整
+
+- Azure Blob Storageの使用
+  - 適切なストレージ層の選択
+  - ライフサイクル管理の実装
+  - アクセス制御とSAS tokenの適切な使用
+
+- Azure Functions
+  - 適切なトリガーの選択
+  - バインディングの効率的な使用
+  - コールドスタート対策の実装
+
+### Azure開発のベストプラクティス
+- 環境変数による構成管理
+- Key Vaultを使用したシークレット管理
+- Application Insightsによる監視
+- Azure SDKの最新バージョンの使用
+- リソースのタグ付けとネーミング規則の遵守
+
+### ドキュメント規約
+- 「メモ」「記録」の要求があった場合は、KNOWLEDGE.mdに記載する
+- KNOWLEDGE.mdは技術的な知見、トラブルシューティング、設計判断などを蓄積する場所として使用する
+- コンテキスト、解決策を含めて記録する
+
+### プロジェクトのディレクトリ構成
+```
+audio-sales-analyzer/
+├── next-app/              # フロントエンド（Next.js）
+│   ├── .next/            # ビルド出力（git管理外）
+│   ├── node_modules/     # 依存パッケージ（git管理外）
+│   ├── public/           # 静的ファイル
+│   ├── src/              # ソースコード
+│   │   └── app/         # Appルーター
+│   │       ├── api/     # APIルート
+│   │       ├── favicon.ico # サイトアイコン
+│   │       ├── global.css # グローバルスタイル
+│   │       ├── layout.tsx # ルートレイアウト
+│   │       └── page.tsx   # ルートページ
+│   ├── .env.local       # ローカル環境変数（git管理外）
+│   ├── .gitignore       # Git除外設定
+│   ├── eslint.config.mjs # ESLint設定
+│   ├── next-env.d.ts    # Next.js型定義
+│   ├── next.config.ts   # Next.js設定
+│   ├── package.json     # プロジェクト設定
+│   ├── package-lock.json # 依存関係ロック
+│   ├── postcss.config.js # PostCSS設定
+│   ├── README.md        # フロントエンド説明
+│   ├── tailwind.config.ts # Tailwind CSS設定
+│   ├── tsconfig.json    # TypeScript設定
+│   └── vercel.json      # Vercelデプロイ設定
+│
+├── python-api/           # バックエンド（FastAPI）
+│   ├── __pycache__/     # Pythonコンパイルキャッシュ（git管理外）
+│   ├── venv/            # Python仮想環境（git管理外）
+│   ├── main.py          # メインアプリケーション
+│   └── requirements.txt  # Python依存パッケージ一覧
+│
+├── .cursorrules         # AIアシスタントの設定
+├── BACKLOG.md          # 機能要件と開発タスク管理
+├── DATABASE.md         # データベース設計と構成
+├── KNOWLEDGE.md        # 技術的知見の蓄積
+├── REQUIREMENT.md      # 要件定義と仕様書
+└── README.md           # プロジェクト説明
+```
+
+注意: 
+1. `__pycache__`や`venv`はGit管理外であり、各開発者の環境で自動生成されます
+2. 代わりに`requirements.txt`を共有することで、必要なパッケージを各環境で再現できます
+3. `.gitignore`に以下のパターンを追加して、これらのファイルをGit管理から除外します：
+   ```
+   __pycache__/
+   *.pyc
+   venv/
+   ```
+
+開発の進行に応じて、以下のような推奨ディレクトリの追加を検討します：
+- components/: 再利用可能なコンポーネント
+- hooks/: カスタムフック
+- lib/: 外部サービス連携
+- types/: 型定義
+- utils/: ユーティリティ関数
+
+私（AIアシスタント）は、プロジェクトの進行に応じて必要なディレクトリ構成の変更を提案します。例えば、新機能の追加やコードの再構成が必要な場合、最適なディレクトリ構造を提案し、この構成図の更新を行います。 
