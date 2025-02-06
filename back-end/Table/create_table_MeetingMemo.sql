@@ -1,6 +1,6 @@
 CREATE TABLE MeetingMemo (
     -- 主キーと外部キー
-    meeting_memo_id INT PRIMARY KEY IDENTITY(1,1),
+    memo_id INT PRIMARY KEY IDENTITY(1,1),
     user_id INT NOT NULL,
     
     -- 基本情報
@@ -21,4 +21,5 @@ CREATE TABLE MeetingMemo (
 -- インデックス
 CREATE INDEX idx_meeting_memo_user ON MeetingMemo(user_id);
 CREATE INDEX idx_meeting_memo_datetime ON MeetingMemo(meeting_datetime);
+
 
