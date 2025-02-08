@@ -1,8 +1,45 @@
+'use client'
+
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Dot, Pause } from "lucide-react"
+import { Dot, Pause, Play } from "lucide-react"
+import { useRouter } from 'next/navigation'
+import { useRecording } from '@/hooks/useRecording'
+import { toast } from 'sonner'
+import { useEffect } from 'react'
 
 export default function RecordingPage() {
+  const router = useRouter()
+  const { 
+    isRecording, 
+    isPaused, 
+    stopRecording, 
+    pauseRecording, 
+    resumeRecording, 
+    setIsRecording,
+    recordingTime,
+    formatTime 
+  } = useRecording()
+
+  useEffect(() => {
+    // ページロード時に録音状態を設定
+    setIsRecording(true)
+  }, [])
+
+  const handleStop = async () => {
+    stopRecording()
+    toast.success('正常に録音が終了しました')
+    router.push('/dashboard')
+  }
+
+  const handlePauseResume = () => {
+    if (isPaused) {
+      resumeRecording()
+    } else {
+      pauseRecording()
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#1F1F1F]">
       <div className="p-6">
@@ -10,20 +47,31 @@ export default function RecordingPage() {
           <div className="flex items-center gap-4">
             <h1 className="text-xl font-medium text-white">商談録音</h1>
             <div className="flex items-center gap-2 rounded-full bg-zinc-800 px-3 py-1.5">
-              <Dot className="h-5 w-5 animate-pulse text-rose-500" />
-              <span className="text-sm font-medium text-white">録音中</span>
-              <span className="text-sm text-zinc-400">00:15:30</span>
+              <Dot className={`h-5 w-5 ${isPaused ? '' : 'animate-pulse'} ${isPaused ? 'text-amber-500' : 'text-rose-500'}`} />
+              <span className="text-sm font-medium text-white">
+                {isPaused ? '一時停止中' : '録音中'}
+              </span>
+              <span className="text-sm text-zinc-400">{formatTime(recordingTime)}</span>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
               className="border-zinc-700 bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+              onClick={handlePauseResume}
             >
-              <Pause className="h-4 w-4 mr-2" />
-              一時停止
+              {isPaused ? (
+                <Play className="h-4 w-4 mr-2" />
+              ) : (
+                <Pause className="h-4 w-4 mr-2" />
+              )}
+              {isPaused ? '再開' : '一時停止'}
             </Button>
-            <Button variant="default" className="bg-rose-500 text-white hover:bg-rose-600 transition-colors">
+            <Button 
+              variant="default" 
+              className="bg-rose-500 text-white hover:bg-rose-600 transition-colors"
+              onClick={handleStop}
+            >
               終了
             </Button>
           </div>
