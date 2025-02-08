@@ -21,7 +21,7 @@ export default function LoginPage() {
         </form>
         <p className="text-sm text-center text-zinc-400">
           アカウントをお持ちでない方は
-          <a href="/signup" className="text-rose-400 hover:underline">
+          <a href="/register" className="text-rose-400 hover:underline">
             新規登録
           </a>
         </p>
