@@ -25,6 +25,15 @@ export default function LoginPage() {
             新規登録
           </a>
         </p>
+        <div className="pt-4 border-t border-zinc-800">
+          <Button 
+            variant="outline" 
+            className="w-full border-zinc-700 text-zinc-400 hover:text-white"
+            asChild
+          >
+            <a href="/dashboard">開発用ダッシュボード</a>
+          </Button>
+        </div>
       </div>
     </div>
   )
