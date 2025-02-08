@@ -6,6 +6,8 @@ import { Card } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { useRouter } from 'next/navigation'
+import { useRecording } from '@/hooks/useRecording'
 
 // 仮のユーザーデータ（実際の実装では認証システムから取得）
 const currentUser = {
@@ -14,6 +16,9 @@ const currentUser = {
 }
 
 export default function NewMeetingPage() {
+  const router = useRouter()
+  const { startRecording } = useRecording()
+
   // 現在時刻から1時間後（1時間刻みで四捨五入）の初期値を計算
   const getInitialDateTime = () => {
     const now = new Date()
@@ -65,6 +70,11 @@ export default function NewMeetingPage() {
       return
     }
     console.log("Submitting form:", { type, formData })
+  }
+
+  const handleStartRecording = async () => {
+    await startRecording()
+    router.push('/recording?recording=true')
   }
 
   return (
@@ -239,7 +249,7 @@ export default function NewMeetingPage() {
               <Button variant="outline" className="flex-1" onClick={() => handleSubmit("save")}>
                 一時保存
               </Button>
-              <Button className="flex-1" onClick={() => handleSubmit("next")}>
+              <Button className="flex-1" onClick={handleStartRecording}>
                 商談プラン作成へ
               </Button>
             </div>
