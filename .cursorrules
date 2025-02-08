@@ -90,19 +90,29 @@ audio-sales-analyzer/
 │   ├── node_modules/     # 依存パッケージ（git管理外）
 │   ├── public/           # 静的ファイル
 │   ├── src/              # ソースコード
-│   │   └── app/         # Appルーター
-│   │       ├── api/     # APIルート
-│   │       ├── favicon.ico # サイトアイコン
-│   │       ├── global.css # グローバルスタイル
-│   │       ├── layout.tsx # ルートレイアウト
-│   │       └── page.tsx   # ルートページ
+│   │   ├── app/         # Appルーター
+│   │   │   ├── api/     # APIルート
+│   │   │   │   └── transcribe/route.ts # 文字起こしAPI
+│   │   │   ├── dashboard/      # ダッシュボード
+│   │   │   ├── manager-dashboard/page.tsx # 管理者用ダッシュボード
+│   │   │   ├── newmeeting/     # 新規会議作成
+│   │   │   ├── recording/      # 録音機能
+│   │   │   ├── register/       # 新規登録
+│   │   │   ├── favicon.ico # サイトアイコン
+│   │   │   ├── global.css # グローバルスタイル
+│   │   │   ├── layout.tsx # ルートレイアウト
+│   │   │   └── page.tsx   # ログインページ
+│   │   ├── components/    # 共通コンポーネント
+│   │   │   └── ui/       # UIコンポーネント
+│   │   └── hooks/        # カスタムフック
+│   │       └── useRecording.ts # 録音機能フック
 │   ├── .env.local       # ローカル環境変数（git管理外）
 │   ├── .gitignore       # Git除外設定
 │   ├── eslint.config.mjs # ESLint設定
 │   ├── next-env.d.ts    # Next.js型定義
 │   ├── next.config.ts   # Next.js設定
 │   ├── package.json     # プロジェクト設定
-│   ├── package-lock.json # 依存関係ロック
+│   ├── pnpm-lock.yaml   # 依存関係ロック
 │   ├── postcss.config.js # PostCSS設定
 │   ├── README.md        # フロントエンド説明
 │   ├── tailwind.config.ts # Tailwind CSS設定
