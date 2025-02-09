@@ -121,15 +121,15 @@ export default function ManagerDashboard() {
               </thead>
               <tbody>
                 {meetings.map((meeting) => (
-                  <Link
-                    key={meeting.id}
-                    href={`/feedback#${meeting.id}`}
-                    className="table-row border-b last:border-0 hover:bg-slate-50 transition-colors"
+                  <tr 
+                    key={meeting.id} 
+                    className="border-b last:border-0 hover:bg-slate-50 transition-colors cursor-pointer"
+                    onClick={() => window.location.href = `/feedback#${meeting.id}`}
                   >
                     <td className="py-3">{meeting.salesPerson}</td>
                     <td className="py-3">{meeting.datetime}</td>
                     <td className="py-3">{meeting.client}</td>
-                  </Link>
+                  </tr>
                 ))}
               </tbody>
             </table>
