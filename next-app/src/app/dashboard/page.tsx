@@ -112,10 +112,14 @@ export default function Dashboard() {
               </thead>
               <tbody>
                 {meetings.map((meeting) => (
-                  <tr key={meeting.id} className="border-b last:border-0">
+                  <Link
+                    key={meeting.id}
+                    href={`/feedback#${meeting.id}`}
+                    className="table-row border-b last:border-0 hover:bg-slate-50 transition-colors"
+                  >
                     <td className="py-3">{meeting.datetime}</td>
                     <td className="py-3">{meeting.client}</td>
-                  </tr>
+                  </Link>
                 ))}
               </tbody>
             </table>
@@ -128,7 +132,11 @@ export default function Dashboard() {
           <ScrollArea className="h-[300px] sm:h-[600px]">
             <div className="space-y-4">
               {comments.map((comment) => (
-                <div key={comment.id} className="border-b last:border-0 pb-4">
+                <Link
+                  key={comment.id}
+                  href={`/feedback#${comment.id}`}
+                  className="block border-b last:border-0 pb-4 hover:bg-slate-50 rounded-lg transition-colors"
+                >
                   <div className="flex justify-between items-start mb-2">
                     <div>
                       <div className="text-sm font-medium">佐藤部長</div>
@@ -140,7 +148,7 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <p className="text-sm text-gray-600">{comment.comment}</p>
-                </div>
+                </Link>
               ))}
             </div>
           </ScrollArea>
