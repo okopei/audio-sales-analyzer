@@ -65,7 +65,7 @@ export default function ManagerDashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* 面談一覧 */}
         <Card className="p-4 sm:p-6">
-          <h2 className="text-lg sm:text-xl font-semibold mb-4">面談一覧</h2>
+          <h2 className="text-lg sm:text-xl font-semibold mb-4">過去商談一覧</h2>
           <ScrollArea className="h-[300px] sm:h-[600px]">
             <table className="w-full">
               <thead>
