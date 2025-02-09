@@ -33,6 +33,13 @@ export default function LoginPage() {
           >
             <a href="/dashboard">開発用ダッシュボード</a>
           </Button>
+          <Button 
+            variant="outline" 
+            className="w-full border-zinc-700 text-zinc-400 hover:text-white"
+            asChild
+          >
+            <a href="/manager-dashboard">開発用マネージャーダッシュボード</a>
+          </Button>
         </div>
       </div>
     </div>

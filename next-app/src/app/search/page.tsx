@@ -8,11 +8,24 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ArrowLeft, Search, X } from "lucide-react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 
-// 仮のユーザータイプ設定（実際はログイン情報から取得）
-const userType = "Manager" // または "Member"
+// ユーザータイプの定数
+const USER_TYPES = {
+  MANAGER: "Manager",
+  MEMBER: "Member",
+} as const
 
 export default function MeetingSearch() {
+  const router = useRouter()
+  // ユーザータイプのstate
+  const [userType, setUserType] = useState<typeof USER_TYPES[keyof typeof USER_TYPES]>(USER_TYPES.MANAGER)
+
+  // ユーザータイプが変更されたときの処理
+  const handleUserTypeChange = (value: typeof USER_TYPES[keyof typeof USER_TYPES]) => {
+    setUserType(value)
+  }
+
   // テスト用に多めのデータを用意
   const [searchResults, setSearchResults] = useState([
     {
@@ -60,10 +73,25 @@ export default function MeetingSearch() {
       })),
   ])
 
-  const dashboardLink = userType === "Manager" ? "/manager-dashboard" : "/dashboard"
+  // ダッシュボードへのリンク先を決定
+  const dashboardLink = userType === USER_TYPES.MANAGER ? "/manager-dashboard" : "/dashboard"
 
   return (
     <div className="min-h-screen bg-zinc-50 p-3 sm:p-6">
+      {/* 開発用ユーザータイプ切り替え */}
+      <div className="mb-4 p-2 bg-yellow-100 rounded-md">
+        <div className="text-xs font-medium text-yellow-800 mb-1">開発用ユーザータイプ切り替え</div>
+        <Select value={userType} onValueChange={handleUserTypeChange}>
+          <SelectTrigger className="w-[140px] text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={USER_TYPES.MANAGER}>Manager</SelectItem>
+            <SelectItem value={USER_TYPES.MEMBER}>Member</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
       {/* ヘッダー */}
       <div className="mb-4 sm:mb-6">
         <Link href={dashboardLink}>
@@ -80,7 +108,8 @@ export default function MeetingSearch() {
         <Card className="p-4 sm:p-6 bg-white shadow-md">
           <h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">検索条件</h2>
           <div className="space-y-3 sm:space-y-4">
-            {userType === "Manager" && (
+            {/* 営業担当者選択（Managerの場合のみ表示） */}
+            {userType === USER_TYPES.MANAGER && (
               <div className="space-y-1 sm:space-y-2">
                 <label className="text-xs sm:text-sm font-medium">営業担当者</label>
                 <Select>
@@ -144,7 +173,7 @@ export default function MeetingSearch() {
                   <div className="flex justify-between items-start">
                     <div>
                       <div className="font-medium text-sm sm:text-base">{result.company}</div>
-                      {userType === "Manager" && (
+                      {userType === USER_TYPES.MANAGER && (
                         <div className="text-xs sm:text-sm text-gray-500">担当: {result.salesPerson}</div>
                       )}
                     </div>
