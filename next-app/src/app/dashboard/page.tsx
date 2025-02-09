@@ -82,7 +82,7 @@ export default function Dashboard() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
         <div className="text-xl font-medium">{dateStr}</div>
         <div className="flex items-center gap-2 sm:mx-auto">
-          <Link href="/meeting-search">
+          <Link href="/search">
             <Button variant="outline" size="sm" className="text-sm">
               <Search className="w-4 h-4 mr-2" />
               商談検索
@@ -101,7 +101,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* 面談一覧 */}
         <Card className="p-4 sm:p-6">
-          <h2 className="text-lg sm:text-xl font-semibold mb-4">過去面談一覧</h2>
+          <h2 className="text-lg sm:text-xl font-semibold mb-4">過去商談一覧</h2>
           <ScrollArea className="h-[300px] sm:h-[600px]">
             <table className="w-full">
               <thead>
