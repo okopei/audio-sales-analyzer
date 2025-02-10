@@ -7,22 +7,25 @@ import { Search, PlusCircle } from "lucide-react"
 import Link from "next/link"
 import { ScrollArea } from "@/components/ui/scroll-area"
 
-export default function Dashboard() {
+export default function ManagerDashboard() {
   const meetings = [
     {
       id: 1,
       datetime: "02-07 14:00",
       client: "株式会社ABC",
+      salesPerson: "田中 一郎",
     },
     {
       id: 2,
       datetime: "02-07 11:30",
       client: "DEF工業",
+      salesPerson: "鈴木 花子",
     },
     {
       id: 3,
       datetime: "02-06 15:00",
       client: "GHIシステムズ",
+      salesPerson: "佐藤 健一",
     },
     // スクロールをテストするために追加のダミーデータ
     ...Array(10)
@@ -31,6 +34,7 @@ export default function Dashboard() {
         id: index + 4,
         datetime: "02-05 10:00",
         client: `顧客 ${index + 4}`,
+        salesPerson: "山田 太郎",
       })),
   ]
 
@@ -40,6 +44,7 @@ export default function Dashboard() {
       client: "株式会社ABC",
       comment: "予算について具体的な話し合いができました。次回は見積書を持参します。",
       commentTime: "02-07 15:30",
+      salesPerson: "田中 一郎",
       isRead: false,
     },
     {
@@ -47,6 +52,7 @@ export default function Dashboard() {
       client: "DEF工業",
       comment: "技術的な課題について深い議論ができました。開発チームに確認が必要です。",
       commentTime: "02-07 13:00",
+      salesPerson: "鈴木 花子",
       isRead: true,
     },
     {
@@ -54,6 +60,7 @@ export default function Dashboard() {
       client: "GHIシステムズ",
       comment: "導入に前向きな反応でした。来週までに提案書を準備します。",
       commentTime: "02-06 16:30",
+      salesPerson: "佐藤 健一",
       isRead: false,
     },
     // スクロールをテストするために追加のダミーデータ
@@ -64,6 +71,7 @@ export default function Dashboard() {
         client: `顧客 ${index + 4}`,
         comment: "これはテスト用のコメントです。",
         commentTime: "02-05 11:00",
+        salesPerson: "山田 太郎",
         isRead: index % 2 === 0,
       })),
   ]
@@ -95,7 +103,7 @@ export default function Dashboard() {
             </Button>
           </Link>
         </div>
-        <div className="text-xl font-medium">山田 太郎 様</div>
+        <div className="text-xl font-medium">管理者</div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -106,20 +114,22 @@ export default function Dashboard() {
             <table className="w-full">
               <thead>
                 <tr className="border-b text-sm">
+                  <th className="text-left pb-2">担当者</th>
                   <th className="text-left pb-2">日時</th>
                   <th className="text-left pb-2">顧客名</th>
                 </tr>
               </thead>
               <tbody>
                 {meetings.map((meeting) => (
-                  <Link
-                    key={meeting.id}
-                    href={`/feedback#${meeting.id}`}
-                    className="table-row border-b last:border-0 hover:bg-slate-50 transition-colors"
+                  <tr 
+                    key={meeting.id} 
+                    className="border-b last:border-0 hover:bg-slate-50 transition-colors cursor-pointer"
+                    onClick={() => window.location.href = `/feedback#${meeting.id}`}
                   >
+                    <td className="py-3">{meeting.salesPerson}</td>
                     <td className="py-3">{meeting.datetime}</td>
                     <td className="py-3">{meeting.client}</td>
-                  </Link>
+                  </tr>
                 ))}
               </tbody>
             </table>
@@ -139,7 +149,7 @@ export default function Dashboard() {
                 >
                   <div className="flex justify-between items-start mb-2">
                     <div>
-                      <div className="text-sm font-medium">佐藤部長</div>
+                      <div className="text-sm font-medium">{comment.salesPerson}</div>
                       <div className="text-sm text-gray-500">{comment.client}</div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -157,4 +167,5 @@ export default function Dashboard() {
     </div>
   )
 }
+
 
