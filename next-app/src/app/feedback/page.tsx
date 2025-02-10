@@ -1,10 +1,22 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { MessageSquare, ChevronUp, ChevronDown, AlertCircle, Send, ArrowLeft, Search } from "lucide-react"
+import { Slider } from "@/components/ui/slider"
+import {
+  MessageSquare,
+  ChevronUp,
+  ChevronDown,
+  AlertCircle,
+  Send,
+  ArrowLeft,
+  Search,
+  Play,
+  Pause,
+  Volume2,
+} from "lucide-react"
 import Link from "next/link"
 
 interface Comment {
@@ -21,11 +33,21 @@ interface Message {
   speaker: "client" | "sales"
   comments: Comment[]
   isUnread: boolean
+  audioUrl: string
+}
+
+interface AudioState {
+  isPlaying: boolean
+  currentTime: number
+  duration: number
 }
 
 export default function ChatPage() {
   const [expandedMessages, setExpandedMessages] = useState<Set<number>>(new Set())
   const [expandedComments, setExpandedComments] = useState<Set<number>>(new Set())
+  const [playingAudio, setPlayingAudio] = useState<number | null>(null)
+  const [audioStates, setAudioStates] = useState<{ [key: number]: AudioState }>({})
+  const audioRefs = useRef<{ [key: number]: HTMLAudioElement }>({})
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 1,
@@ -46,6 +68,7 @@ export default function ChatPage() {
         },
       ],
       isUnread: true,
+      audioUrl: "/placeholder.mp3",
     },
     {
       id: 2,
@@ -59,6 +82,7 @@ export default function ChatPage() {
       speaker: "client",
       comments: [],
       isUnread: false,
+      audioUrl: "/placeholder.mp3",
     },
     {
       id: 3,
@@ -79,9 +103,44 @@ export default function ChatPage() {
         },
       ],
       isUnread: true,
+      audioUrl: "/placeholder.mp3",
     },
   ])
   const [newComments, setNewComments] = useState<{ [key: number]: string }>({})
+  const [showAudioControl, setShowAudioControl] = useState<number | null>(null)
+
+  useEffect(() => {
+    messages.forEach((message) => {
+      const audio = new Audio(message.audioUrl)
+      audioRefs.current[message.id] = audio
+      audio.addEventListener("loadedmetadata", () => {
+        setAudioStates((prev) => ({
+          ...prev,
+          [message.id]: { isPlaying: false, currentTime: 0, duration: audio.duration },
+        }))
+      })
+      audio.addEventListener("timeupdate", () => {
+        setAudioStates((prev) => ({
+          ...prev,
+          [message.id]: { ...prev[message.id], currentTime: audio.currentTime },
+        }))
+      })
+      audio.addEventListener("ended", () => {
+        setAudioStates((prev) => ({
+          ...prev,
+          [message.id]: { ...prev[message.id], isPlaying: false, currentTime: 0 },
+        }))
+        setPlayingAudio(null)
+      })
+    })
+
+    return () => {
+      Object.values(audioRefs.current).forEach((audio) => {
+        audio.pause()
+        audio.currentTime = 0
+      })
+    }
+  }, [messages])
 
   const toggleMessageExpand = (id: number) => {
     setExpandedMessages((prev) => {
@@ -105,7 +164,6 @@ export default function ChatPage() {
       }
       return next
     })
-    // コメントを開いたときに既読にする
     markAsRead(id)
   }
 
@@ -131,6 +189,61 @@ export default function ChatPage() {
     )
 
     setNewComments((prev) => ({ ...prev, [messageId]: "" }))
+  }
+
+  const toggleAudio = (id: number) => {
+    const audio = audioRefs.current[id]
+    if (playingAudio === id) {
+      audio.pause()
+      setPlayingAudio(null)
+      setAudioStates((prev) => ({ ...prev, [id]: { ...prev[id], isPlaying: false } }))
+    } else {
+      if (playingAudio !== null) {
+        audioRefs.current[playingAudio].pause()
+        setAudioStates((prev) => ({ ...prev, [playingAudio]: { ...prev[playingAudio], isPlaying: false } }))
+      }
+      audio.play()
+      setPlayingAudio(id)
+      setAudioStates((prev) => ({ ...prev, [id]: { ...prev[id], isPlaying: true } }))
+    }
+  }
+
+  const handleSeek = (id: number, value: number[]) => {
+    const audio = audioRefs.current[id]
+    audio.currentTime = value[0]
+    setAudioStates((prev) => ({ ...prev, [id]: { ...prev[id], currentTime: value[0] } }))
+  }
+
+  const toggleAudioControl = (id: number) => {
+    setShowAudioControl((prevId) => (prevId === id ? null : id))
+  }
+
+  const formatTime = (time: number) => {
+    const minutes = Math.floor(time / 60)
+    const seconds = Math.floor(time % 60)
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`
+  }
+
+  const AudioControl = ({ message }: { message: Message }) => {
+    const audioState = audioStates[message.id] || { isPlaying: false, currentTime: 0, duration: 0 }
+
+    return (
+      <div className="flex items-center gap-1 mt-1 text-xs">
+        <Button variant="ghost" size="sm" onClick={() => toggleAudio(message.id)} className="p-1 h-6 w-6">
+          {audioState.isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+        </Button>
+        <Slider
+          value={[audioState.currentTime]}
+          max={audioState.duration}
+          step={0.1}
+          onValueChange={(value) => handleSeek(message.id, value)}
+          className="w-24 sm:w-32"
+        />
+        <span className="text-gray-500 min-w-[60px]">
+          {formatTime(audioState.currentTime)} / {formatTime(audioState.duration)}
+        </span>
+      </div>
+    )
   }
 
   return (
@@ -173,7 +286,7 @@ export default function ChatPage() {
                       <span className="font-medium">{message.speaker === "sales" ? "営業担当" : "お客様"}</span>
                     </div>
                     <div
-                      className={`rounded-lg p-4 relative ${
+                      className={`rounded-lg p-3 relative ${
                         message.speaker === "sales" ? "bg-blue-50 rounded-tr-none" : "bg-green-50 rounded-tl-none"
                       }`}
                     >
@@ -182,23 +295,36 @@ export default function ChatPage() {
                         <>
                           {isExpanded ? (
                             <>
-                              <p className="mt-2 text-sm md:text-base">{message.content[1]}</p>
-                              <p className="mt-2 text-sm md:text-base">{message.content[2]}</p>
+                              <p className="mt-1 text-sm md:text-base">{message.content[1]}</p>
+                              <p className="mt-1 text-sm md:text-base">{message.content[2]}</p>
                             </>
                           ) : (
-                            <p className="mt-2 text-gray-500">...</p>
+                            <p className="mt-1 text-gray-500">...</p>
                           )}
                         </>
                       )}
-                      <p className="mt-2 text-sm md:text-base">{message.content[message.content.length - 1]}</p>
-                      {message.content.length > 2 && (
-                        <button
-                          onClick={() => toggleMessageExpand(message.id)}
-                          className="text-blue-500 hover:underline text-xs md:text-sm mt-2"
-                        >
-                          {isExpanded ? "閉じる" : "全文を表示"}
-                        </button>
-                      )}
+                      <p className="mt-1 text-sm md:text-base">{message.content[message.content.length - 1]}</p>
+                      <div className="flex justify-between items-center mt-1">
+                        <div className="flex items-center gap-1">
+                          {message.content.length > 2 && (
+                            <button
+                              onClick={() => toggleMessageExpand(message.id)}
+                              className="text-blue-500 hover:underline text-xs"
+                            >
+                              {isExpanded ? "閉じる" : "全文を表示"}
+                            </button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => toggleAudioControl(message.id)}
+                            className="text-gray-500 hover:text-gray-700 p-0.5 h-5 w-5"
+                          >
+                            <Volume2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+                      {showAudioControl === message.id && <AudioControl message={message} />}
                     </div>
 
                     <div className="pl-4 border-l-2 border-gray-200">
