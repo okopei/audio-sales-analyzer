@@ -1,59 +1,85 @@
 # audio-sales-analyzer
 
 ## 必要要件
-- Node.js v18以上
-- Python 3.9以上
+
+### 必須ツール
 - Git
+- Node.js 18.17.0以上
+  - 役割: Next.jsアプリケーションの実行とAzuriteのインストールに必要
+  - インストール: Node.jsの公式サイトから
+- pnpm
+  - 役割: Next.jsアプリケーションのパッケージ管理
+  - インストール: `npm install -g pnpm`で実行
+- Azure Functions Core Tools
+  - 役割: Azure Functionsのローカル開発とデプロイをサポート
+  - インストール: Azure Functions Core Toolsの公式ドキュメントを参照
+- Azurite
+  - 役割: ローカルでAzure Storageをエミュレート
+  - インストール: npmを使用してインストール
+- Python 3.12以下
+  - 役割: Azure FunctionsのPythonプロジェクトの実行
+  - インストール: Pythonの公式サイトから
+
+### 推奨VS Code拡張機能
+- Azure Functions: `ms-azuretools.vscode-azurefunctions`
+- Python: `ms-python.python`
+- ESLint: `dbaeumer.vscode-eslint`
+- Prettier: `esbenp.prettier-vscode`
+- Tailwind CSS IntelliSense: `bradlc.vscode-tailwindcss`
 
 ## 初回セットアップ手順
 
 ### 1. リポジトリのクローン
 ```bash
-# リポジトリをクローン
-git clone https://github.com/okopei/audio-sales-analyzer.git
+# 最新のDevelopブランチをクローン
+git clone -b develop https://github.com/okopei/audio-sales-analyzer.git
 cd audio-sales-analyzer
 ```
 
 ### 2. Next.jsアプリケーション（初回セットアップ）
 ```bash
-# next-appディレクトリに移動
 cd next-app
-
-# Node.jsの依存パッケージをインストール
 npm install
-
-# 環境変数ファイルをコピー
 cp .env.example .env.local
-
-# 開発サーバー起動
 npm run dev
 ```
 → http://localhost:3000 でアクセス可能
 
-### 3. Python環境（初回セットアップ）
+### 3. Azure Functions環境のセットアップ
+
+Terminal 1（Azurite起動用）:
 ```bash
-# python-apiディレクトリに移動
-cd python-api
-
-# 仮想環境作成
-python -m venv venv
-
-# 仮想環境の有効化
-## Windows
-venv\Scripts\activate
-## macOS/Linux
-source venv/bin/activate
-
-# 必要なパッケージをインストール
-pip install -r requirements.txt
-
-# 環境変数ファイルをコピー
-cp .env.example .env
-
-# FastAPIサーバー起動
-uvicorn main:app --reload
+# AzureFunctions-Python-apiディレクトリで実行
+cd AzureFunctions-Python-api
+azurite
 ```
-→ http://localhost:8000 でアクセス可能
+
+Terminal 2（Functions起動用）:
+```bash
+# AzureFunctions-Python-apiディレクトリで実行
+func start
+```
+→ http://localhost:7071/api/http_trigger でアクセス可能
+
+Terminal 3（テスト実行用）:
+```powershell
+# テストリクエストの例
+Invoke-RestMethod -Uri http://localhost:7071/api/http_trigger -Method Post -Headers @{"Content-Type"="application/json"} -Body '{"title": "Sample Title", "url": "http://example.com"}'
+```
+
+### データベース参照
+```sql
+CREATE TABLE dbo.ToDo (
+    [Id] UNIQUEIDENTIFIER PRIMARY KEY,
+    [order] INT NULL,
+    [title] NVARCHAR(200) NOT NULL,
+    [url] NVARCHAR(200) NOT NULL,
+    [completed] BIT NOT NULL
+);
+
+-- データ確認用クエリ
+SELECT * FROM dbo.ToDo;
+```
 
 ## ローカル環境セットアップ（2回目以降）
 
@@ -67,21 +93,26 @@ npm run dev
 ```
 → http://localhost:3000 でアクセス可能
 
-### 2. Python環境
+### 2. Azure Functions環境
+Terminal 1（Azurite起動用）:
 ```bash
-# python-apiディレクトリに移動
-cd python-api
-
-# 仮想環境の有効化のみ
-## Windows
-venv\Scripts\activate
-## macOS/Linux
-source venv/bin/activate
-
-# FastAPIサーバー起動
-uvicorn main:app --reload
+# AzureFunctions-Python-apiディレクトリで実行
+cd AzureFunctions-Python-api
+azurite
 ```
-→ http://localhost:8000 でアクセス可能
+
+Terminal 2（Functions起動用）:
+```bash
+# AzureFunctions-Python-apiディレクトリで実行
+func start
+```
+→ http://localhost:7071/api/http_trigger でアクセス可能
+
+Terminal 3（テスト実行用）:
+```powershell
+# テストリクエストの例
+Invoke-RestMethod -Uri http://localhost:7071/api/http_trigger -Method Post -Headers @{"Content-Type"="application/json"} -Body '{"title": "Sample Title", "url": "http://example.com"}'
+```
 
 ## プロジェクトドキュメント
 
