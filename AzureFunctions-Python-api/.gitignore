@@ -1,0 +1,14 @@
+# Python環境
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+
+# pip関連
+pip-*.dist-info/
+*.egg-info/
+isapi/
+pythonwin/
+win32/
+win32com/ 
