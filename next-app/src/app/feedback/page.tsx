@@ -236,7 +236,7 @@ export default function ChatPage() {
           value={[audioState.currentTime]}
           max={audioState.duration}
           step={0.1}
-          onValueChange={(value) => handleSeek(message.id, value)}
+          onValueChange={(value: number[]) => handleSeek(message.id, value)}
           className="w-24 sm:w-32"
         />
         <span className="text-gray-500 min-w-[60px]">
