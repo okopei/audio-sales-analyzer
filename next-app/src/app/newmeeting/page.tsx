@@ -1,13 +1,15 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { useRouter } from 'next/navigation'
-import { useRecording } from '@/hooks/useRecording'
+import { useRouter } from "next/navigation"
+import { useRecording } from "@/hooks/useRecording"
+import { Upload, Mic } from "lucide-react"
+import { useDropzone } from "react-dropzone"
 
 // 仮のユーザーデータ（実際の実装では認証システムから取得）
 const currentUser = {
@@ -18,6 +20,11 @@ const currentUser = {
 export default function NewMeetingPage() {
   const router = useRouter()
   const { startRecording } = useRecording()
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    setIsMobile(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent))
+  }, [])
 
   // 現在時刻から1時間後（1時間刻みで四捨五入）の初期値を計算
   const getInitialDateTime = () => {
@@ -39,7 +46,7 @@ export default function NewMeetingPage() {
     contactPerson: currentUser.name,
     industry: "",
     scale: "",
-    meetingGoal: "", // Updated: meetingCall -> meetingGoal
+    meetingGoal: "",
   })
 
   // 年の選択肢を生成（現在年から+1年まで）
@@ -74,8 +81,37 @@ export default function NewMeetingPage() {
 
   const handleStartRecording = async () => {
     await startRecording()
-    router.push('/recording?recording=true')
+    router.push("/recording?recording=true")
   }
+
+  const handleFileUpload = async (file: File) => {
+    console.log("Uploading file:", file)
+    // Implement your file upload logic here
+    // For example, you might use the Vercel Blob API to upload the file
+    // const { url } = await upload(file.name, file, { access: 'public' })
+    // console.log('File uploaded to:', url)
+  }
+
+  const handleVoiceMemoImport = async () => {
+    console.log("Opening voice memo picker")
+    // Implement voice memo import logic here
+    // This might involve using a native API or a third-party library
+  }
+
+  const onDrop = useCallback(
+    (acceptedFiles: File[]) => {
+      if (acceptedFiles[0]) handleFileUpload(acceptedFiles[0])
+    },
+    [handleFileUpload],
+  ) // Added handleFileUpload to dependencies
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    accept: {
+      "audio/*": [".mp3", ".m4a", ".wav"],
+    },
+    multiple: false,
+  })
 
   return (
     <div className="min-h-screen bg-zinc-50 p-4">
@@ -92,28 +128,27 @@ export default function NewMeetingPage() {
             </div>
 
             <div className="space-y-4">
-              {/* Meeting Date/Time - Required */}
+              {/* Meeting Date/Time */}
               <div className="space-y-1.5">
-                <Label className="flex items-center text-sm">
-                  実施日時
-                  {/* Removed: <span className="ml-1 text-sm text-red-500">*</span> */}
-                </Label>
+                <Label className="flex items-center text-sm">実施日時</Label>
                 <div className="grid grid-cols-4 gap-2">
                   <Select value={formData.year} onValueChange={(value) => setFormData({ ...formData, year: value })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="年" />
+                    <SelectTrigger className="whitespace-nowrap text-sm h-9 [&>svg]:h-4 [&>svg]:w-4">
+                      <SelectValue placeholder="年">
+                        {formData.year && `${formData.year.slice(2)}年`}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {getYearOptions().map((year) => (
-                        <SelectItem key={year} value={year.toString()}>
-                          {year}年
+                        <SelectItem key={year} value={year.toString()} className="text-sm">
+                          {year.toString().slice(2)}年
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
 
                   <Select value={formData.month} onValueChange={(value) => setFormData({ ...formData, month: value })}>
-                    <SelectTrigger>
+                    <SelectTrigger className="whitespace-nowrap text-sm h-9 [&>svg]:h-4 [&>svg]:w-4">
                       <SelectValue placeholder="月" />
                     </SelectTrigger>
                     <SelectContent>
@@ -126,7 +161,7 @@ export default function NewMeetingPage() {
                   </Select>
 
                   <Select value={formData.day} onValueChange={(value) => setFormData({ ...formData, day: value })}>
-                    <SelectTrigger>
+                    <SelectTrigger className="whitespace-nowrap text-sm h-9 [&>svg]:h-4 [&>svg]:w-4">
                       <SelectValue placeholder="日" />
                     </SelectTrigger>
                     <SelectContent>
@@ -139,7 +174,7 @@ export default function NewMeetingPage() {
                   </Select>
 
                   <Select value={formData.hour} onValueChange={(value) => setFormData({ ...formData, hour: value })}>
-                    <SelectTrigger>
+                    <SelectTrigger className="whitespace-nowrap text-sm h-9 [&>svg]:h-4 [&>svg]:w-4">
                       <SelectValue placeholder="時" />
                     </SelectTrigger>
                     <SelectContent>
@@ -171,7 +206,6 @@ export default function NewMeetingPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="contactPerson" className="flex items-center text-sm">
                   担当者名
-                  {/* Removed: <span className="ml-1 text-sm text-red-500">*</span> */}
                 </Label>
                 <Input id="contactPerson" value={formData.contactPerson} disabled className="bg-zinc-50" />
               </div>
@@ -180,17 +214,16 @@ export default function NewMeetingPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="industry" className="flex items-center text-sm">
                   業種
-                  {/* Removed: <span className="ml-1 text-sm text-red-500">*</span> */}
                 </Label>
                 <Select
                   value={formData.industry}
                   onValueChange={(value) => setFormData({ ...formData, industry: value })}
                 >
-                  <SelectTrigger id="industry">
+                  <SelectTrigger id="industry" className="whitespace-nowrap text-sm h-9 [&>svg]:h-4 [&>svg]:w-4">
                     <SelectValue placeholder="選択してください" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="manufacturing">製造業</SelectItem>
+                    <SelectItem value="manufacturing" className="text-sm">製造業</SelectItem>
                     <SelectItem value="service">サービス業</SelectItem>
                     <SelectItem value="retail">小売業</SelectItem>
                     <SelectItem value="wholesale">卸売業</SelectItem>
@@ -206,10 +239,9 @@ export default function NewMeetingPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="scale" className="flex items-center text-sm">
                   規模
-                  {/* Removed: <span className="ml-1 text-sm text-red-500">*</span> */}
                 </Label>
                 <Select value={formData.scale} onValueChange={(value) => setFormData({ ...formData, scale: value })}>
-                  <SelectTrigger id="scale">
+                  <SelectTrigger id="scale" className="whitespace-nowrap text-sm h-9 [&>svg]:h-4 [&>svg]:w-4">
                     <SelectValue placeholder="選択してください" />
                   </SelectTrigger>
                   <SelectContent>
@@ -224,15 +256,12 @@ export default function NewMeetingPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="meetingGoal" className="flex items-center text-sm">
                   面談ゴール
-                  {/* Removed: <span className="ml-1 text-sm text-red-500">*</span> */}
                 </Label>
                 <Select
-                  value={formData.meetingGoal} // Updated: formData.meetingGoal
-                  onValueChange={(value) => setFormData({ ...formData, meetingGoal: value })} // Updated: meetingGoal
+                  value={formData.meetingGoal}
+                  onValueChange={(value) => setFormData({ ...formData, meetingGoal: value })}
                 >
-                  <SelectTrigger id="meetingGoal">
-                    {" "}
-                    {/* Updated: meetingGoal */}
+                  <SelectTrigger id="meetingGoal" className="whitespace-nowrap text-sm h-9 [&>svg]:h-4 [&>svg]:w-4">
                     <SelectValue placeholder="選択してください" />
                   </SelectTrigger>
                   <SelectContent>
@@ -245,13 +274,53 @@ export default function NewMeetingPage() {
               </div>
             </div>
 
-            <div className="flex gap-4 pt-4">
+            <div className="flex flex-col sm:flex-row gap-4 pt-4">
               <Button variant="outline" className="flex-1" onClick={() => handleSubmit("save")}>
                 一時保存
               </Button>
-              <Button className="flex-1" onClick={handleStartRecording}>
-                商談プラン作成へ
-              </Button>
+              <div className="flex flex-1 gap-2">
+                {isMobile ? (
+                  // Mobile version
+                  <div className="flex gap-2 w-full">
+                    <Button
+                      variant="outline"
+                      className="flex-1 whitespace-nowrap"
+                      onClick={() => document.getElementById("file-upload")?.click()}
+                    >
+                      <Upload className="w-4 h-4 mr-2" />
+                      音声をアップロード
+                    </Button>
+                    <input
+                      id="file-upload"
+                      type="file"
+                      accept="audio/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (file) handleFileUpload(file)
+                      }}
+                    />
+                    <Button variant="outline" className="flex-none" onClick={handleVoiceMemoImport}>
+                      <Mic className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  // Desktop version
+                  <div
+                    {...getRootProps()}
+                    className={`flex-1 relative ${isDragActive ? "border-2 border-dashed border-primary" : ""}`}
+                  >
+                    <input {...getInputProps()} />
+                    <Button variant="outline" className="w-full whitespace-nowrap">
+                      <Upload className="w-4 h-4 mr-2" />
+                      音声をアップロード
+                    </Button>
+                  </div>
+                )}
+                <Button className="flex-1 whitespace-nowrap" onClick={handleStartRecording}>
+                  録音へ
+                </Button>
+              </div>
             </div>
           </div>
         </Card>
@@ -259,3 +328,4 @@ export default function NewMeetingPage() {
     </div>
   )
 }
+
