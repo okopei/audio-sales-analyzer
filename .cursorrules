@@ -94,43 +94,61 @@ audio-sales-analyzer/
 │   │   │   ├── api/     # APIルート
 │   │   │   │   └── transcribe/route.ts # 文字起こしAPI
 │   │   │   ├── dashboard/      # ダッシュボード
+│   │   │   ├── feedback/       # フィードバック画面
 │   │   │   ├── manager-dashboard/page.tsx # 管理者用ダッシュボード
 │   │   │   ├── newmeeting/     # 新規会議作成
 │   │   │   ├── recording/      # 録音機能
 │   │   │   ├── register/       # 新規登録
-│   │   │   ├── favicon.ico # サイトアイコン
-│   │   │   ├── global.css # グローバルスタイル
-│   │   │   ├── layout.tsx # ルートレイアウト
-│   │   │   └── page.tsx   # ログインページ
+│   │   │   ├── search/         # 検索機能
+│   │   │   ├── favicon.ico     # サイトアイコン
+│   │   │   ├── global.css      # グローバルスタイル
+│   │   │   ├── layout.tsx      # ルートレイアウト
+│   │   │   └── page.tsx        # ログインページ
 │   │   ├── components/    # 共通コンポーネント
 │   │   │   └── ui/       # UIコンポーネント
-│   │   └── hooks/        # カスタムフック
-│   │       └── useRecording.ts # 録音機能フック
+│   │   ├── hooks/        # カスタムフック
+│   │   └── lib/         # ユーティリティ関数
 │   ├── .env.local       # ローカル環境変数（git管理外）
 │   ├── .gitignore       # Git除外設定
 │   ├── eslint.config.mjs # ESLint設定
 │   ├── next-env.d.ts    # Next.js型定義
-│   ├── next.config.ts   # Next.js設定
+│   ├── next.config.js   # Next.js設定
 │   ├── package.json     # プロジェクト設定
 │   ├── pnpm-lock.yaml   # 依存関係ロック
 │   ├── postcss.config.js # PostCSS設定
-│   ├── README.md        # フロントエンド説明
 │   ├── tailwind.config.ts # Tailwind CSS設定
 │   ├── tsconfig.json    # TypeScript設定
 │   └── vercel.json      # Vercelデプロイ設定
 │
-├── python-api/           # バックエンド（FastAPI）
-│   ├── __pycache__/     # Pythonコンパイルキャッシュ（git管理外）
-│   ├── venv/            # Python仮想環境（git管理外）
-│   ├── main.py          # メインアプリケーション
-│   └── requirements.txt  # Python依存パッケージ一覧
+├── AzureFunctions-Python-api/  # バックエンド（Azure Functions）
+│   ├── _blobstorage_/   # Azuriteのローカルストレージ
+│   ├── _queuestorage_/  # Azuriteのキューストレージ
+│   ├── _azurite_db_blob_.json        # Azuriteの設定
+│   ├── _azurite_db_blob_extent_.json # Azuriteの設定
+│   ├── _azurite_db_queue_.json       # Azuriteの設定
+│   ├── _azurite_db_queue_extent_.json # Azuriteの設定
+│   ├── _azurite_db_table_.json       # Azuriteの設定
+│   ├── function_app.py  # 関数アプリケーション
+│   ├── host.json        # ホスト設定
+│   ├── localsettings.json # ローカル設定
+│   ├── .gitignore      # Git除外設定
+│   └── requirements.txt # Python依存パッケージ
 │
-├── .cursorrules         # AIアシスタントの設定
-├── BACKLOG.md          # 機能要件と開発タスク管理
-├── DATABASE.md         # データベース設計と構成
-├── KNOWLEDGE.md        # 技術的知見の蓄積
-├── REQUIREMENT.md      # 要件定義と仕様書
-└── README.md           # プロジェクト説明
+├── back-end/           # 旧バックエンド（未使用）
+├── python-api/         # 旧Python API（未使用）
+│   ├── _pycache_/     # Pythonキャッシュ（git管理外）
+│   ├── venv/          # 仮想環境（git管理外）
+│   ├── main.py        # メインアプリケーション
+│   └── requirements.txt # 依存パッケージ
+│
+├── .cursorrules        # AIアシスタントの設定
+├── .funcignore         # Azure Functions用のGit除外設定
+├── .gitignore         # プロジェクトのGit除外設定
+├── BACKLOG.md         # バックログ
+├── DATABASE.md        # データベース設計
+├── KNOWLEDGE.md       # 技術的知見
+├── REQUIREMENTS.md    # 要件定義
+└── README.md          # プロジェクト説明
 ```
 
 注意: 
