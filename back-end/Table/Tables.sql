@@ -1,13 +1,26 @@
 -- ユーザー管理
 CREATE TABLE Users (
-    user_id INT PRIMARY KEY IDENTITY(1,1),           -- ユーザーの一意識別子
-    email NVARCHAR(256) NOT NULL UNIQUE,             -- メールアドレス
-    password_hash NVARCHAR(MAX) NOT NULL,            -- パスワードハッシュ
-    display_name NVARCHAR(100) NOT NULL,             -- 表示名
-    role_type NVARCHAR(50) NOT NULL,                 -- ロール（admin, manager, user）
-    inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),
-    updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),
-    deleted_datetime DATETIME NULL
+    -- 基本情報
+    user_id INT PRIMARY KEY IDENTITY(1,1),
+    user_name VARCHAR(50) NOT NULL,
+    email VARCHAR(256) NOT NULL UNIQUE,
+    password_hash NVARCHAR(128) NOT NULL,  -- ハッシュ化されたパスワード
+    salt NVARCHAR(36) NOT NULL,            -- パスワードソルト
+
+    -- アカウント状態
+    is_active BIT DEFAULT 1,
+    account_status VARCHAR(20) DEFAULT 'ACTIVE',  -- ACTIVE, LOCKED, SUSPENDED など
+    last_login_datetime DATETIME,
+
+    -- 監査情報
+    inserted_datetime DATETIME DEFAULT GETDATE(),
+    updated_datetime DATETIME DEFAULT GETDATE(),
+    deleted_datetime DATETIME NULL,        -- 論理削除用
+
+    -- アカウント管理
+    password_reset_token VARCHAR(100) NULL,
+    password_reset_expires DATETIME NULL,
+    login_attempt_count INT DEFAULT 0
 )
 
 -- 会議情報
@@ -144,7 +157,6 @@ CREATE TABLE MessageReads (
 
 -- インデックス
 CREATE INDEX idx_users_email ON Users(email)                            -- メールアドレスによる検索用
-CREATE INDEX idx_users_role ON Users(role_type)                         -- ロールによる検索用
 
 CREATE INDEX idx_meetings_user ON Meetings(user_id)                     -- ユーザーIDによる検索用
 CREATE INDEX idx_meetings_datetime ON Meetings(meeting_datetime)        -- 会議日時による検索用
