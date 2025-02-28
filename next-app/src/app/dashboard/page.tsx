@@ -1,5 +1,6 @@
 "use client"
 
+import React from "react"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -68,13 +69,17 @@ export default function Dashboard() {
       })),
   ]
 
-  // 現在の日付を取得
-  const today = new Date()
-  const dateStr = today.toLocaleDateString("ja-JP", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  })
+  // クライアントサイドでのみ日付を取得するように修正
+  const [dateStr, setDateStr] = React.useState("")
+  
+  React.useEffect(() => {
+    const today = new Date()
+    setDateStr(today.toLocaleDateString("ja-JP", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    }))
+  }, [])
 
   return (
     <div className="min-h-screen bg-zinc-50 p-4 sm:p-6">
@@ -112,14 +117,18 @@ export default function Dashboard() {
               </thead>
               <tbody>
                 {meetings.map((meeting) => (
-                  <Link
-                    key={meeting.id}
-                    href={`/feedback#${meeting.id}`}
-                    className="table-row border-b last:border-0 hover:bg-slate-50 transition-colors"
-                  >
-                    <td className="py-3">{meeting.datetime}</td>
-                    <td className="py-3">{meeting.client}</td>
-                  </Link>
+                  <tr key={meeting.id} className="border-b last:border-0 hover:bg-slate-50 transition-colors">
+                    <td className="py-3">
+                      <Link href={`/feedback#${meeting.id}`} className="block">
+                        {meeting.datetime}
+                      </Link>
+                    </td>
+                    <td className="py-3">
+                      <Link href={`/feedback#${meeting.id}`} className="block">
+                        {meeting.client}
+                      </Link>
+                    </td>
+                  </tr>
                 ))}
               </tbody>
             </table>
@@ -132,23 +141,21 @@ export default function Dashboard() {
           <ScrollArea className="h-[300px] sm:h-[600px]">
             <div className="space-y-4">
               {comments.map((comment) => (
-                <Link
-                  key={comment.id}
-                  href={`/feedback#${comment.id}`}
-                  className="block border-b last:border-0 pb-4 hover:bg-slate-50 rounded-lg transition-colors"
-                >
-                  <div className="flex justify-between items-start mb-2">
-                    <div>
-                      <div className="text-sm font-medium">佐藤部長</div>
-                      <div className="text-sm text-gray-500">{comment.client}</div>
+                <div key={comment.id} className="block border-b last:border-0 pb-4 hover:bg-slate-50 rounded-lg transition-colors">
+                  <Link href={`/feedback#${comment.id}`} className="block">
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <div className="text-sm font-medium">佐藤部長</div>
+                        <div className="text-sm text-gray-500">{comment.client}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {!comment.isRead && <Badge variant="destructive">未読</Badge>}
+                        <span className="text-sm text-gray-500">{comment.commentTime}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      {!comment.isRead && <Badge variant="destructive">未読</Badge>}
-                      <span className="text-sm text-gray-500">{comment.commentTime}</span>
-                    </div>
-                  </div>
-                  <p className="text-sm text-gray-600">{comment.comment}</p>
-                </Link>
+                    <p className="text-sm text-gray-600">{comment.comment}</p>
+                  </Link>
+                </div>
               ))}
             </div>
           </ScrollArea>
