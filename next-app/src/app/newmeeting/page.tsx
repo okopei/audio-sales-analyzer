@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation"
 import { useRecording } from "@/hooks/useRecording"
 import { Upload, Mic } from "lucide-react"
 import { useDropzone } from "react-dropzone"
+import { saveMeeting } from "@/lib/api-client"
 
 // 仮のユーザーデータ（実際の実装では認証システムから取得）
 const currentUser = {
@@ -21,6 +22,8 @@ export default function NewMeetingPage() {
   const router = useRouter()
   const { startRecording } = useRecording()
   const [isMobile, setIsMobile] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
 
   useEffect(() => {
     setIsMobile(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent))
@@ -71,12 +74,40 @@ export default function NewMeetingPage() {
     return Array.from({ length: 10 }, (_, i) => i + 9)
   }
 
-  const handleSubmit = (type: "save" | "next") => {
+  const handleSubmit = async (type: "save" | "next") => {
     if (!formData.companyName) {
       alert("顧客名は必須です")
       return
     }
-    console.log("Submitting form:", { type, formData })
+    
+    setIsSubmitting(true)
+    setSubmitError(null)
+    
+    try {
+      console.log("Submitting form data:", formData);
+      
+      // API を呼び出して商談情報を保存
+      const response = await saveMeeting(formData)
+      
+      console.log("Meeting saved successfully:", response)
+      
+      // 成功時の処理
+      if (type === "next") {
+        // 録音ページへ移動（会議IDを渡す）
+        await startRecording()
+        router.push(`/recording?recording=true&meetingId=${response.meetingId}`)
+      } else {
+        // 保存成功メッセージを表示
+        alert(`保存完了: ${response.message}`)
+      }
+    } catch (error) {
+      console.error("Error saving meeting:", error)
+      // エラーメッセージを表示
+      setSubmitError(error instanceof Error ? error.message : "商談情報の保存に失敗しました")
+      alert("エラー: 商談情報の保存に失敗しました")
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const handleStartRecording = async () => {
@@ -274,9 +305,20 @@ export default function NewMeetingPage() {
               </div>
             </div>
 
+            {submitError && (
+              <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-md text-red-600 text-sm">
+                {submitError}
+              </div>
+            )}
+
             <div className="flex flex-col sm:flex-row gap-4 pt-4">
-              <Button variant="outline" className="flex-1" onClick={() => handleSubmit("save")}>
-                一時保存
+              <Button 
+                variant="outline" 
+                className="flex-1" 
+                onClick={() => handleSubmit("save")}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? "保存中..." : "一時保存"}
               </Button>
               <div className="flex flex-1 gap-2">
                 {isMobile ? (
@@ -317,7 +359,11 @@ export default function NewMeetingPage() {
                     </Button>
                   </div>
                 )}
-                <Button className="flex-1 whitespace-nowrap" onClick={handleStartRecording}>
+                <Button 
+                  className="flex-1 whitespace-nowrap" 
+                  onClick={() => handleSubmit("next")}
+                  disabled={isSubmitting}
+                >
                   録音へ
                 </Button>
               </div>

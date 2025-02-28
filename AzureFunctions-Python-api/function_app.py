@@ -1,6 +1,8 @@
 import azure.functions as func
 import logging
 import uuid
+from datetime import datetime
+import json
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -39,3 +41,23 @@ def http_trigger(req: func.HttpRequest, toDoItems: func.Out[func.SqlRow]) -> fun
             "Please provide 'title' and 'url' in the JSON body",
             status_code=400
         )
+# 会議ハンドラーをインポート
+from src.meetings.handlers import save_meeting_handler
+
+# 会議保存エンドポイント
+@app.function_name(name="SaveMeeting")
+@app.route(route="meetings", methods=["POST", "OPTIONS"])
+@app.generic_output_binding(
+    arg_name="meetings", 
+    type="sql", 
+    CommandText="dbo.Meetings", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+@app.generic_input_binding(
+    arg_name="lastMeeting", 
+    type="sql", 
+    CommandText="SELECT TOP 1 meeting_id FROM dbo.Meetings ORDER BY meeting_id DESC", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+def save_meeting(req: func.HttpRequest, meetings: func.Out[func.SqlRow], lastMeeting: func.SqlRowList) -> func.HttpResponse:
+    return save_meeting_handler(req, meetings, lastMeeting)
