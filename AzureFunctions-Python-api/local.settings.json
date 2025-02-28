@@ -4,5 +4,10 @@
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "SqlConnectionString": "Server=tcp:w-paas-salesanalyzer-sqlserver.database.windows.net,1433;Initial Catalog=w-paas-salesanalyzer-sql;Persist Security Info=False;User ID=sqladmin;Password=Jx8#pV2!mTqZ@5wL;MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
+  },
+  "Host": {
+    "LocalHttpPort": 7071,
+    "CORS": "http://localhost:3000",
+    "CORSCredentials": true
   }
 }
