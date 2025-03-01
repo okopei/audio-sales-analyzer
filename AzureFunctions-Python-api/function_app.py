@@ -8,6 +8,7 @@ import bcrypt
 from datetime import datetime, UTC
 import traceback
 from azure.functions import AuthLevel, FunctionApp
+import time
 
 app = FunctionApp(http_auth_level=AuthLevel.ANONYMOUS)
 
