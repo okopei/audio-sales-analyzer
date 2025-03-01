@@ -23,56 +23,28 @@ CREATE TABLE Users (
     login_attempt_count INT DEFAULT 0
 )
 
--- 会議情報
+-- 会議情報（音声データと文字起こし情報を統合）
 CREATE TABLE Meetings (
-    meeting_id INT PRIMARY KEY IDENTITY(1,1),        -- 会議の一意識別子
-    user_id INT NOT NULL,                            -- 作成者のユーザーID
-    title NVARCHAR(200) NOT NULL,                    -- 会議タイトル
-    meeting_datetime DATETIME NOT NULL,              -- 会議実施日時
-    duration_seconds INT,                            -- 会議時間（秒）
+    meeting_id INT IDENTITY(1,1) PRIMARY KEY,      -- 会議の一意識別子
+    user_id INT NOT NULL,                          -- 作成したユーザーID
+    title NVARCHAR(255) NOT NULL,                  -- 会議タイトル
+    file_name NVARCHAR(200) NOT NULL,              -- 音声ファイル名
+    file_path NVARCHAR(1000) NOT NULL,             -- 音声ファイルパス
+    file_size BIGINT NOT NULL,                     -- ファイルサイズ（バイト）
+    duration_seconds INT NOT NULL DEFAULT 0,        -- 音声時間（秒）
+    status NVARCHAR(50) NOT NULL DEFAULT 'processing', -- 処理状態（waiting, processing, completed, error）
+    transcript_text NVARCHAR(MAX) NULL,            -- 文字起こし結果
+    error_message NVARCHAR(MAX) NULL,              -- エラーメッセージ（エラー時のみ）
+    meeting_datetime DATETIME NOT NULL,             -- 会議実施日時
+    start_datetime DATETIME NOT NULL,              -- 処理開始日時
+    end_datetime DATETIME NULL,                    -- 処理完了日時
     inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),
     updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),
-    deleted_datetime DATETIME NULL,
-    
+    deleted_datetime DATETIME NULL,                -- 論理削除用
+
     CONSTRAINT FK_Meetings_Users
         FOREIGN KEY (user_id) REFERENCES Users(user_id)
 )
-
--- 会議の音声データ
-CREATE TABLE MeetingAudio (
-    audio_id INT PRIMARY KEY IDENTITY(1,1),          -- 音声データの一意識別子
-    meeting_id INT NOT NULL,                         -- 関連する会議ID
-    file_name NVARCHAR(200) NOT NULL,                -- 音声ファイル名
-    file_path NVARCHAR(1000) NOT NULL,               -- 音声ファイルパス
-    file_size BIGINT NOT NULL,                       -- ファイルサイズ（バイト）
-    duration_seconds INT,                            -- 音声時間（秒）
-    inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),
-    updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),
-    deleted_datetime DATETIME NULL,
-    
-    CONSTRAINT FK_MeetingAudio_Meetings
-        FOREIGN KEY (meeting_id) REFERENCES Meetings(meeting_id)
-)
-
--- 文字起こし処理状態
-CREATE TABLE MeetingTranscript (
-    transcript_id INT PRIMARY KEY IDENTITY(1,1),     -- 文字起こし処理の一意識別子
-    meeting_id INT NOT NULL,                         -- 関連する会議ID
-    audio_id INT NOT NULL,                           -- 関連する音声ID
-    status NVARCHAR(50) NOT NULL,                    -- 処理状態（waiting, processing, completed, error）
-    error_message NVARCHAR(MAX),                     -- エラーメッセージ（エラー時のみ）
-    start_datetime DATETIME,                         -- 処理開始日時
-    end_datetime DATETIME,                           -- 処理完了日時
-    inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),
-    updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),
-    deleted_datetime DATETIME NULL,
-    
-    CONSTRAINT FK_MeetingTranscript_Meetings
-        FOREIGN KEY (meeting_id) REFERENCES Meetings(meeting_id),
-    CONSTRAINT FK_MeetingTranscript_Audio
-        FOREIGN KEY (audio_id) REFERENCES MeetingAudio(audio_id)
-)
-
 
 -- 話者マスタ
 CREATE TABLE Speakers (
@@ -161,11 +133,11 @@ CREATE INDEX idx_users_email ON Users(email)                            -- メ�
 CREATE INDEX idx_meetings_user ON Meetings(user_id)                     -- ユーザーIDによる検索用
 CREATE INDEX idx_meetings_datetime ON Meetings(meeting_datetime)        -- 会議日時による検索用
 
-CREATE INDEX idx_meeting_audio_meeting ON MeetingAudio(meeting_id)      -- 会議IDによる検索用
+CREATE INDEX idx_meeting_audio_meeting ON Meetings(meeting_id)      -- 会議IDによる検索用
 
-CREATE INDEX idx_meeting_transcript_meeting ON MeetingTranscript(meeting_id) -- 会議IDによる検索用
-CREATE INDEX idx_meeting_transcript_audio ON MeetingTranscript(audio_id)    -- 音声IDによる検索用
-CREATE INDEX idx_meeting_transcript_status ON MeetingTranscript(status)     -- 状態による検索用
+CREATE INDEX idx_meeting_transcript_meeting ON Meetings(meeting_id) -- 会議IDによる検索用
+CREATE INDEX idx_meeting_transcript_audio ON Meetings(meeting_id)    -- 音声IDによる検索用
+CREATE INDEX idx_meeting_transcript_status ON Meetings(status)     -- 状態による検索用
 
 CREATE INDEX idx_speakers_user ON Speakers(user_id)                      -- ユーザーIDによる検索用
 CREATE INDEX idx_speakers_name ON Speakers(speaker_name)                 -- 話者名による検索用
