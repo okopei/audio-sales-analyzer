@@ -5,6 +5,11 @@ __pycache__/
 *$py.class
 .python_packages
 
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
 # Azurite files
 __azurite_db_blob__.json
 __azurite_db_blob_extent__.json

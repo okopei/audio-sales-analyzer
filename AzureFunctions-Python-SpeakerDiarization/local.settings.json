@@ -1,0 +1,29 @@
+{
+  "bindings": [
+    {
+      "name": "myBlob",
+      "type": "blobTrigger",
+      "direction": "in",
+      "path": "moc-audio/{name}",
+      "connection": "StorageConnection"
+    },
+    {
+      "tableName": "ImageText",
+      "connection": "StorageConnection",
+      "name": "tableBinding",
+      "type": "table",
+      "direction": "out"
+    }
+  ],
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "AzureWebJobsStorageConnection": "UseDevelopmentStorage=true",
+    "SqlConnectionString": "Server=tcp:w-paas-salesanalyzer-sqlserver.database.windows.net,1433;Initial Catalog=w-paas-salesanalyzer-sql;Persist Security Info=False;User ID=sqladmin;Password=Jx8#pV2!mTqZ@5wL;MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;",
+    "SPEECH_KEY": "5wzRZyDpp2lnndHds4qmJLu1dh5jYglgShJVRl6XxRllmyfuiGFOJQQJ99BBACi0881XJ3w3AAAYACOGRwGf",
+    "SPEECH_REGION": "japaneast",
+    "PYTHON_ISOLATE_WORKER_DEPENDENCIES": "1",
+    "PYTHON_ENABLE_WORKER_EXTENSIONS": "1"
+  }
+}
