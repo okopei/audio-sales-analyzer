@@ -3,11 +3,16 @@
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Search, PlusCircle } from "lucide-react"
+import { Search, PlusCircle, LogOut } from "lucide-react"
 import Link from "next/link"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { useAuth } from "@/hooks/useAuth"
+import React from "react"
 
 export default function ManagerDashboard() {
+  // useAuthフックを使用してユーザー情報とログアウト関数を取得
+  const { user, logout } = useAuth();
+  
   const meetings = [
     {
       id: 1,
@@ -77,19 +82,47 @@ export default function ManagerDashboard() {
   ]
 
   // 現在の日付を取得
-  const today = new Date()
-  const dateStr = today.toLocaleDateString("ja-JP", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  })
+  const [dateStr, setDateStr] = React.useState("")
+  
+  React.useEffect(() => {
+    const today = new Date()
+    setDateStr(today.toLocaleDateString("ja-JP", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    }))
+  }, [])
+
+  // ログアウト処理
+  const handleLogout = () => {
+    logout();
+  }
 
   return (
     <div className="min-h-screen bg-zinc-50 p-4 sm:p-6">
       {/* ヘッダー */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-        <div className="text-xl font-medium">{dateStr}</div>
-        <div className="flex items-center gap-2 sm:mx-auto">
+      <div className="mb-6">
+        {/* 上部エリア: 日付とログアウトボタン */}
+        <div className="flex justify-between items-center mb-4">
+          <div className="text-xl font-medium">{dateStr}</div>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={handleLogout}
+            className="text-sm text-rose-500 border-rose-200 hover:bg-rose-50"
+          >
+            <LogOut className="w-4 h-4 mr-2" />
+            <span className="hidden sm:inline">ログアウト</span>
+          </Button>
+        </div>
+        
+        {/* 中央エリア: ユーザー名 */}
+        <div className="text-xl font-medium text-center mb-4">
+          {user?.user_name ? `${user.user_name} MGR` : 'MGR'}
+        </div>
+        
+        {/* 下部エリア: アクションボタン */}
+        <div className="flex items-center justify-center gap-2">
           <Link href="/search">
             <Button variant="outline" size="sm" className="text-sm">
               <Search className="w-4 h-4 mr-2" />
@@ -103,7 +136,6 @@ export default function ManagerDashboard() {
             </Button>
           </Link>
         </div>
-        <div className="text-xl font-medium">管理者</div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

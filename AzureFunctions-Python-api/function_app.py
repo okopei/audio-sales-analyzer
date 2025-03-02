@@ -10,6 +10,9 @@ import traceback
 from azure.functions import AuthLevel, FunctionApp
 import time
 
+# save_meeting_handlerをインポート
+from src.meetings.handlers import save_meeting_handler
+
 app = FunctionApp(http_auth_level=AuthLevel.ANONYMOUS)
 
 @app.function_name(name="HttpTrigger1")
@@ -187,3 +190,36 @@ def register_test(req: func.HttpRequest, users: func.Out[func.SqlRow]) -> func.H
             mimetype="application/json",
             headers=headers
         )
+
+# save_meeting関数に必要なデコレータを追加
+@app.function_name(name="SaveMeeting")
+@app.route(route="meetings", methods=["POST", "OPTIONS"])
+@app.generic_input_binding(
+    arg_name="lastMeeting", 
+    type="sql", 
+    CommandText="SELECT TOP 1 meeting_id FROM dbo.Meetings ORDER BY meeting_id DESC", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+@app.generic_output_binding(
+    arg_name="meetings", 
+    type="sql", 
+    CommandText="dbo.Meetings", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+def save_meeting(req: func.HttpRequest, meetings: func.Out[func.SqlRow], lastMeeting: func.SqlRowList) -> func.HttpResponse:
+    return save_meeting_handler(req, meetings, lastMeeting)
+
+# ユーザーハンドラーをインポート
+from src.users.handlers import login_handler
+
+# ログインエンドポイント
+@app.function_name(name="Login")
+@app.route(route="users/login", methods=["POST", "OPTIONS"])
+@app.generic_input_binding(
+    arg_name="usersQuery", 
+    type="sql", 
+    CommandText="SELECT * FROM dbo.Users", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+def login(req: func.HttpRequest, usersQuery: func.SqlRowList) -> func.HttpResponse:
+    return login_handler(req, usersQuery)
