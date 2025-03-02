@@ -25,7 +25,10 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 // APIのベースURL - 環境に応じて変更
-const API_BASE_URL = 'http://localhost:7071/api'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7071/api'
+
+// ブラウザ環境かどうかを確認する関数
+const isBrowser = () => typeof window !== 'undefined'
 
 // 認証プロバイダーコンポーネント
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -37,17 +40,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const loadUserFromStorage = () => {
       try {
-        const storedUser = localStorage.getItem('user')
-        const storedToken = localStorage.getItem('token')
-        
-        if (storedUser && storedToken) {
-          setUser(JSON.parse(storedUser))
+        if (isBrowser()) {
+          const storedUser = localStorage.getItem('user')
+          const storedToken = localStorage.getItem('token')
+          
+          if (storedUser && storedToken) {
+            setUser(JSON.parse(storedUser))
+          }
         }
       } catch (error) {
         console.error('Error loading user from storage:', error)
         // エラーが発生した場合はストレージをクリア
-        localStorage.removeItem('user')
-        localStorage.removeItem('token')
+        if (isBrowser()) {
+          localStorage.removeItem('user')
+          localStorage.removeItem('token')
+        }
       } finally {
         setLoading(false)
       }
@@ -80,8 +87,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log('Login successful:', data.user)
       
       // ローカルストレージに保存
-      localStorage.setItem('token', data.token)
-      localStorage.setItem('user', JSON.stringify(data.user))
+      if (isBrowser()) {
+        localStorage.setItem('token', data.token)
+        localStorage.setItem('user', JSON.stringify(data.user))
+      }
       
       setUser(data.user)
       
@@ -101,9 +110,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // ログアウト処理
   const logout = () => {
-    localStorage.removeItem('token')
-    localStorage.removeItem('user')
+    if (isBrowser()) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+    }
     setUser(null)
+    router.push('/')
   }
 
   // コンテキスト値の作成
