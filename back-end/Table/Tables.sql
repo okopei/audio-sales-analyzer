@@ -127,6 +127,56 @@ CREATE TABLE MessageReads (
         FOREIGN KEY (reader_id) REFERENCES Users(user_id)
 )
 
+-- 基本情報テーブル
+CREATE TABLE BasicInfo (
+    user_id INT NOT NULL,                              -- ユーザーID
+    meeting_id INT NOT NULL,                           -- 会議ID
+    meeting_datetime DATETIME NOT NULL,                -- 実施日時
+    client_company_name NVARCHAR(100) NOT NULL,        -- 顧客企業名
+    client_contact_name NVARCHAR(50) NOT NULL,         -- 担当者名
+    industry_type NVARCHAR(50) NOT NULL,              -- 業種
+    company_scale NVARCHAR(50) NOT NULL,              -- 規模
+    sales_goal NVARCHAR(500) NOT NULL,                -- 商談ゴール
+    inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),
+    updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),
+    deleted_datetime DATETIME NULL,                    -- 論理削除用
+
+    CONSTRAINT PK_BasicInfo PRIMARY KEY (user_id, meeting_id),
+    CONSTRAINT FK_BasicInfo_Users
+        FOREIGN KEY (user_id) REFERENCES Users(user_id),
+    CONSTRAINT FK_BasicInfo_Meetings
+        FOREIGN KEY (meeting_id) REFERENCES Meetings(meeting_id)
+)
+
+-- コメントテーブル
+CREATE TABLE Comments (
+    comment_id INT PRIMARY KEY IDENTITY(1,1),         -- コメントの一意識別子
+    message_id INT NOT NULL,                          -- 関連するメッセージID
+    user_id INT NOT NULL,                             -- コメント投稿者のユーザーID
+    content NVARCHAR(MAX) NOT NULL,                   -- コメント内容
+    inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),
+    updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),
+    deleted_datetime DATETIME NULL,                    -- 論理削除用
+    
+    CONSTRAINT FK_Comments_Messages
+        FOREIGN KEY (message_id) REFERENCES Messages(message_id),
+    CONSTRAINT FK_Comments_Users
+        FOREIGN KEY (user_id) REFERENCES Users(user_id)
+)
+
+-- コメント既読状態管理
+CREATE TABLE CommentReads (
+    comment_id INT NOT NULL,                          -- 既読されたコメントID
+    reader_id INT NOT NULL,                           -- 既読したユーザーID
+    read_datetime DATETIME NOT NULL DEFAULT GETDATE(), -- 既読した日時
+    
+    CONSTRAINT PK_CommentReads PRIMARY KEY (comment_id, reader_id),
+    CONSTRAINT FK_CommentReads_Comments
+        FOREIGN KEY (comment_id) REFERENCES Comments(comment_id),
+    CONSTRAINT FK_CommentReads_Users
+        FOREIGN KEY (reader_id) REFERENCES Users(user_id)
+)
+
 -- インデックス
 CREATE INDEX idx_users_email ON Users(email)                            -- メールアドレスによる検索用
 
@@ -155,3 +205,13 @@ CREATE INDEX idx_messages_speaker ON Messages(speaker_id)                -- 話�
 CREATE INDEX idx_messages_display_order ON Messages(display_order)        -- 表示順による検索用
 
 CREATE INDEX idx_message_reads_datetime ON MessageReads(read_datetime)    -- 既読日時による検索用
+
+CREATE INDEX idx_basicinfo_meeting ON BasicInfo(meeting_id)           -- 会議IDによる検索用
+CREATE INDEX idx_basicinfo_company ON BasicInfo(client_company_name)  -- 顧客企業名による検索用
+CREATE INDEX idx_basicinfo_industry ON BasicInfo(industry_type)       -- 業種による検索用
+
+CREATE INDEX idx_comments_message ON Comments(message_id)              -- メッセージIDによる検索用
+CREATE INDEX idx_comments_user ON Comments(user_id)                    -- ユーザーIDによる検索用
+CREATE INDEX idx_comments_datetime ON Comments(inserted_datetime)      -- 投稿日時による検索用
+
+CREATE INDEX idx_comment_reads_datetime ON CommentReads(read_datetime) -- 既読日時による検索用
