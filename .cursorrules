@@ -51,6 +51,7 @@
 - パフォーマンスとコストを考慮したクエリ最適化
 - トランザクション管理とデータ整合性の確保
 - 適切なバックアップと復旧戦略の実装
+- ローカル環境でのSQL接続には、pyodbcではなく他の方法（例：SQLAlchemy、asyncpg）を使用すること
 
 ### Azure関連
 - Azure Speech Servicesの利用
@@ -158,20 +159,23 @@ audio-sales-analyzer/
 ```
 
 注意: 
-1. `__pycache__`や`venv`はGit管理外であり、各開発者の環境で自動生成されます
-2. 代わりに`requirements.txt`を共有することで、必要なパッケージを各環境で再現できます
+1. `__pycache__`や`node_modules`、`.venv`はGit管理外であり、各開発者の環境で自動生成されます
+2. 代わりに`requirements.txt`や`package.json`を共有することで、必要なパッケージを各環境で再現できます
 3. `.gitignore`に以下のパターンを追加して、これらのファイルをGit管理から除外します：
    ```
    __pycache__/
    *.pyc
    venv/
+   .venv/
+   node_modules/
+   .next/
    ```
 
-開発の進行に応じて、以下のような推奨ディレクトリの追加を検討します：
-- components/: 再利用可能なコンポーネント
-- hooks/: カスタムフック
-- lib/: 外部サービス連携
-- types/: 型定義
-- utils/: ユーティリティ関数
+現在のプロジェクト構造では、以下のディレクトリが主要な役割を担っています：
+
+1. `next-app/` - 主要なフロントエンドアプリケーション（Next.js）
+2. `AzureFunctions-Python-api/` - バックエンドAPI（Azure Functions）
+3. `AzureFunctions-Python-SpeakerDiarization/` - 話者分離機能
+4. `back-end/` - データベース定義用
 
 私（AIアシスタント）は、プロジェクトの進行に応じて必要なディレクトリ構成の変更を提案します。例えば、新機能の追加やコードの再構成が必要な場合、最適なディレクトリ構造を提案し、この構成図の更新を行います。 
