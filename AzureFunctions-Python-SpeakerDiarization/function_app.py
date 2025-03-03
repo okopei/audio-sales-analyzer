@@ -6,6 +6,7 @@ import tempfile
 import uuid
 import time
 import json
+import re
 from datetime import datetime, timedelta
 from azure.cognitiveservices.speech import (
     SpeechConfig,
@@ -17,6 +18,31 @@ from azure.data.tables import TableClient
 from azure.identity import DefaultAzureCredential
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+
+# フィラーワードのリスト（日本語）
+FILLER_WORDS = [
+    "あの", "あのー", "あのぉ", "あー", "あぁ", "えー", "えーと", "えっと", "えっとー", 
+    "えーっと", "まぁ", "まあ", "そのー", "そのぉ", "んー", "んーと", "うーん", "うん", 
+    "ま、", "あ、", "え、", "ええと", "ええ", "そう", "そうですね", "なんか", "ちょっと",
+    "あれ", "これ", "それ", "どれ", "こう", "そう", "ああ", "はい", "うん"
+]
+
+# フィラーワードを削除する関数
+def remove_filler(text):
+    """フィラーワードを文章から削除する"""
+    # 空白で区切られた単語単位でフィラーを削除
+    words = text.split()
+    filtered_words = [word for word in words if word.lower() not in FILLER_WORDS]
+    
+    # 正規表現パターンでフィラーを削除（単語の一部として含まれる場合も対応）
+    pattern = r'\b(' + '|'.join(re.escape(word) for word in FILLER_WORDS) + r')\b'
+    cleaned_text = ' '.join(filtered_words)
+    cleaned_text = re.sub(pattern, '', cleaned_text)
+    
+    # 連続する空白を1つにまとめる
+    cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+    
+    return cleaned_text
 
 @app.function_name(name="ProcessAudio")
 @app.blob_trigger(arg_name="myblob", 
@@ -67,8 +93,17 @@ def process_audio(myblob: func.InputStream, meetingsTable: func.Out[func.SqlRow]
         
         def handle_result(evt):
             if evt.result.reason == ResultReason.RecognizedSpeech:
+                # フィラーワードを削除
+                original_text = evt.result.text
+                cleaned_text = remove_filler(original_text)
+                
+                # ログ出力（デバッグ用）
+                if original_text != cleaned_text:
+                    logging.info(f"フィラー除去: '{original_text}' -> '{cleaned_text}'")
+                
                 result = {
-                    "text": evt.result.text,
+                    "text": cleaned_text,  # フィラー除去済みのテキスト
+                    "original_text": original_text,  # 元のテキスト
                     "offset": str(evt.result.offset),
                     "duration": str(evt.result.duration)
                 }
