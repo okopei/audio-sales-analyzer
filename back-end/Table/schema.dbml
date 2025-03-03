@@ -1,0 +1,143 @@
+// Users table
+Table Users {
+  user_id int [pk, increment]
+  user_name varchar(50) [not null]
+  email varchar(256) [not null, unique]
+  password_hash nvarchar(128) [not null]
+  salt nvarchar(36) [not null]
+  is_active bit [default: 1]
+  account_status varchar(20) [default: 'ACTIVE']
+  last_login_datetime datetime
+  inserted_datetime datetime [default: `GETDATE()`]
+  updated_datetime datetime [default: `GETDATE()`]
+  deleted_datetime datetime
+  password_reset_token varchar(100)
+  password_reset_expires datetime
+  login_attempt_count int [default: 0]
+}
+
+// Meetings table
+Table Meetings {
+  meeting_id int [pk, increment]
+  user_id int [ref: > Users.user_id, not null]
+  title nvarchar(255) [not null]
+  file_name nvarchar(200) [not null]
+  file_path nvarchar(1000) [not null]
+  file_size bigint [not null]
+  duration_seconds int [not null, default: 0]
+  status nvarchar(50) [not null, default: 'processing']
+  transcript_text nvarchar
+  error_message nvarchar
+  meeting_datetime datetime [not null]
+  start_datetime datetime [not null]
+  end_datetime datetime
+  inserted_datetime datetime [default: `GETDATE()`]
+  updated_datetime datetime [default: `GETDATE()`]
+  deleted_datetime datetime
+}
+
+// Speakers table
+Table Speakers {
+  speaker_id int [pk, increment]
+  speaker_name nvarchar(50) [not null]
+  speaker_role nvarchar(100)
+  user_id int [ref: > Users.user_id]
+  inserted_datetime datetime [default: `GETDATE()`]
+  updated_datetime datetime [default: `GETDATE()`]
+  deleted_datetime datetime
+}
+
+// Participants table
+Table Participants {
+  meeting_id int [ref: > Meetings.meeting_id, not null]
+  speaker_id int [ref: > Speakers.speaker_id, not null]
+  inserted_datetime datetime [default: `GETDATE()`]
+  updated_datetime datetime [default: `GETDATE()`]
+  deleted_datetime datetime
+
+  indexes {
+    (meeting_id, speaker_id) [pk]
+  }
+}
+
+// ConversationSegments table
+Table ConversationSegments {
+  segment_id int [pk, increment]
+  user_id int [ref: > Users.user_id, not null]
+  speaker_id int [ref: > Speakers.speaker_id, not null]
+  meeting_id int [ref: > Meetings.meeting_id, not null]
+  title nvarchar(200) [not null]
+  content nvarchar
+  file_name nvarchar(200) [not null]
+  file_path nvarchar(1000) [not null]
+  file_size bigint [not null]
+  duration_seconds int [not null, default: 0]
+  status nvarchar(50) [not null, default: 'processing']
+  inserted_datetime datetime [default: `GETDATE()`]
+  updated_datetime datetime [default: `GETDATE()`]
+  deleted_datetime datetime
+}
+
+// Messages table
+Table Messages {
+  message_id int [pk, increment]
+  meeting_id int [ref: > Meetings.meeting_id, not null]
+  segment_id int [ref: > ConversationSegments.segment_id, not null]
+  speaker_id int [not null]
+  display_order int [not null]
+  inserted_datetime datetime [default: `GETDATE()`]
+  updated_datetime datetime [default: `GETDATE()`]
+  deleted_datetime datetime
+}
+
+// MessageReads table
+Table MessageReads {
+  message_id int [ref: > Messages.message_id, not null]
+  reader_id int [ref: > Users.user_id, not null]
+  read_datetime datetime [default: `GETDATE()`]
+
+  indexes {
+    (message_id, reader_id) [pk]
+  }
+}
+
+// BasicInfo table
+Table BasicInfo {
+  user_id int [ref: > Users.user_id, not null]
+  meeting_id int [ref: > Meetings.meeting_id, not null]
+  meeting_datetime datetime [not null]
+  client_company_name nvarchar(100) [not null]
+  client_contact_name nvarchar(50) [not null]
+  industry_type nvarchar(50) [not null]
+  company_scale nvarchar(50) [not null]
+  sales_goal nvarchar(500) [not null]
+  inserted_datetime datetime [default: `GETDATE()`]
+  updated_datetime datetime [default: `GETDATE()`]
+  deleted_datetime datetime
+
+  indexes {
+    (user_id, meeting_id) [pk]
+  }
+}
+
+// Comments table
+Table Comments {
+  comment_id int [pk, increment]
+  message_id int [ref: > Messages.message_id, not null]
+  user_id int [ref: > Users.user_id, not null]
+  content nvarchar [not null]
+  inserted_datetime datetime [default: `GETDATE()`]
+  updated_datetime datetime [default: `GETDATE()`]
+  deleted_datetime datetime
+}
+
+// CommentReads table
+Table CommentReads {
+  comment_id int [ref: > Comments.comment_id, not null]
+  reader_id int [ref: > Users.user_id, not null]
+  read_datetime datetime [default: `GETDATE()`]
+
+  indexes {
+    (comment_id, reader_id) [pk]
+  }
+} 

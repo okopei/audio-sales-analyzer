@@ -76,22 +76,27 @@ CREATE TABLE Participants (
 )
 
 -- ミーティングメモ（文字起こし結果を含む）
-CREATE TABLE MeetingMemo (
-    memo_id INT PRIMARY KEY IDENTITY(1,1),           -- メモの一意識別子
-    user_id INT NOT NULL,                            -- メモの作成者
+CREATE TABLE ConversationSegments (
+    segment_id INT PRIMARY KEY IDENTITY(1,1),        -- セグメントの一意識別子
+    user_id INT NOT NULL,                            -- 作成者
     speaker_id INT NOT NULL,                         -- 発言者
     meeting_id INT NOT NULL,                         -- 関連する会議ID
-    title NVARCHAR(200) NOT NULL,                    -- メモのタイトル
-    content NVARCHAR(MAX),                           -- メモの内容
+    title NVARCHAR(200) NOT NULL,                    -- セグメントのタイトル
+    content NVARCHAR(MAX),                           -- 文字起こし内容
+    file_name NVARCHAR(200) NOT NULL,                -- 音声ファイル名
+    file_path NVARCHAR(1000) NOT NULL,               -- 音声ファイルパス
+    file_size BIGINT NOT NULL,                       -- ファイルサイズ（バイト）
+    duration_seconds INT NOT NULL DEFAULT 0,          -- 音声時間（秒）
+    status NVARCHAR(50) NOT NULL DEFAULT 'processing', -- 処理状態（waiting, processing, completed, error）
     inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),
     updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),
     deleted_datetime DATETIME NULL,
     
-    CONSTRAINT FK_MeetingMemo_Users 
+    CONSTRAINT FK_ConversationSegments_Users 
         FOREIGN KEY (user_id) REFERENCES Users(user_id),
-    CONSTRAINT FK_MeetingMemo_Speakers
+    CONSTRAINT FK_ConversationSegments_Speakers
         FOREIGN KEY (speaker_id) REFERENCES Speakers(speaker_id),
-    CONSTRAINT FK_MeetingMemo_Meetings
+    CONSTRAINT FK_ConversationSegments_Meetings
         FOREIGN KEY (meeting_id) REFERENCES Meetings(meeting_id)
 )
 
@@ -99,8 +104,8 @@ CREATE TABLE MeetingMemo (
 CREATE TABLE Messages (
     message_id INT PRIMARY KEY IDENTITY(1,1),         -- メッセージの一意識別子
     meeting_id INT NOT NULL,                          -- 関連する会議ID
-    memo_id INT NOT NULL,                            -- 関連するメモID
-    speaker_id INT NOT NULL,                         -- 発話者ID
+    segment_id INT NOT NULL,                          -- 関連するセグメントID
+    speaker_id INT NOT NULL,                          -- 発話者ID
     display_order INT NOT NULL,                       -- 表示順序
     inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),
     updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),
@@ -108,8 +113,8 @@ CREATE TABLE Messages (
     
     CONSTRAINT FK_Messages_Meetings
         FOREIGN KEY (meeting_id) REFERENCES Meetings(meeting_id),
-    CONSTRAINT FK_Messages_MeetingMemo
-        FOREIGN KEY (memo_id) REFERENCES MeetingMemo(memo_id),
+    CONSTRAINT FK_Messages_ConversationSegments
+        FOREIGN KEY (segment_id) REFERENCES ConversationSegments(segment_id),
     CONSTRAINT FK_Messages_Participants
         FOREIGN KEY (meeting_id, speaker_id) REFERENCES Participants(meeting_id, speaker_id)
 )
@@ -194,13 +199,13 @@ CREATE INDEX idx_speakers_name ON Speakers(speaker_name)                 -- 話�
 
 CREATE INDEX idx_participants_speaker ON Participants(speaker_id)         -- 話者IDによる検索用
 
-CREATE INDEX idx_meeting_memo_user ON MeetingMemo(user_id)               -- ユーザーIDによる検索用
-CREATE INDEX idx_meeting_memo_speaker ON MeetingMemo(speaker_id)         -- 話者IDによる検索用
-CREATE INDEX idx_meeting_memo_meeting ON MeetingMemo(meeting_id)         -- 会議IDによる検索用
-CREATE INDEX idx_meeting_memo_datetime ON MeetingMemo(inserted_datetime) -- 日時による検索用
+CREATE INDEX idx_conversation_segments_user ON ConversationSegments(user_id)               -- ユーザーIDによる検索用
+CREATE INDEX idx_conversation_segments_speaker ON ConversationSegments(speaker_id)         -- 話者IDによる検索用
+CREATE INDEX idx_conversation_segments_meeting ON ConversationSegments(meeting_id)         -- 会議IDによる検索用
+CREATE INDEX idx_conversation_segments_datetime ON ConversationSegments(inserted_datetime) -- 日時による検索用
 
 CREATE INDEX idx_messages_meeting ON Messages(meeting_id)                -- 会議IDによる検索用
-CREATE INDEX idx_messages_memo ON Messages(memo_id)                      -- メモIDによる検索用
+CREATE INDEX idx_messages_segment ON Messages(segment_id)                      -- セグメントIDによる検索用
 CREATE INDEX idx_messages_speaker ON Messages(speaker_id)                -- 話者IDによる検索用
 CREATE INDEX idx_messages_display_order ON Messages(display_order)        -- 表示順による検索用
 
