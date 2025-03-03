@@ -2,18 +2,26 @@ import azure.functions as func
 import logging
 import uuid
 import json
-import pyodbc
 import os
 import bcrypt
 from datetime import datetime, UTC
 import traceback
 from azure.functions import AuthLevel, FunctionApp
 import time
+from azure.identity import DefaultAzureCredential
+from azure.data.tables import TableServiceClient
 
 # save_meeting_handlerをインポート
 from src.meetings.handlers import save_meeting_handler
 
 app = FunctionApp(http_auth_level=AuthLevel.ANONYMOUS)
+
+# データベース接続文字列を環境変数から取得
+def get_db_connection():
+    connection_string = os.environ.get('SqlConnectionString')
+    if not connection_string:
+        raise ValueError("SqlConnectionString environment variable is not set")
+    return pyodbc.connect(connection_string)
 
 @app.function_name(name="HttpTrigger1")
 @app.route(route="http_trigger")
@@ -193,7 +201,7 @@ def register_test(req: func.HttpRequest, users: func.Out[func.SqlRow]) -> func.H
 
 # save_meeting関数に必要なデコレータを追加
 @app.function_name(name="SaveMeeting")
-@app.route(route="meetings", methods=["POST", "OPTIONS"])
+@app.route(route="meetings/save", methods=["POST", "OPTIONS"])
 @app.generic_input_binding(
     arg_name="lastMeeting", 
     type="sql", 
@@ -223,3 +231,101 @@ from src.users.handlers import login_handler
 )
 def login(req: func.HttpRequest, usersQuery: func.SqlRowList) -> func.HttpResponse:
     return login_handler(req, usersQuery)
+
+@app.function_name(name="GetMeetings")
+@app.route(route="meetings", methods=["GET", "OPTIONS"])
+@app.generic_input_binding(
+    arg_name="meetingsQuery", 
+    type="sql", 
+    CommandText="SELECT meeting_id, user_id, title, meeting_datetime, duration_seconds, status, transcript_text, file_name, file_size, error_message FROM dbo.Meetings", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+def get_meetings(req: func.HttpRequest, meetingsQuery: func.SqlRowList) -> func.HttpResponse:
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization"
+    }
+
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=headers)
+
+    try:
+        user_id = req.params.get('user_id')
+        if not user_id:
+            return func.HttpResponse(
+                json.dumps({"error": "user_id is required"}),
+                status_code=400,
+                mimetype="application/json",
+                headers=headers
+            )
+        
+        # デバッグ用に、全てのミーティングデータをログに出力
+        meetings_list = list(meetingsQuery)
+        logging.info(f"Total meetings retrieved from DB: {len(meetings_list)}")
+        
+        # ユーザーIDフィルタリング
+        meetings = []
+        for row in meetings_list:
+            row_dict = dict(row)
+            row_user_id = row_dict.get("user_id")
+            
+            # int型に変換して比較
+            try:
+                if int(row_user_id) == int(user_id):
+                    meeting_datetime = row_dict.get("meeting_datetime")
+                    
+                    # 日付時刻の処理を修正
+                    datetime_str = None
+                    if meeting_datetime:
+                        # datetimeオブジェクトかどうかを確認
+                        if hasattr(meeting_datetime, 'isoformat'):
+                            datetime_str = meeting_datetime.isoformat()
+                        else:
+                            # 既に文字列の場合はそのまま使用
+                            datetime_str = str(meeting_datetime)
+                    
+                    meetings.append({
+                        "meeting_id": row_dict.get("meeting_id"),
+                        "user_id": row_user_id,
+                        "title": row_dict.get("title"),
+                        "meeting_datetime": datetime_str,
+                        "duration_seconds": row_dict.get("duration_seconds"),
+                        "status": row_dict.get("status"),
+                        "transcript_text": row_dict.get("transcript_text"),
+                        "file_name": row_dict.get("file_name"),
+                        "file_size": row_dict.get("file_size"),
+                        "error_message": row_dict.get("error_message")
+                    })
+            except (ValueError, TypeError) as ve:
+                logging.error(f"Error converting user_id: {str(ve)}")
+        
+        # 最終的なミーティング数をログに出力
+        logging.info(f"Filtered meetings count: {len(meetings)}")
+        
+        if meetings:
+            return func.HttpResponse(
+                json.dumps({"meetings": meetings}),
+                mimetype="application/json",
+                headers=headers
+            )
+        else:
+            return func.HttpResponse(
+                json.dumps({
+                    "message": "No meetings found for the specified user",
+                    "debug": {
+                        "user_id_requested": user_id,
+                        "total_records": len(meetings_list)
+                    }
+                }),
+                mimetype="application/json",
+                headers=headers
+            )
+    except Exception as e:
+        logging.error(f"Error retrieving meetings: {str(e)}")
+        return func.HttpResponse(
+            json.dumps({"error": f"Internal server error: {str(e)}"}),
+            status_code=500,
+            mimetype="application/json",
+            headers=headers
+        )
