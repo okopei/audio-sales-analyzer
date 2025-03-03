@@ -1,6 +1,6 @@
 "use client"
 
-import React from "react"
+import React, { useState, useEffect } from "react"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -9,42 +9,32 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useAuth } from "@/hooks/useAuth"
+import { useMeetings } from "@/hooks/useMeetings"
 import ProtectedRoute from "@/components/auth/ProtectedRoute"
 
 export default function Dashboard() {
   const { user, logout } = useAuth()
+  const { meetings, loading, error } = useMeetings()
   const router = useRouter()
+  
+  // 日付表示用の状態
+  const [dateStr, setDateStr] = useState("")
+  
+  // クライアントサイドでのみ日付を取得
+  useEffect(() => {
+    const today = new Date()
+    setDateStr(today.toLocaleDateString("ja-JP", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      weekday: "long"
+    }))
+  }, [])
   
   // ログアウト処理
   const handleLogout = () => {
-    logout() // ProtectedRoute がリダイレクトを処理するため、ここでは単にログアウトするだけ
+    logout()
   }
-  
-  const meetings = [
-    {
-      id: 1,
-      datetime: "02-07 14:00",
-      client: "株式会社ABC",
-    },
-    {
-      id: 2,
-      datetime: "02-07 11:30",
-      client: "DEF工業",
-    },
-    {
-      id: 3,
-      datetime: "02-06 15:00",
-      client: "GHIシステムズ",
-    },
-    // スクロールをテストするために追加のダミーデータ
-    ...Array(10)
-      .fill(null)
-      .map((_, index) => ({
-        id: index + 4,
-        datetime: "02-05 10:00",
-        client: `顧客 ${index + 4}`,
-      })),
-  ]
 
   const comments = [
     {
@@ -68,29 +58,27 @@ export default function Dashboard() {
       commentTime: "02-06 16:30",
       isRead: false,
     },
-    // スクロールをテストするために追加のダミーデータ
-    ...Array(10)
-      .fill(null)
-      .map((_, index) => ({
-        id: index + 4,
-        client: `顧客 ${index + 4}`,
-        comment: "これはテスト用のコメントです。",
-        commentTime: "02-05 11:00",
-        isRead: index % 2 === 0,
-      })),
   ]
 
-  // クライアントサイドでのみ日付を取得するように修正
-  const [dateStr, setDateStr] = React.useState("")
-  
-  React.useEffect(() => {
-    const today = new Date()
-    setDateStr(today.toLocaleDateString("ja-JP", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    }))
-  }, [])
+  // 日付をフォーマットする関数
+  const formatDateTime = (dateTimeStr: string) => {
+    const date = new Date(dateTimeStr)
+    return date.toLocaleDateString("ja-JP", {
+      month: "2-digit",
+      day: "2-digit"
+    })
+  }
+
+  // 所要時間を表示用にフォーマットする関数
+  const formatDuration = (seconds: number) => {
+    const minutes = Math.floor(seconds / 60)
+    if (minutes < 60) {
+      return `${minutes}分`
+    }
+    const hours = Math.floor(minutes / 60)
+    const remainingMinutes = minutes % 60
+    return `${hours}時間${remainingMinutes > 0 ? `${remainingMinutes}分` : ''}`
+  }
 
   return (
     <ProtectedRoute>
@@ -137,31 +125,60 @@ export default function Dashboard() {
           {/* 面談一覧 */}
           <Card className="p-4 sm:p-6">
             <h2 className="text-lg sm:text-xl font-semibold mb-4">過去商談一覧</h2>
+            {error && (
+              <div className="text-sm text-red-500 mb-4">
+                {error}
+              </div>
+            )}
             <ScrollArea className="h-[300px] sm:h-[600px]">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b text-sm">
-                    <th className="text-left pb-2">日時</th>
-                    <th className="text-left pb-2">顧客名</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {meetings.map((meeting) => (
-                    <tr key={meeting.id} className="border-b last:border-0 hover:bg-slate-50 transition-colors">
-                      <td className="py-3">
-                        <Link href={`/feedback#${meeting.id}`} className="block">
-                          {meeting.datetime}
-                        </Link>
-                      </td>
-                      <td className="py-3">
-                        <Link href={`/feedback#${meeting.id}`} className="block">
-                          {meeting.client}
-                        </Link>
-                      </td>
+              {loading ? (
+                <div className="flex items-center justify-center h-full">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-rose-500"></div>
+                </div>
+              ) : meetings.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-[200px] text-gray-500">
+                  <p className="mb-2">商談データがありません</p>
+                  <Link href="/newmeeting">
+                    <Button variant="outline" size="sm" className="text-sm">
+                      <PlusCircle className="w-4 h-4 mr-2" />
+                      新規商談を作成
+                    </Button>
+                  </Link>
+                </div>
+              ) : (
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b text-sm">
+                      <th className="text-left pb-2 pr-4">日付</th>
+                      <th className="text-left pb-2 pr-4">タイトル</th>
+                      <th className="text-left pb-2">所要時間</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {meetings.map((meeting) => (
+                      <tr key={meeting.meeting_id} className="border-b last:border-0 hover:bg-slate-50 transition-colors">
+                        <td className="py-3 pr-4">
+                          <Link href={`/feedback/${meeting.meeting_id}`} className="block">
+                            {formatDateTime(meeting.meeting_datetime)}
+                          </Link>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <Link href={`/feedback/${meeting.meeting_id}`} className="block">
+                            <div className="flex flex-col">
+                              <span>{meeting.title}</span>
+                            </div>
+                          </Link>
+                        </td>
+                        <td className="py-3">
+                          <Link href={`/feedback/${meeting.meeting_id}`} className="block">
+                            {formatDuration(meeting.duration_seconds)}
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </ScrollArea>
           </Card>
 
