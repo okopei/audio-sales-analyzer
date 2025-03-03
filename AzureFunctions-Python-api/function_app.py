@@ -275,7 +275,7 @@ def get_meetings(req: func.HttpRequest, meetingsQuery: func.SqlRowList) -> func.
                 if int(row_user_id) == int(user_id):
                     meeting_datetime = row_dict.get("meeting_datetime")
                     
-                    # 日付時刻の処理を修正
+                    # meeting_datetimeの処理を修正
                     datetime_str = None
                     if meeting_datetime:
                         # datetimeオブジェクトかどうかを確認
@@ -323,6 +323,139 @@ def get_meetings(req: func.HttpRequest, meetingsQuery: func.SqlRowList) -> func.
             )
     except Exception as e:
         logging.error(f"Error retrieving meetings: {str(e)}")
+        return func.HttpResponse(
+            json.dumps({"error": f"Internal server error: {str(e)}"}),
+            status_code=500,
+            mimetype="application/json",
+            headers=headers
+        )
+
+@app.function_name(name="GetMembersMeetings")
+@app.route(route="members-meetings", methods=["GET", "OPTIONS"])
+@app.generic_input_binding(
+    arg_name="usersQuery", 
+    type="sql", 
+    CommandText="SELECT user_id, user_name, manager_name FROM dbo.Users", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+@app.generic_input_binding(
+    arg_name="meetingsQuery", 
+    type="sql", 
+    CommandText="SELECT m.meeting_id, m.user_id, m.title, m.meeting_datetime, m.duration_seconds, m.status, m.transcript_text, m.file_name, m.file_size, m.error_message, u.user_name FROM dbo.Meetings m JOIN dbo.Users u ON m.user_id = u.user_id", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+def get_members_meetings(req: func.HttpRequest, usersQuery: func.SqlRowList, meetingsQuery: func.SqlRowList) -> func.HttpResponse:
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization"
+    }
+
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=headers)
+
+    try:
+        manager_id = req.params.get('manager_id')
+        logging.info(f"[DEBUG] Received manager_id: {manager_id}")
+        
+        if not manager_id:
+            return func.HttpResponse(
+                json.dumps({"error": "manager_id is required"}),
+                status_code=400,
+                mimetype="application/json",
+                headers=headers
+            )
+        
+        # マネージャー名を取得
+        manager_name = None
+        for user in usersQuery:
+            if str(user.get("user_id")) == manager_id:
+                manager_name = user.get("user_name")
+                break
+        
+        logging.info(f"[DEBUG] Found manager_name: {manager_name}")
+        
+        if not manager_name:
+            return func.HttpResponse(
+                json.dumps({"error": "Manager not found"}),
+                status_code=404,
+                mimetype="application/json",
+                headers=headers
+            )
+        
+        # マネージャーが管理するチームメンバーのIDを取得
+        team_member_ids = []
+        for user in usersQuery:
+            user_dict = dict(user)
+            if user_dict.get("manager_name") == manager_name:
+                user_id = str(user_dict.get("user_id"))
+                team_member_ids.append(user_id)
+                logging.info(f"[DEBUG] Found team member - user_id: {user_id}, user_name: {user_dict.get('user_name')}, manager_name: {user_dict.get('manager_name')}")
+        
+        logging.info(f"[DEBUG] Team member IDs: {team_member_ids}")
+        
+        # すべてのユーザーのmanager_name情報をログに出力
+        logging.info("[DEBUG] All users manager_name info:")
+        for user in usersQuery:
+            user_dict = dict(user)
+            logging.info(f"[DEBUG] user_id: {user_dict.get('user_id')}, user_name: {user_dict.get('user_name')}, manager_name: {user_dict.get('manager_name')}")
+        
+        # チームメンバーのミーティングを取得
+        meetings = []
+        meeting_count = 0
+        for row in meetingsQuery:
+            try:
+                row_dict = dict(row)
+                row_user_id = str(row_dict.get("user_id"))
+                
+                if row_user_id in team_member_ids:
+                    meeting_datetime = row_dict.get("meeting_datetime")
+                    
+                    # meeting_datetimeの処理を修正
+                    datetime_str = None
+                    if meeting_datetime:
+                        # datetimeオブジェクトかどうかを確認
+                        if hasattr(meeting_datetime, 'isoformat'):
+                            datetime_str = meeting_datetime.isoformat()
+                        else:
+                            # 既に文字列の場合はそのまま使用
+                            datetime_str = str(meeting_datetime)
+                    
+                    meetings.append({
+                        "meeting_id": row_dict.get("meeting_id"),
+                        "user_id": row_dict.get("user_id"),
+                        "user_name": row_dict.get("user_name"),
+                        "title": row_dict.get("title"),
+                        "meeting_datetime": datetime_str,
+                        "duration_seconds": row_dict.get("duration_seconds"),
+                        "status": row_dict.get("status"),
+                        "transcript_text": row_dict.get("transcript_text"),
+                        "file_name": row_dict.get("file_name"),
+                        "file_size": row_dict.get("file_size"),
+                        "error_message": row_dict.get("error_message")
+                    })
+                    meeting_count += 1
+                    logging.info(f"[DEBUG] Found meeting for team member - meeting_id: {row_dict.get('meeting_id')}, user_id: {row_user_id}, title: {row_dict.get('title')}")
+            except Exception as row_error:
+                logging.error(f"Error processing row: {str(row_error)}")
+        
+        logging.info(f"[DEBUG] Total meetings found: {meeting_count}")
+        
+        if meetings:
+            return func.HttpResponse(
+                json.dumps({"meetings": meetings}),
+                mimetype="application/json",
+                headers=headers
+            )
+        else:
+            logging.info(f"[DEBUG] No meetings found for team members with IDs: {team_member_ids}")
+            return func.HttpResponse(
+                json.dumps({"message": "No meetings found for the team members"}),
+                mimetype="application/json",
+                headers=headers
+            )
+    except Exception as e:
+        logging.error(f"Error retrieving team meetings: {str(e)}")
         return func.HttpResponse(
             json.dumps({"error": f"Internal server error: {str(e)}"}),
             status_code=500,
