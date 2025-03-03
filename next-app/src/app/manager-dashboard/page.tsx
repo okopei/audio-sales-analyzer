@@ -7,42 +7,14 @@ import { Search, PlusCircle, LogOut } from "lucide-react"
 import Link from "next/link"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useAuth } from "@/hooks/useAuth"
-import React from "react"
+import { useMembersMeetings } from "@/hooks/useMembersMeetings"
+import React, { useState, useEffect } from "react"
 
 export default function ManagerDashboard() {
   // useAuthフックを使用してユーザー情報とログアウト関数を取得
   const { user, logout } = useAuth();
+  const { meetings, loading, error } = useMembersMeetings();
   
-  const meetings = [
-    {
-      id: 1,
-      datetime: "02-07 14:00",
-      client: "株式会社ABC",
-      salesPerson: "田中 一郎",
-    },
-    {
-      id: 2,
-      datetime: "02-07 11:30",
-      client: "DEF工業",
-      salesPerson: "鈴木 花子",
-    },
-    {
-      id: 3,
-      datetime: "02-06 15:00",
-      client: "GHIシステムズ",
-      salesPerson: "佐藤 健一",
-    },
-    // スクロールをテストするために追加のダミーデータ
-    ...Array(10)
-      .fill(null)
-      .map((_, index) => ({
-        id: index + 4,
-        datetime: "02-05 10:00",
-        client: `顧客 ${index + 4}`,
-        salesPerson: "山田 太郎",
-      })),
-  ]
-
   const comments = [
     {
       id: 1,
@@ -68,23 +40,12 @@ export default function ManagerDashboard() {
       salesPerson: "佐藤 健一",
       isRead: false,
     },
-    // スクロールをテストするために追加のダミーデータ
-    ...Array(10)
-      .fill(null)
-      .map((_, index) => ({
-        id: index + 4,
-        client: `顧客 ${index + 4}`,
-        comment: "これはテスト用のコメントです。",
-        commentTime: "02-05 11:00",
-        salesPerson: "山田 太郎",
-        isRead: index % 2 === 0,
-      })),
   ]
 
   // 現在の日付を取得
-  const [dateStr, setDateStr] = React.useState("")
+  const [dateStr, setDateStr] = useState("")
   
-  React.useEffect(() => {
+  useEffect(() => {
     const today = new Date()
     setDateStr(today.toLocaleDateString("ja-JP", {
       year: "numeric",
@@ -92,6 +53,26 @@ export default function ManagerDashboard() {
       day: "numeric",
     }))
   }, [])
+
+  // 日付をフォーマットする関数
+  const formatDateTime = (dateTimeStr: string) => {
+    const date = new Date(dateTimeStr)
+    return date.toLocaleDateString("ja-JP", {
+      month: "2-digit",
+      day: "2-digit"
+    })
+  }
+
+  // 所要時間を表示用にフォーマットする関数
+  const formatDuration = (seconds: number) => {
+    const minutes = Math.floor(seconds / 60)
+    if (minutes < 60) {
+      return `${minutes}分`
+    }
+    const hours = Math.floor(minutes / 60)
+    const remainingMinutes = minutes % 60
+    return `${hours}時間${remainingMinutes > 0 ? `${remainingMinutes}分` : ''}`
+  }
 
   // ログアウト処理
   const handleLogout = () => {
@@ -141,30 +122,58 @@ export default function ManagerDashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* 面談一覧 */}
         <Card className="p-4 sm:p-6">
-          <h2 className="text-lg sm:text-xl font-semibold mb-4">過去商談一覧</h2>
+          <h2 className="text-lg sm:text-xl font-semibold mb-4">メンバー商談一覧</h2>
+          {error && (
+            <div className="text-sm text-red-500 mb-4">
+              {error}
+            </div>
+          )}
           <ScrollArea className="h-[300px] sm:h-[600px]">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b text-sm">
-                  <th className="text-left pb-2">担当者</th>
-                  <th className="text-left pb-2">日時</th>
-                  <th className="text-left pb-2">顧客名</th>
-                </tr>
-              </thead>
-              <tbody>
-                {meetings.map((meeting) => (
-                  <tr 
-                    key={meeting.id} 
-                    className="border-b last:border-0 hover:bg-slate-50 transition-colors cursor-pointer"
-                    onClick={() => window.location.href = `/feedback#${meeting.id}`}
-                  >
-                    <td className="py-3">{meeting.salesPerson}</td>
-                    <td className="py-3">{meeting.datetime}</td>
-                    <td className="py-3">{meeting.client}</td>
+            {loading ? (
+              <div className="flex items-center justify-center h-full">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-rose-500"></div>
+              </div>
+            ) : meetings.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-[200px] text-gray-500">
+                <p className="mb-2">メンバーの商談データがありません</p>
+              </div>
+            ) : (
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b text-sm">
+                    <th className="text-left pb-2 pr-4">日付</th>
+                    <th className="text-left pb-2 pr-4">タイトル</th>
+                    <th className="text-left pb-2">Member</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {meetings.map((meeting) => (
+                    <tr 
+                      key={meeting.meeting_id} 
+                      className="border-b last:border-0 hover:bg-slate-50 transition-colors"
+                    >
+                      <td className="py-3 pr-4">
+                        <Link href={`/feedback/${meeting.meeting_id}`} className="block">
+                          {formatDateTime(meeting.meeting_datetime)}
+                        </Link>
+                      </td>
+                      <td className="py-3 pr-4">
+                        <Link href={`/feedback/${meeting.meeting_id}`} className="block">
+                          <div className="flex flex-col">
+                            <span>{meeting.title}</span>
+                          </div>
+                        </Link>
+                      </td>
+                      <td className="py-3">
+                        <Link href={`/feedback/${meeting.meeting_id}`} className="block">
+                          {meeting.user_name}
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </ScrollArea>
         </Card>
 
