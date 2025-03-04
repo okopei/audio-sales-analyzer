@@ -1,12 +1,10 @@
 import azure.functions as func
 import logging
 import os
-import io
 import tempfile
 import uuid
 import time
-import json
-from datetime import datetime, timedelta
+from datetime import datetime, UTC
 from azure.cognitiveservices.speech import (
     SpeechConfig,
     AudioConfig,
@@ -15,6 +13,7 @@ from azure.cognitiveservices.speech import (
 )
 from azure.data.tables import TableClient
 from azure.identity import DefaultAzureCredential
+import re
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -28,7 +27,13 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
     CommandText="dbo.Meetings",
     ConnectionStringSetting="SqlConnectionString"
 )
-def process_audio(myblob: func.InputStream, meetingsTable: func.Out[func.SqlRow]) -> None:
+@app.generic_input_binding(
+    arg_name="basicInfoQuery", 
+    type="sql", 
+    CommandText="SELECT meeting_id, client_company_name, client_contact_name FROM dbo.BasicInfo", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+def process_audio(myblob: func.InputStream, meetingsTable: func.Out[func.SqlRow], basicInfoQuery: func.SqlRowList) -> None:
     logging.info(f"--- 音声ファイル処理開始: {myblob.name} ---")
     temp_audio_path = None
     speech_recognizer = None
@@ -91,7 +96,7 @@ def process_audio(myblob: func.InputStream, meetingsTable: func.Out[func.SqlRow]
         formatted_transcript = format_transcript_with_speakers(transcription_results)
         
         # 現在時刻を取得（UTC）
-        current_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        current_time = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
         
         # ファイルサイズを取得
         file_size = os.path.getsize(temp_audio_path)
@@ -101,9 +106,32 @@ def process_audio(myblob: func.InputStream, meetingsTable: func.Out[func.SqlRow]
         
         # デフォルトユーザーID
         DEFAULT_USER_ID = 27
+        
+        # BasicInfoテーブルから顧客情報を取得
+        client_company_name = "不明企業"  # デフォルト値を設定
+        client_contact_name = "不明担当者"  # デフォルト値を設定
+        
+        # ファイル名からmeeting_idを抽出（例：meeting_123.wav → 123）
+        meeting_id_match = re.search(r'meeting_(\d+)', file_base)
+        if meeting_id_match:
+            meeting_id = meeting_id_match.group(1)
+            logging.info(f"ファイル名からmeeting_id {meeting_id} を抽出しました")
+            
+            # BasicInfoテーブルから顧客情報を検索
+            customer_found = False
+            for row in basicInfoQuery:
+                if str(row['meeting_id']) == meeting_id:
+                    client_company_name = row['client_company_name']
+                    client_contact_name = row['client_contact_name']
+                    customer_found = True
+                    logging.info(f"BasicInfoから顧客情報を取得: 企業名={client_company_name}, 担当者名={client_contact_name}")
+                    break
+            
+            if not customer_found:
+                logging.warning(f"meeting_id {meeting_id} に対応する顧客情報が見つかりませんでした。デフォルト値を使用します。")
 
         # SQLバインディングを使用してデータを更新
-        meetingsTable.set(func.SqlRow({
+        meeting_data = {
             "file_name": file_name,
             "title": file_base,
             "file_path": myblob.name,
@@ -112,17 +140,21 @@ def process_audio(myblob: func.InputStream, meetingsTable: func.Out[func.SqlRow]
             "status": "completed",
             "transcript_text": formatted_transcript,
             "error_message": None,
+            "client_company_name": client_company_name,
+            "client_contact_name": client_contact_name,
             "meeting_datetime": current_time,
             "start_datetime": current_time,
             "end_datetime": current_time,
-            "user_id": DEFAULT_USER_ID
-        }))
+            "user_id": DEFAULT_USER_ID,
+        }
+        
+        meetingsTable.set(func.SqlRow(meeting_data))
         
         logging.info(f"Meetingsテーブル更新完了 - ファイル: {file_name}")
         
     except Exception as e:
         logging.error(f"エラー発生: {str(e)}")
-        error_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        error_time = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
         if file_name:
             meetingsTable.set(func.SqlRow({
                 "file_name": file_name,
@@ -134,7 +166,9 @@ def process_audio(myblob: func.InputStream, meetingsTable: func.Out[func.SqlRow]
                 "error_message": str(e),
                 "meeting_datetime": error_time,
                 "start_datetime": error_time,
-                "user_id": DEFAULT_USER_ID
+                "user_id": DEFAULT_USER_ID,
+                "client_company_name": "不明企業",
+                "client_contact_name": "不明担当者"
             }))
         raise
         
@@ -192,8 +226,11 @@ def update_meeting_transcript(meeting_id: str, transcript_data: dict, temp_audio
         endpoint = os.environ["AZURE_STORAGE_ENDPOINT"]
         table_client = TableClient(endpoint=endpoint, table_name="Meetings", credential=credential)
         
+        # BasicInfoテーブルからの顧客情報取得用クライアント
+        basic_info_client = TableClient(endpoint=endpoint, table_name="BasicInfo", credential=credential)
+        
         # 現在時刻を取得
-        current_time = datetime.utcnow()
+        current_time = datetime.now(UTC)
         
         # ファイルサイズを取得
         file_size = os.path.getsize(temp_audio_path)
@@ -204,6 +241,28 @@ def update_meeting_transcript(meeting_id: str, transcript_data: dict, temp_audio
         # 話者分離を含む文字起こし結果のフォーマット
         formatted_transcript = format_transcript_with_speakers(transcript_data["segments"])
         
+        # BasicInfoテーブルから顧客情報を取得
+        client_company_name = "不明企業"  # デフォルト値を設定
+        client_contact_name = "不明担当者"  # デフォルト値を設定
+        try:
+            # BasicInfoテーブルからmeeting_idに一致するレコードを検索
+            filter_query = f"meeting_id eq {meeting_id}"
+            basic_info_items = basic_info_client.query_entities(filter_query)
+            
+            # 最初のレコードを取得（存在する場合）
+            customer_found = False
+            for item in basic_info_items:
+                client_company_name = item.get("client_company_name")
+                client_contact_name = item.get("client_contact_name")
+                customer_found = True
+                logging.info(f"BasicInfoから顧客情報を取得: 企業名={client_company_name}, 担当者名={client_contact_name}")
+                break
+                
+            if not customer_found:
+                logging.warning(f"meeting_id {meeting_id} に対応する顧客情報が見つかりませんでした。デフォルト値を使用します。")
+        except Exception as e:
+            logging.warning(f"BasicInfoからの顧客情報取得に失敗: {str(e)}")
+        
         # エンティティの更新
         entity = {
             "meeting_id": int(meeting_id),
@@ -213,7 +272,9 @@ def update_meeting_transcript(meeting_id: str, transcript_data: dict, temp_audio
             "end_datetime": current_time.isoformat(),
             "updated_datetime": current_time.isoformat(),
             "file_size": file_size,
-            "duration_seconds": duration_seconds
+            "duration_seconds": duration_seconds,
+            "client_company_name": client_company_name,
+            "client_contact_name": client_contact_name
         }
         
         # エンティティの更新
