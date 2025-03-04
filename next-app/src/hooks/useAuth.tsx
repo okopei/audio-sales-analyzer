@@ -9,6 +9,7 @@ interface User {
   email: string
   user_name: string
   is_manager: boolean
+  role?: string  // roleフィールドを追加
 }
 
 // 認証コンテキストの型定義
@@ -36,6 +37,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const router = useRouter()
 
+  // ユーザーがマネージャーかどうかを判定する関数
+  const checkIsManager = (userData: User): boolean => {
+    // is_managerフラグがtrueの場合、またはroleが'manager'の場合はマネージャー
+    return userData.is_manager === true || userData.role === 'manager'
+  }
+
   // 初期化時にローカルストレージからユーザー情報を取得
   useEffect(() => {
     const loadUserFromStorage = () => {
@@ -45,7 +52,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const storedToken = localStorage.getItem('token')
           
           if (storedUser && storedToken) {
-            setUser(JSON.parse(storedUser))
+            const parsedUser = JSON.parse(storedUser)
+            
+            // ユーザーデータにis_managerフラグがない場合、roleから設定
+            if (parsedUser.role === 'manager' && parsedUser.is_manager !== true) {
+              parsedUser.is_manager = true
+            }
+            
+            setUser(parsedUser)
+            
+            // ユーザーがすでにログインしている場合、適切なダッシュボードにリダイレクト
+            // ただし、現在のパスがダッシュボードまたはマネージャーダッシュボードの場合はリダイレクトしない
+            const currentPath = window.location.pathname
+            if (currentPath === '/') {
+              if (checkIsManager(parsedUser)) {
+                router.push('/manager-dashboard')
+              } else {
+                router.push('/dashboard')
+              }
+            }
           }
         }
       } catch (error) {
@@ -61,7 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     
     loadUserFromStorage()
-  }, [])
+  }, [router])
 
   // ログイン処理
   const login = async (email: string, password: string) => {
@@ -86,6 +111,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await response.json()
       console.log('Login successful:', data.user)
       
+      // roleからis_managerフラグを設定
+      if (data.user.role === 'manager' && data.user.is_manager !== true) {
+        data.user.is_manager = true
+      }
+      
       // ローカルストレージに保存
       if (isBrowser()) {
         localStorage.setItem('token', data.token)
@@ -95,7 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(data.user)
       
       // ユーザーの権限に基づいてリダイレクト
-      if (data.user.is_manager) {
+      if (checkIsManager(data.user)) {
         router.push('/manager-dashboard')
       } else {
         router.push('/dashboard')
@@ -125,7 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     login,
     logout,
     isAuthenticated: !!user,
-    isManager: user?.is_manager || false
+    isManager: user ? checkIsManager(user) : false
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

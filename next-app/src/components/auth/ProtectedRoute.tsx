@@ -13,7 +13,7 @@ export default function ProtectedRoute({
   children, 
   requireManager = false 
 }: ProtectedRouteProps) {
-  const { isAuthenticated, isManager, loading } = useAuth()
+  const { isAuthenticated, isManager, loading, user } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
@@ -21,10 +21,11 @@ export default function ProtectedRoute({
       if (!isAuthenticated) {
         router.push('/') // ホームページへリダイレクト
       } else if (requireManager && !isManager) {
+        console.log('User is not a manager, redirecting to dashboard', user)
         router.push('/dashboard') // 一般ユーザー向けページにリダイレクト
       }
     }
-  }, [isAuthenticated, isManager, loading, requireManager, router])
+  }, [isAuthenticated, isManager, loading, requireManager, router, user])
 
   if (loading) {
     return <div className="flex items-center justify-center min-h-screen">

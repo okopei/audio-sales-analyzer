@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Search, PlusCircle, LogOut } from "lucide-react"
+import { Search, PlusCircle, LogOut, Users } from "lucide-react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -13,23 +13,9 @@ import { useMeetings } from "@/hooks/useMeetings"
 import ProtectedRoute from "@/components/auth/ProtectedRoute"
 
 export default function Dashboard() {
-  const { user, logout } = useAuth()
+  const { user, logout, isManager } = useAuth()
   const { meetings, loading, error } = useMeetings()
   const router = useRouter()
-  
-  // 日付表示用の状態
-  const [dateStr, setDateStr] = useState("")
-  
-  // クライアントサイドでのみ日付を取得
-  useEffect(() => {
-    const today = new Date()
-    setDateStr(today.toLocaleDateString("ja-JP", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      weekday: "long"
-    }))
-  }, [])
   
   // ログアウト処理
   const handleLogout = () => {
@@ -83,11 +69,13 @@ export default function Dashboard() {
   return (
     <ProtectedRoute>
       <div className="min-h-screen bg-zinc-50 p-4 sm:p-6">
-        {/* ヘッダー - レスポンシブデザインを改善 */}
+        {/* ヘッダー */}
         <div className="mb-6">
-          {/* 上部エリア: 日付とログアウトボタン */}
+          {/* ユーザー名とログアウトボタン */}
           <div className="flex justify-between items-center mb-4">
-            <div className="text-xl font-medium">{dateStr}</div>
+            <div className="text-xl font-medium">
+              {user?.user_name || "ユーザー"} 様
+            </div>
             <Button 
               variant="outline" 
               size="sm" 
@@ -99,13 +87,8 @@ export default function Dashboard() {
             </Button>
           </div>
           
-          {/* 中央エリア: ユーザー名 */}
-          <div className="text-xl font-medium text-center mb-4">
-            {user?.user_name || "ユーザー"} 様
-          </div>
-          
-          {/* 下部エリア: アクションボタン */}
-          <div className="flex items-center justify-center gap-2">
+          {/* アクションボタン */}
+          <div className="flex items-center justify-center gap-2 flex-wrap">
             <Link href="/search">
               <Button variant="outline" size="sm" className="text-sm">
                 <Search className="w-4 h-4 mr-2" />
@@ -118,6 +101,14 @@ export default function Dashboard() {
                 新規商談
               </Button>
             </Link>
+            {isManager && (
+              <Link href="/manager-dashboard">
+                <Button variant="outline" size="sm" className="text-sm bg-green-50 border-green-200 text-green-600 hover:bg-green-100">
+                  <Users className="w-4 h-4 mr-2" />
+                  メンバー管理
+                </Button>
+              </Link>
+            )}
           </div>
         </div>
 
