@@ -11,6 +11,8 @@ class Meeting:
     user_id: str = ""
     user_name: Optional[str] = None  # 結合クエリ用
     title: str = ""
+    client_contact_name: Optional[str] = None  # 顧客名フィールドを追加
+    client_company_name: Optional[str] = None  # 企業名フィールドを追加
     meeting_datetime: Union[datetime, str, None] = None
     duration_seconds: int = 0
     status: str = "pending"  # 'pending', 'processing', 'completed', 'error'
@@ -38,6 +40,14 @@ class Meeting:
             
         if self.user_name:
             result["user_name"] = self.user_name
+            
+        # 顧客名フィールドを追加
+        if self.client_contact_name:
+            result["client_contact_name"] = self.client_contact_name
+            
+        # 企業名フィールドを追加
+        if self.client_company_name:
+            result["client_company_name"] = self.client_company_name
             
         if self.meeting_datetime:
             if isinstance(self.meeting_datetime, datetime):

@@ -2,142 +2,162 @@
 Table Users {
   user_id int [pk, increment]
   user_name varchar(50) [not null]
-  email varchar(256) [not null, unique]
+  email varchar(256) [not null]
   password_hash nvarchar(128) [not null]
   salt nvarchar(36) [not null]
-  is_active bit [default: 1]
-  account_status varchar(20) [default: 'ACTIVE']
-  last_login_datetime datetime
-  inserted_datetime datetime [default: `GETDATE()`]
-  updated_datetime datetime [default: `GETDATE()`]
-  deleted_datetime datetime
-  password_reset_token varchar(100)
-  password_reset_expires datetime
-  login_attempt_count int [default: 0]
+  is_active bit [null]
+  account_status varchar(20) [null]
+  last_login_datetime datetime [null]
+  inserted_datetime datetime [null]
+  updated_datetime datetime [null]
+  deleted_datetime datetime [null]
+  password_reset_token varchar(100) [null]
+  password_reset_expires datetime [null]
+  login_attempt_count int [null]
+  is_manager bit [null]
+  manager_name nvarchar(50) [null]
 }
 
 // Meetings table
 Table Meetings {
-  meeting_id int [pk, increment]
-  user_id int [ref: > Users.user_id, not null]
-  title nvarchar(255) [not null]
+  meeting_id int [pk, increment, not null]
+  user_id int [not null]
   file_name nvarchar(200) [not null]
   file_path nvarchar(1000) [not null]
   file_size bigint [not null]
-  duration_seconds int [not null, default: 0]
-  status nvarchar(50) [not null, default: 'processing']
-  transcript_text nvarchar
-  error_message nvarchar
+  duration_seconds int [not null]
+  status nvarchar(50) [not null]
+  transcript_text nvarchar(max) [null]
+  error_message nvarchar(max) [null]
   meeting_datetime datetime [not null]
   start_datetime datetime [not null]
-  end_datetime datetime
-  inserted_datetime datetime [default: `GETDATE()`]
-  updated_datetime datetime [default: `GETDATE()`]
-  deleted_datetime datetime
+  end_datetime datetime [null]
+  inserted_datetime datetime [not null]
+  updated_datetime datetime [not null]
+  deleted_datetime datetime [null]
+  client_company_name nvarchar(100) [not null]
+  client_contact_name nvarchar(50) [not null]
 }
 
 // Speakers table
 Table Speakers {
-  speaker_id int [pk, increment]
+  speaker_id int [pk, increment, not null]
   speaker_name nvarchar(50) [not null]
-  speaker_role nvarchar(100)
-  user_id int [ref: > Users.user_id]
-  inserted_datetime datetime [default: `GETDATE()`]
-  updated_datetime datetime [default: `GETDATE()`]
-  deleted_datetime datetime
+  speaker_role nvarchar(100) [null]
+  user_id int [null]
+  inserted_datetime datetime [not null]
+  updated_datetime datetime [not null]
+  deleted_datetime datetime [null]
 }
 
 // Participants table
 Table Participants {
-  meeting_id int [ref: > Meetings.meeting_id, not null]
-  speaker_id int [ref: > Speakers.speaker_id, not null]
-  inserted_datetime datetime [default: `GETDATE()`]
-  updated_datetime datetime [default: `GETDATE()`]
-  deleted_datetime datetime
-
-  indexes {
-    (meeting_id, speaker_id) [pk]
-  }
+  meeting_id int [pk, not null]
+  speaker_id int [pk, not null]
+  inserted_datetime datetime [not null]
+  updated_datetime datetime [not null]
+  deleted_datetime datetime [null]
 }
 
 // ConversationSegments table
 Table ConversationSegments {
-  segment_id int [pk, increment]
-  user_id int [ref: > Users.user_id, not null]
-  speaker_id int [ref: > Speakers.speaker_id, not null]
-  meeting_id int [ref: > Meetings.meeting_id, not null]
+  segment_id int [pk, increment, not null]
+  user_id int [not null]
+  speaker_id int [not null]
+  meeting_id int [not null]
   title nvarchar(200) [not null]
-  content nvarchar
+  content nvarchar(max) [null]
   file_name nvarchar(200) [not null]
   file_path nvarchar(1000) [not null]
   file_size bigint [not null]
-  duration_seconds int [not null, default: 0]
-  status nvarchar(50) [not null, default: 'processing']
-  inserted_datetime datetime [default: `GETDATE()`]
-  updated_datetime datetime [default: `GETDATE()`]
-  deleted_datetime datetime
+  duration_seconds int [not null]
+  status nvarchar(50) [not null]
+  inserted_datetime datetime [not null]
+  updated_datetime datetime [not null]
+  deleted_datetime datetime [null]
 }
 
 // Messages table
 Table Messages {
-  message_id int [pk, increment]
-  meeting_id int [ref: > Meetings.meeting_id, not null]
-  segment_id int [ref: > ConversationSegments.segment_id, not null]
+  message_id int [pk, increment, not null]
+  meeting_id int [not null]
+  memo_id int [not null]
   speaker_id int [not null]
   display_order int [not null]
-  inserted_datetime datetime [default: `GETDATE()`]
-  updated_datetime datetime [default: `GETDATE()`]
-  deleted_datetime datetime
+  inserted_datetime datetime [not null]
+  updated_datetime datetime [not null]
+  deleted_datetime datetime [null]
 }
 
 // MessageReads table
 Table MessageReads {
-  message_id int [ref: > Messages.message_id, not null]
-  reader_id int [ref: > Users.user_id, not null]
-  read_datetime datetime [default: `GETDATE()`]
-
-  indexes {
-    (message_id, reader_id) [pk]
-  }
+  message_id int [pk, not null]
+  reader_id int [pk, not null]
+  read_datetime datetime [not null]
 }
 
 // BasicInfo table
 Table BasicInfo {
-  user_id int [ref: > Users.user_id, not null]
-  meeting_id int [ref: > Meetings.meeting_id, not null]
+  user_id int [not null]
+  meeting_id int [pk, not null]
   meeting_datetime datetime [not null]
   client_company_name nvarchar(100) [not null]
   client_contact_name nvarchar(50) [not null]
-  industry_type nvarchar(50) [not null]
-  company_scale nvarchar(50) [not null]
-  sales_goal nvarchar(500) [not null]
-  inserted_datetime datetime [default: `GETDATE()`]
-  updated_datetime datetime [default: `GETDATE()`]
-  deleted_datetime datetime
-
-  indexes {
-    (user_id, meeting_id) [pk]
-  }
+  industry_type nvarchar(50) [null]
+  company_scale nvarchar(50) [null]
+  sales_goal nvarchar(500) [null]
+  inserted_datetime datetime [not null]
+  updated_datetime datetime [not null]
+  deleted_datetime datetime [null]
 }
 
 // Comments table
 Table Comments {
-  comment_id int [pk, increment]
-  message_id int [ref: > Messages.message_id, not null]
-  user_id int [ref: > Users.user_id, not null]
-  content nvarchar [not null]
-  inserted_datetime datetime [default: `GETDATE()`]
-  updated_datetime datetime [default: `GETDATE()`]
-  deleted_datetime datetime
+  comment_id int [pk, increment, not null]
+  message_id int [not null]
+  user_id int [not null]
+  content nvarchar(max) [not null]
+  inserted_datetime datetime [not null]
+  updated_datetime datetime [not null]
+  deleted_datetime datetime [null]
 }
 
 // CommentReads table
 Table CommentReads {
-  comment_id int [ref: > Comments.comment_id, not null]
-  reader_id int [ref: > Users.user_id, not null]
-  read_datetime datetime [default: `GETDATE()`]
+  comment_id int [pk, not null]
+  reader_id int [pk, not null]
+  read_datetime datetime [not null]
+}
 
-  indexes {
-    (comment_id, reader_id) [pk]
-  }
-} 
+// MeetingRecords table
+Table MeetingRecords {
+  MeetingId uniqueidentifier [pk, not null]
+  MeetingDateTime datetime [not null]
+  ClientName nvarchar(100) [not null]
+}
+
+// ToDo table
+Table ToDo {
+  Id uniqueidentifier [pk, not null]
+  order int [null]
+  title nvarchar(200) [not null]
+  url nvarchar(200) [not null]
+  completed bit [not null]
+}
+
+// Relationship definitions
+Ref: BasicInfo.user_id > Users.user_id
+Ref: CommentReads.comment_id > Comments.comment_id
+Ref: CommentReads.reader_id > Users.user_id
+Ref: Comments.message_id > Messages.message_id
+Ref: Comments.user_id > Users.user_id
+Ref: ConversationSegments.meeting_id > Meetings.meeting_id
+Ref: ConversationSegments.speaker_id > Speakers.speaker_id
+Ref: ConversationSegments.user_id > Users.user_id
+Ref: Meetings.user_id > Users.user_id
+Ref: MessageReads.message_id > Messages.message_id
+Ref: MessageReads.reader_id > Users.user_id
+Ref: Messages.meeting_id > Participants.meeting_id
+Ref: Messages.speaker_id > Participants.speaker_id
+Ref: Participants.speaker_id > Speakers.speaker_id
+Ref: Speakers.user_id > Users.user_id 

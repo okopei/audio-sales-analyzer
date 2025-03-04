@@ -9,7 +9,7 @@ from azure.functions import AuthLevel, FunctionApp
 
 # モジュール構造からのインポート
 from src.auth import login, register
-from src.meetings import get_meetings, get_members_meetings, save_meeting
+from src.meetings import get_meetings, get_members_meetings, save_meeting, save_basic_info
 
 # Azure Functions アプリケーションの初期化
 app = FunctionApp(http_auth_level=AuthLevel.ANONYMOUS)
@@ -64,13 +64,31 @@ def login_func(req: func.HttpRequest, usersQuery: func.SqlRowList) -> func.HttpR
 def save_meeting_func(req: func.HttpRequest, meetings: func.Out[func.SqlRow], lastMeeting: func.SqlRowList) -> func.HttpResponse:
     return save_meeting(req, meetings, lastMeeting)
 
+# 基本情報保存エンドポイント
+@app.function_name(name="SaveBasicInfo")
+@app.route(route="basicinfo", methods=["POST", "OPTIONS"])
+@app.generic_input_binding(
+    arg_name="lastBasicInfo", 
+    type="sql", 
+    CommandText="SELECT TOP 1 meeting_id FROM dbo.BasicInfo ORDER BY meeting_id DESC", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+@app.generic_output_binding(
+    arg_name="basicInfo", 
+    type="sql", 
+    CommandText="dbo.BasicInfo", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+def save_basic_info_func(req: func.HttpRequest, basicInfo: func.Out[func.SqlRow], lastBasicInfo: func.SqlRowList) -> func.HttpResponse:
+    return save_basic_info(req, basicInfo, lastBasicInfo)
+
 # 会議一覧取得エンドポイント
 @app.function_name(name="GetMeetings")
 @app.route(route="meetings", methods=["GET", "OPTIONS"])
 @app.generic_input_binding(
     arg_name="meetingsQuery", 
     type="sql", 
-    CommandText="SELECT meeting_id, user_id, title, meeting_datetime, duration_seconds, status, transcript_text, file_name, file_size, error_message FROM dbo.Meetings", 
+    CommandText="SELECT meeting_id, user_id, client_contact_name, client_company_name, meeting_datetime, duration_seconds, status, transcript_text, file_name, file_size, error_message FROM dbo.Meetings", 
     ConnectionStringSetting="SqlConnectionString"
 )
 def get_meetings_func(req: func.HttpRequest, meetingsQuery: func.SqlRowList) -> func.HttpResponse:
@@ -88,7 +106,7 @@ def get_meetings_func(req: func.HttpRequest, meetingsQuery: func.SqlRowList) -> 
 @app.generic_input_binding(
     arg_name="meetingsQuery", 
     type="sql", 
-    CommandText="SELECT m.meeting_id, m.user_id, m.title, m.meeting_datetime, m.duration_seconds, m.status, m.transcript_text, m.file_name, m.file_size, m.error_message, u.user_name FROM dbo.Meetings m JOIN dbo.Users u ON m.user_id = u.user_id", 
+    CommandText="SELECT m.meeting_id, m.user_id, m.client_contact_name, m.meeting_datetime, m.duration_seconds, m.status, m.transcript_text, m.file_name, m.file_size, m.error_message, u.user_name FROM dbo.Meetings m JOIN dbo.Users u ON m.user_id = u.user_id", 
     ConnectionStringSetting="SqlConnectionString"
 )
 def get_members_meetings_func(req: func.HttpRequest, usersQuery: func.SqlRowList, meetingsQuery: func.SqlRowList) -> func.HttpResponse:

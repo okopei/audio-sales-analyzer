@@ -5,7 +5,9 @@ import { useAuth } from './useAuth'
 
 interface Meeting {
   meeting_id: number
-  title: string
+  title?: string
+  client_contact_name: string
+  client_company_name?: string
   meeting_datetime: string
   duration_seconds: number
   status: string

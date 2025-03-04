@@ -220,4 +220,95 @@ def save_meeting(req: func.HttpRequest, meetings_out: func.Out[func.SqlRow], las
         logging.error(f"Error creating meeting: {str(e)}")
         logging.error(f"Traceback: {traceback.format_exc()}")
         
-        return create_error_response(f"Error creating meeting: {str(e)}", 500) 
+        return create_error_response(f"Error creating meeting: {str(e)}", 500)
+
+def save_basic_info(req: func.HttpRequest, basicInfo_out: func.Out[func.SqlRow], last_basicInfo: func.SqlRowList) -> func.HttpResponse:
+    """
+    基本情報を保存する
+    """
+    log_request(req, "SaveBasicInfo")
+    
+    # OPTIONSリクエスト処理
+    if req.method == "OPTIONS":
+        return handle_options_request()
+    
+    try:
+        # JSONデータを取得
+        req_body = parse_json_request(req)
+        if not req_body:
+            return create_error_response("Invalid JSON data", 400)
+        
+        logging.info(f"Received data: {req_body}")
+        
+        # 必須フィールドの確認
+        year = req_body.get('year')
+        month = req_body.get('month')
+        day = req_body.get('day')
+        hour = req_body.get('hour')
+        company_name = req_body.get('companyName')  # 顧客名（担当者名）- フロントエンドの互換性のために残す
+        user_id = req_body.get('userId')
+        
+        # フロントエンドから送信されるフィールド
+        client_company_name = req_body.get('client_company_name', '')  # 企業名
+        client_contact_name = req_body.get('client_contact_name', '')  # 顧客名
+        
+        # オプションフィールド
+        industry = req_body.get('industry', '')
+        scale = req_body.get('scale', '')
+        meeting_goal = req_body.get('meeting_goal', '')
+        
+        if not all([year, month, day, hour, company_name, user_id]):
+            missing_fields = []
+            if not year: missing_fields.append("year")
+            if not month: missing_fields.append("month")
+            if not day: missing_fields.append("day")
+            if not hour: missing_fields.append("hour")
+            if not company_name: missing_fields.append("companyName")
+            if not user_id: missing_fields.append("userId")
+            
+            logging.warning(f"Missing required fields: {', '.join(missing_fields)}")
+            return create_error_response(f"Missing required fields: {', '.join(missing_fields)}", 400)
+        
+        # 日付文字列を作成
+        meeting_date_str = f"{year}-{month}-{day}T{hour}:00:00"
+        
+        # 最後の基本情報IDを取得
+        last_basic_info_id = 0
+        for row in last_basicInfo:
+            last_basic_info_id = row["meeting_id"]
+            break
+        
+        logging.info(f"Last basic info ID before insert: {last_basic_info_id}")
+        
+        # 新しい基本情報ID
+        new_basic_info_id = last_basic_info_id + 1
+        
+        # 現在の時刻を取得
+        now = get_current_time()
+        
+        # SQLバインディングを使用してデータを挿入
+        basicInfo_out.set(func.SqlRow({
+            "user_id": user_id,
+            "meeting_id": new_basic_info_id,
+            "meeting_datetime": meeting_date_str,
+            "client_company_name": client_company_name,  # フロントエンドから送信された企業名
+            "client_contact_name": client_contact_name,  # フロントエンドから送信された顧客名
+            "industry_type": industry if industry else None,
+            "company_scale": scale if scale else None,
+            "sales_goal": meeting_goal if meeting_goal else None,
+            "inserted_datetime": now,
+            "updated_datetime": now
+        }))
+        
+        # 成功レスポンス
+        response_data = {
+            "meetingId": new_basic_info_id,
+            "message": f"BasicInfo for meeting with '{company_name}' created successfully."
+        }
+        
+        return create_json_response(response_data, 201)
+    except Exception as e:
+        logging.error(f"Error creating basic info: {str(e)}")
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        
+        return create_error_response(f"Error creating basic info: {str(e)}", 500) 

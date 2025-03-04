@@ -160,7 +160,7 @@ export default function ManagerDashboard() {
                       <td className="py-3 pr-4">
                         <Link href={`/feedback/${meeting.meeting_id}`} className="block">
                           <div className="flex flex-col">
-                            <span>{meeting.title}</span>
+                            <span>{meeting.client_contact_name}</span>
                           </div>
                         </Link>
                       </td>
