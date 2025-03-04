@@ -91,24 +91,6 @@ export default function LoginForm() {
           新規登録
         </a>
       </p>
-      
-      {/* 開発用のリンクは、本番環境では削除または条件付きで表示 */}
-      <div className="pt-4 border-t border-zinc-800">
-        <Button 
-          variant="outline" 
-          className="w-full border-zinc-700 text-zinc-400 hover:text-white"
-          asChild
-        >
-          <a href="/dashboard">開発用ダッシュボード</a>
-        </Button>
-        <Button 
-          variant="outline" 
-          className="w-full border-zinc-700 text-zinc-400 hover:text-white"
-          asChild
-        >
-          <a href="/manager-dashboard">開発用マネージャーダッシュボード</a>
-        </Button>
-      </div>
     </>
   )
 } 
