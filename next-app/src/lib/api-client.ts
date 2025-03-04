@@ -64,10 +64,18 @@ export async function saveMeeting(meetingData: any): Promise<{ meetingId: number
 }
 
 /**
+ * 基本情報を保存する
+ */
+export async function saveBasicInfo(basicInfoData: any): Promise<{ meetingId: number, message: string }> {
+  return fetchAPI<{ meetingId: number, message: string }>('basicinfo', 'POST', basicInfoData);
+}
+
+/**
  * その他の API 関数をここに追加
  */
 
 export default {
   saveMeeting,
+  saveBasicInfo,
   // 他の API 関数
 }; 
