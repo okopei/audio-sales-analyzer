@@ -9,6 +9,7 @@ interface Meeting {
   user_name: string  // メンバー名を表示するために追加
   title?: string     // 任意に変更
   client_contact_name: string  // 追加
+  client_company_name?: string  // 企業名を追加
   meeting_datetime: string
   duration_seconds: number
   status: string
