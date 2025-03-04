@@ -150,7 +150,7 @@ export default function Dashboard() {
                   <thead>
                     <tr className="border-b text-sm">
                       <th className="text-left pb-2 pr-4">日付</th>
-                      <th className="text-left pb-2 pr-4">タイトル</th>
+                      <th className="text-left pb-2 pr-4">顧客名</th>
                       <th className="text-left pb-2">所要時間</th>
                     </tr>
                   </thead>
@@ -165,7 +165,10 @@ export default function Dashboard() {
                         <td className="py-3 pr-4">
                           <Link href={`/feedback/${meeting.meeting_id}`} className="block">
                             <div className="flex flex-col">
-                              <span>{meeting.title}</span>
+                              <span>{meeting.client_contact_name || '(名前なし)'}</span>
+                              {meeting.client_company_name && (
+                                <span className="text-xs text-gray-500">{meeting.client_company_name}</span>
+                              )}
                             </div>
                           </Link>
                         </td>
