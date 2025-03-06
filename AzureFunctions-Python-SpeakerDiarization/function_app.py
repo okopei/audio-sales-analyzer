@@ -111,27 +111,26 @@ def process_audio(myblob: func.InputStream, meetingsTable: func.Out[func.SqlRow]
         client_company_name = "不明企業"  # デフォルト値を設定
         client_contact_name = "不明担当者"  # デフォルト値を設定
         
-        # ファイル名からmeeting_idを抽出（例：meeting_123.wav → 123）
-        meeting_id_match = re.search(r'meeting_(\d+)', file_base)
-        if meeting_id_match:
-            meeting_id = meeting_id_match.group(1)
-            logging.info(f"ファイル名からmeeting_id {meeting_id} を抽出しました")
+        # meeting_idを2で固定
+        meeting_id = "2"
+        logging.info(f"meeting_idを固定値 {meeting_id} に設定しました")
             
-            # BasicInfoテーブルから顧客情報を検索
-            customer_found = False
-            for row in basicInfoQuery:
-                if str(row['meeting_id']) == meeting_id:
-                    client_company_name = row['client_company_name']
-                    client_contact_name = row['client_contact_name']
-                    customer_found = True
-                    logging.info(f"BasicInfoから顧客情報を取得: 企業名={client_company_name}, 担当者名={client_contact_name}")
-                    break
-            
-            if not customer_found:
-                logging.warning(f"meeting_id {meeting_id} に対応する顧客情報が見つかりませんでした。デフォルト値を使用します。")
+        # BasicInfoテーブルから顧客情報を検索
+        customer_found = False
+        for row in basicInfoQuery:
+            if str(row['meeting_id']) == meeting_id:
+                client_company_name = row['client_company_name']
+                client_contact_name = row['client_contact_name']
+                customer_found = True
+                logging.info(f"BasicInfoから顧客情報を取得: 企業名={client_company_name}, 担当者名={client_contact_name}")
+                break
+        
+        if not customer_found:
+            logging.warning(f"meeting_id {meeting_id} に対応する顧客情報が見つかりませんでした。デフォルト値を使用します。")
 
         # SQLバインディングを使用してデータを更新
         meeting_data = {
+            "meeting_id": int(meeting_id),
             "file_name": file_name,
             "title": file_base,
             "file_path": myblob.name,
@@ -157,6 +156,7 @@ def process_audio(myblob: func.InputStream, meetingsTable: func.Out[func.SqlRow]
         error_time = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
         if file_name:
             meetingsTable.set(func.SqlRow({
+                "meeting_id": int(meeting_id),
                 "file_name": file_name,
                 "title": file_base,
                 "file_path": myblob.name,
