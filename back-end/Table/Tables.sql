@@ -76,12 +76,15 @@ CREATE TABLE Speakers (
     speaker_name NVARCHAR(50) NOT NULL,               -- 話者名
     speaker_role NVARCHAR(100),                       -- 話者の役割（例：営業、顧客など）
     user_id INT NULL,                                 -- ユーザーと紐付く場合のみ設定
+    meeting_id INT NULL,                              -- 関連する会議ID
     inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),
     updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),
     deleted_datetime DATETIME NULL,
     
     CONSTRAINT FK_Speakers_Users
-        FOREIGN KEY (user_id) REFERENCES Users(user_id)
+        FOREIGN KEY (user_id) REFERENCES Users(user_id),
+    CONSTRAINT FK_Speakers_Meetings
+        FOREIGN KEY (meeting_id) REFERENCES BasicInfo(meeting_id)
 )
 
 -- ミーティングメモ（文字起こし結果を含む）
@@ -170,3 +173,16 @@ CREATE INDEX idx_comments_user ON Comments(user_id)                    -- ユー
 CREATE INDEX idx_comments_datetime ON Comments(inserted_datetime)      -- 投稿日時による検索用
 
 CREATE INDEX idx_comment_reads_datetime ON CommentReads(read_datetime) -- 既読日時による検索用
+
+---トリガーログ
+    CREATE TABLE [dbo].[TriggerLog](
+        [log_id] [int] IDENTITY(1,1) PRIMARY KEY,
+        [event_type] [varchar](20) NOT NULL,
+        [table_name] [varchar](100) NOT NULL,
+        [record_id] [int] NOT NULL,
+        [event_time] [datetime] NOT NULL,
+        [additional_info] [nvarchar](MAX) NULL
+    );
+
+
+
