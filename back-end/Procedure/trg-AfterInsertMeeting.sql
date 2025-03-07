@@ -17,12 +17,12 @@ BEGIN
     IF EXISTS (SELECT 1 FROM inserted WHERE transcript_text IS NOT NULL AND LEN(transcript_text) > 0 AND status = 'completed')
     BEGIN
         -- ストアドプロシージャを実行
-        EXEC dbo.sp_ExtractSpeakersFromTranscript @meeting_id;
+        EXEC dbo.sp_ExtractSpeakersAndSegmentsFromTranscript @meeting_id;
     END
     ELSE
     BEGIN
         -- 文字起こしテキストがないか、ステータスが'completed'でない場合はログに記録
         INSERT INTO dbo.TriggerLog (event_type, table_name, record_id, event_time, additional_info)
-        VALUES ('SKIP', 'Meetings', @meeting_id, GETDATE(), '文字起こしテキストがないか、ステータスが完了でないため、話者抽出をスキップします');
+        VALUES ('SKIP', 'Meetings', @meeting_id, GETDATE(), '文字起こしテキストがないか、ステータスが完了でないため、話者・セグメント抽出をスキップします');
     END
-END
+END 
