@@ -149,7 +149,46 @@ Invoke-RestMethod -Uri http://localhost:7071/api/http_trigger -Method Post -Head
 
 ## 開発者ルール
 
-### 1. Gitブランチ命名規則
+### 1. 機密情報の取り扱い
+
+#### 環境変数とシークレットの管理
+- 機密情報（APIキー、接続文字列など）は`.env.local`や`local.settings.json`に保存し、Gitにコミットしない
+- テンプレートファイル（`.env.template`や`local.settings.template.json`）を用意し、必要な変数名のみを記載
+- 新しい環境変数を追加する場合は、テンプレートファイルも更新する
+
+#### 初回セットアップ時の手順
+1. テンプレートファイルをコピーして実際の設定ファイルを作成
+   ```bash
+   # Next.jsアプリ
+   cp next-app/.env.template next-app/.env.local
+   
+   # Azure Functions API
+   cp AzureFunctions-Python-api/local.settings.template.json AzureFunctions-Python-api/local.settings.json
+   
+   # Azure Functions SpeakerDiarization
+   cp AzureFunctions-Python-SpeakerDiarization/local.settings.template.json AzureFunctions-Python-SpeakerDiarization/local.settings.json
+   ```
+
+2. 作成したファイルに実際の値を設定
+
+#### 誤ってコミットした場合の対処法
+機密情報を誤ってコミットした場合は、以下の手順で対処：
+
+1. 該当ファイルをGitの追跡から除外
+   ```bash
+   git rm --cached <ファイルパス>
+   ```
+
+2. `.gitignore`に該当ファイルを追加（すでに追加されていることを確認）
+
+3. 必要に応じて、履歴からも完全に削除（注意: 共有リポジトリの場合は他の開発者と調整が必要）
+   ```bash
+   git filter-branch --force --index-filter "git rm --cached --ignore-unmatch <ファイルパス>" --prune-empty --tag-name-filter cat -- --all
+   ```
+
+4. 該当する認証情報（APIキーなど）をローテーション（再発行）
+
+### 2. Gitブランチ命名規則
 
 #### ブランチプレフィックス
 - `feature/` : 新機能開発
@@ -169,7 +208,7 @@ Invoke-RestMethod -Uri http://localhost:7071/api/http_trigger -Method Post -Head
 - `bugfix/124-fix-search-error`
 - `docs/125-update-api-docs`
 
-### 2. コミットメッセージ規則
+### 3. コミットメッセージ規則
 
 #### 形式
 ```
@@ -200,7 +239,7 @@ feat: 音声アップロード機能の追加
 Closes #123
 ```
 
-### 3. コーディング規則
+### 4. コーディング規則
 
 #### Python（バックエンド）
 - PEP 8に準拠
@@ -238,7 +277,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ url, title }) => {
 };
 ```
 
-### 4. PRレビュールール
+### 5. PRレビュールール
 
 #### PRテンプレート
 ```markdown
