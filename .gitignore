@@ -19,3 +19,15 @@ __azurite_db_table__.json
 __blobstorage__/
 __queuestorage__/
 __tablestorage__/
+
+# Azure Functions
+local.settings.json
+**/local.settings.json
+
+# 環境変数ファイル
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+next-app/.env.local

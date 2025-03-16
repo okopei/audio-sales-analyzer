@@ -339,3 +339,79 @@ INSERT INTO TagRatings (
    - 新しい評価軸の追加
    - 評価アルゴリズムの調整
    - レポーティング機能の拡充 
+
+## Gitでの機密情報管理
+
+### 機密情報の誤コミット問題
+
+#### 問題の概要
+- **関連システム**: Git、GitHub
+- **問題**: 機密情報（APIキー、接続文字列など）が誤ってGitリポジトリにコミットされた
+- **発生状況**: `local.settings.json`や`.env.local`などの設定ファイルをコミットした場合
+- **影響**: セキュリティリスク、GitHubのシークレットスキャンによるプッシュブロック
+
+#### 解決方法
+
+1. **ファイルをGitの追跡から除外**
+   ```bash
+   git rm --cached <ファイルパス>
+   ```
+   例：
+   ```bash
+   git rm --cached AzureFunctions-Python-api/local.settings.json
+   git rm --cached next-app/.env.local
+   ```
+
+2. **.gitignoreの確認と更新**
+   以下のパターンが`.gitignore`に含まれていることを確認：
+   ```
+   # 機密情報を含むファイル
+   local.settings.json
+   .env.local
+   .env.development.local
+   .env.test.local
+   .env.production.local
+   ```
+
+3. **テンプレートファイルの作成**
+   機密情報を含まないテンプレートファイルを作成：
+   ```bash
+   # 例：local.settings.template.jsonの作成
+   cp local.settings.json local.settings.template.json
+   # テンプレートファイル内の機密情報をプレースホルダーに置き換え
+   ```
+
+4. **変更をコミット**
+   ```bash
+   git add .gitignore
+   git add *template*
+   git commit -m "chore: gitignoreの更新とテンプレートファイルの追加"
+   ```
+
+5. **APIキーのローテーション**
+   誤ってコミットされた機密情報（APIキーなど）は再発行する
+
+#### 履歴からの完全削除（必要な場合）
+注意: 共有リポジトリの場合は他の開発者と調整が必要
+
+```bash
+git filter-branch --force --index-filter "git rm --cached --ignore-unmatch <ファイルパス>" --prune-empty --tag-name-filter cat -- --all
+git push origin --force --all
+```
+
+#### 予防策
+1. **pre-commitフックの導入**
+   - [git-secrets](https://github.com/awslabs/git-secrets)などのツールを使用
+   - コミット前に機密情報をスキャンして防止
+
+2. **環境変数の適切な管理**
+   - 開発環境: `.env.local`や`local.settings.json`を使用（Gitにコミットしない）
+   - 本番環境: Azure Key VaultやGitHub Secretsなどのシークレット管理サービスを使用
+
+3. **テンプレートファイルの活用**
+   - `.env.template`や`local.settings.template.json`を用意
+   - 必要な変数名のみを記載し、実際の値は記載しない
+
+4. **ドキュメント化**
+   - READMEに環境変数の設定手順を記載
+   - 新しい開発者のオンボーディングを容易にする 
