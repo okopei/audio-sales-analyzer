@@ -335,107 +335,19 @@ git add -p
 
 ## トラブルシューティング
 
-### Next.js関連
+### トラブルシューティング一覧表
 
-#### 1. `node_modules`に関するエラー
-**発生状況：**
-- パッケージの依存関係が壊れた場合
-- `package.json`が更新された後の不整合
-- Gitからクローンしたあとのモジュールエラー
-
-**解決方法：**
-```bash
-# node_modulesを削除して再インストール
-rm -rf node_modules
-npm install
-```
-
-#### 2. ビルドエラー
-**発生状況：**
-- TypeScriptの型エラー
-- キャッシュの不整合
-- 環境変数の設定ミス
-
-**解決方法：**
-```bash
-# Next.jsのキャッシュをクリア
-npm run clean
-
-# 必要に応じて再ビルド
-npm run build
-```
-
-### Python関連
-
-#### 1. パッケージの競合
-**発生状況：**
-- 異なるバージョンのパッケージが混在
-- `requirements.txt`の更新後
-- Python自体のバージョン不整合
-
-**解決方法：**
-```bash
-# 仮想環境を再作成
-rm -rf venv
-python -m venv venv
-source venv/bin/activate  # または venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-#### 2. 環境変数エラー
-**発生状況：**
-- `.env`ファイルが存在しない
-- 必要な環境変数が設定されていない
-- 環境変数の値が不正
-
-**解決方法：**
-```bash
-# .envファイルが存在することを確認
-ls .env
-
-# 必要に応じて.env.exampleからコピー
-cp .env.example .env
-
-# .envファイルの内容を確認
-cat .env
-```
-
-#### 3. FastAPIサーバー起動エラー
-**発生状況：**
-- ポート8000が既に使用されている
-- データベース接続エラー
-- 依存パッケージの不足
-
-**解決方法：**
-```bash
-# 使用中のポートを確認
-## Windows
-netstat -ano | findstr :8000
-## macOS/Linux
-lsof -i :8000
-
-# 別のポートで起動
-uvicorn main:app --reload --port 8001
-```
-
-### Git関連
-
-- 誤って削除したファイルの復元
-```bash
-git checkout -- deleted-file
-```
-
-- コミット履歴の確認
-```bash
-# 詳細なログの確認
-git log --oneline --graph
-
-# 特定ファイルの変更履歴
-git log -p filename
-```
-
-- ブランチの整理
-```bash
-# マージ済みブランチの削除
-git branch --merged | grep -v "\*" | xargs -n 1 git branch -d
-```
+| 関連システム | 問題 | 発生状況 | 解決方法 |
+|------------|------|---------|---------|
+| Next.js | `node_modules`に関するエラー | • パッケージの依存関係が壊れた場合<br>• `package.json`が更新された後の不整合<br>• Gitからクローンしたあとのモジュールエラー | ```bash<br># node_modulesを削除して再インストール<br>rm -rf node_modules<br>npm install<br>``` |
+| Next.js | ビルドエラー | • TypeScriptの型エラー<br>• キャッシュの不整合<br>• 環境変数の設定ミス | ```bash<br># Next.jsのキャッシュをクリア<br>npm run clean<br><br># 必要に応じて再ビルド<br>npm run build<br>``` |
+| Python | パッケージの競合 | • 異なるバージョンのパッケージが混在<br>• `requirements.txt`の更新後<br>• Python自体のバージョン不整合 | ```bash<br># 仮想環境を再作成<br>rm -rf venv<br>python -m venv venv<br>source venv/bin/activate  # または venv\Scripts\activate<br>pip install -r requirements.txt<br>``` |
+| Python | 環境変数エラー | • `.env`ファイルが存在しない<br>• 必要な環境変数が設定されていない<br>• 環境変数の値が不正 | ```bash<br># .envファイルが存在することを確認<br>ls .env<br><br># 必要に応じて.env.exampleからコピー<br>cp .env.example .env<br><br># .envファイルの内容を確認<br>cat .env<br>``` |
+| Python | FastAPIサーバー起動エラー | • ポート8000が既に使用されている<br>• データベース接続エラー<br>• 依存パッケージの不足 | ```bash<br># 使用中のポートを確認<br>## Windows<br>netstat -ano \| findstr :8000<br>## macOS/Linux<br>lsof -i :8000<br><br># 別のポートで起動<br>uvicorn main:app --reload --port 8001<br>``` |
+| Git | 誤って削除したファイルの復元 | • ファイルを誤って削除した場合 | ```bash<br>git checkout -- deleted-file<br>``` |
+| Git | コミット履歴の確認が必要 | • 変更履歴を確認したい場合<br>• 特定の変更を追跡したい場合 | ```bash<br># 詳細なログの確認<br>git log --oneline --graph<br><br># 特定ファイルの変更履歴<br>git log -p filename<br>``` |
+| Git | ブランチの整理 | • 不要なブランチが多数ある場合 | ```bash<br># マージ済みブランチの削除<br>git branch --merged \| grep -v "\*" \| xargs -n 1 git branch -d<br>``` |
+| Azure Functions | 接続文字列エラー | • local.settings.jsonの設定が不正<br>• 環境変数が正しく設定されていない | local.settings.jsonの`AzureWebJobsStorage`が正しく設定されているか確認 |
+| Azure Functions | Blobアクセスエラー | • Azuriteが起動していない<br>• コンテナが存在しない | Azuriteが起動しているか、コンテナが存在するか確認 |
+| Azure Functions | SQLエラー | • データベース接続文字列が不正<br>• テーブル構造が一致しない | データベース接続文字列とテーブル構造を確認 |
+| Azure Functions | EventGridトリガーエラー | • イベントデータのフォーマットが不正<br>• 接続文字列の問題 | テストJSONファイルのフォーマットとAzuriteの接続文字列を確認 |

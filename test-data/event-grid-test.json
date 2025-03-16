@@ -1,0 +1,18 @@
+{
+  "id": "12345678-1234-5678-abcd-1234567890ab",
+  "subject": "/blobServices/default/containers/moc-audio/blobs/test_audio.wav",
+  "eventType": "Microsoft.Storage.BlobCreated",
+  "eventTime": "2023-05-20T12:34:56.789Z",
+  "dataVersion": "1.0",
+  "data": {
+    "api": "PutBlob",
+    "clientRequestId": "abcdef12-3456-7890-abcd-ef1234567890",
+    "requestId": "request-id",
+    "eTag": "0x8DB4567890ABCDEF",
+    "contentType": "audio/wav",
+    "contentLength": 10485760,
+    "blobType": "BlockBlob",
+    "url": "http://127.0.0.1:10000/devstoreaccount1/moc-audio/test_audio.wav",
+    "sequencer": "000000000000000000000000000000000000000000000000"
+  }
+} 
