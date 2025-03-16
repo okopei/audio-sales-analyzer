@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@azure/storage-blob": "^12.26.0",
     "@radix-ui/react-label": "^2.1.1",
     "@radix-ui/react-radio-group": "^1.2.3",
     "@radix-ui/react-scroll-area": "^1.2.3",
