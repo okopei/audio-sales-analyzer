@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/hooks/useAuth"
 import { useRouter } from "next/navigation"
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 
 interface ProtectedRouteProps {
   children: React.ReactNode
@@ -15,19 +15,29 @@ export default function ProtectedRoute({
 }: ProtectedRouteProps) {
   const { isAuthenticated, isManager, loading, user } = useAuth()
   const router = useRouter()
+  const [redirecting, setRedirecting] = useState(false)
 
   useEffect(() => {
-    if (!loading) {
+    if (!loading && !redirecting) {
       if (!isAuthenticated) {
-        router.push('/') // ホームページへリダイレクト
+        setRedirecting(true)
+        console.log('User is not authenticated, redirecting to home')
+        // 遅延を入れてリダイレクトを確実に実行
+        setTimeout(() => {
+          router.push('/')
+        }, 100)
       } else if (requireManager && !isManager) {
+        setRedirecting(true)
         console.log('User is not a manager, redirecting to dashboard', user)
-        router.push('/dashboard') // 一般ユーザー向けページにリダイレクト
+        // 遅延を入れてリダイレクトを確実に実行
+        setTimeout(() => {
+          router.push('/dashboard')
+        }, 100)
       }
     }
-  }, [isAuthenticated, isManager, loading, requireManager, router, user])
+  }, [isAuthenticated, isManager, loading, requireManager, router, user, redirecting])
 
-  if (loading) {
+  if (loading || redirecting) {
     return <div className="flex items-center justify-center min-h-screen">
       <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
     </div>

@@ -380,12 +380,14 @@ git add -p
 |------------|------|---------|---------|
 | Next.js | `node_modules`に関するエラー | • パッケージの依存関係が壊れた場合<br>• `package.json`が更新された後の不整合<br>• Gitからクローンしたあとのモジュールエラー | ```bash<br># node_modulesを削除して再インストール<br>rm -rf node_modules<br>npm install<br>``` |
 | Next.js | ビルドエラー | • TypeScriptの型エラー<br>• キャッシュの不整合<br>• 環境変数の設定ミス | ```bash<br># Next.jsのキャッシュをクリア<br>npm run clean<br><br># 必要に応じて再ビルド<br>npm run build<br>``` |
+| Next.js | 直接URLアクセス時のルーティング問題 | • http://localhost:3000/dashboardや/manager-dashboardを直接URLに入力すると、http://localhost:3000にリダイレクトされてしまう<br>• 認証情報がある状態でも、直接URLアクセスができない | **【未解決】**<br>以下のアプローチを試したが解決しなかった：<br>• ミドルウェア（middleware.ts）を作成して認証状態の確認とルーティング制御<br>• useAuthフックの修正でローカルストレージとCookieの両方に認証情報を保存<br><br>調査が必要な点：<br>• Next.jsのルーティングの仕組みと認証状態の連携<br>• サーバーサイドでの認証状態の確認方法<br>• バージョン依存の問題の可能性 |
 | Python | パッケージの競合 | • 異なるバージョンのパッケージが混在<br>• `requirements.txt`の更新後<br>• Python自体のバージョン不整合 | ```bash<br># 仮想環境を再作成<br>rm -rf venv<br>python -m venv venv<br>source venv/bin/activate  # または venv\Scripts\activate<br>pip install -r requirements.txt<br>``` |
 | Python | 環境変数エラー | • `.env`ファイルが存在しない<br>• 必要な環境変数が設定されていない<br>• 環境変数の値が不正 | ```bash<br># .envファイルが存在することを確認<br>ls .env<br><br># 必要に応じて.env.exampleからコピー<br>cp .env.example .env<br><br># .envファイルの内容を確認<br>cat .env<br>``` |
 | Python | FastAPIサーバー起動エラー | • ポート8000が既に使用されている<br>• データベース接続エラー<br>• 依存パッケージの不足 | ```bash<br># 使用中のポートを確認<br>## Windows<br>netstat -ano \| findstr :8000<br>## macOS/Linux<br>lsof -i :8000<br><br># 別のポートで起動<br>uvicorn main:app --reload --port 8001<br>``` |
 | Git | 誤って削除したファイルの復元 | • ファイルを誤って削除した場合 | ```bash<br>git checkout -- deleted-file<br>``` |
 | Git | コミット履歴の確認が必要 | • 変更履歴を確認したい場合<br>• 特定の変更を追跡したい場合 | ```bash<br># 詳細なログの確認<br>git log --oneline --graph<br><br># 特定ファイルの変更履歴<br>git log -p filename<br>``` |
 | Git | ブランチの整理 | • 不要なブランチが多数ある場合 | ```bash<br># マージ済みブランチの削除<br>git branch --merged \| grep -v "\*" \| xargs -n 1 git branch -d<br>``` |
+| Git | 改行コード問題 | • Windows環境（CRLF）とLinux/Mac環境（LF）で開発している場合<br>• 「ローカルの変更がある」というエラーが出るが、実際には変更していない場合<br>• プル/マージ時に改行コードの競合が発生する場合 | ```bash<br># 1. .gitattributesファイルを設定<br>*.py text eol=lf<br>*.js text eol=lf<br>*.jsx text eol=lf<br>*.ts text eol=lf<br>*.tsx text eol=lf<br><br># 2. 改行コードの自動変換を無効化<br>git config --global core.autocrlf false<br><br># 3. 既存の改行コード問題を解決<br>git add .<br>git commit -m "fix: 改行コード（CRLF→LF）の統一"<br>```|
 | Azure Functions | 接続文字列エラー | • local.settings.jsonの設定が不正<br>• 環境変数が正しく設定されていない | local.settings.jsonの`AzureWebJobsStorage`が正しく設定されているか確認 |
 | Azure Functions | Blobアクセスエラー | • Azuriteが起動していない<br>• コンテナが存在しない | Azuriteが起動しているか、コンテナが存在するか確認 |
 | Azure Functions | SQLエラー | • データベース接続文字列が不正<br>• テーブル構造が一致しない | データベース接続文字列とテーブル構造を確認 |
