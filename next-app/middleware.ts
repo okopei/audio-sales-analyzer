@@ -41,7 +41,9 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
+  // ===== ここから一時的にコメントアウト（テスト用 - 後で元に戻す）=====
   // 認証済みのユーザーがログインページや登録ページへアクセスした場合
+  /*
   if (publicRoutes.includes(pathname) && isAuthenticated) {
     if (pathname === '/') {
       console.log(`Authenticated user on login page, redirecting to appropriate dashboard`)
@@ -52,6 +54,8 @@ export function middleware(request: NextRequest) {
       }
     }
   }
+  */
+  // ===== ここまで一時的にコメントアウト（テスト用 - 後で元に戻す）=====
 
   return NextResponse.next()
 }
