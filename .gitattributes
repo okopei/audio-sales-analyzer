@@ -7,13 +7,13 @@
 *.json text
 
 # Source code
-*.py text
-*.js text
-*.jsx text
-*.ts text
-*.tsx text
-*.css text
-*.html text
+*.py text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.css text eol=lf
+*.html text eol=lf
 
 # Binary files (don't diff, don't merge)
 *.png binary
@@ -32,4 +32,10 @@
 
 # Exclude local settings files from being treated as text
 local.settings.json -text
-.env.local -text 
+.env.local -text
+
+# Force specific files to use LF
+next-app/src/app/api/azure/get-sas-token/route.ts text eol=lf
+next-app/src/app/api/azure/upload-blob/route.ts text eol=lf
+next-app/src/app/test-upload/page.tsx text eol=lf
+next-app/src/lib/utils/azure-storage.ts text eol=lf 
