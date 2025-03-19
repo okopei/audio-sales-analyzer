@@ -13,6 +13,7 @@ import { useDropzone } from "react-dropzone"
 import { saveBasicInfo } from "@/lib/api-client"
 import { useAuth } from "@/hooks/useAuth"
 import ProtectedRoute from "@/components/auth/ProtectedRoute"
+import { uploadToAzureStorage } from "@/lib/utils/azure-storage"
 
 export default function NewMeetingPage() {
   const router = useRouter()
@@ -21,6 +22,13 @@ export default function NewMeetingPage() {
   const [isMobile, setIsMobile] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState<{
+    success?: boolean
+    message?: string
+    url?: string
+  } | null>(null)
+  const [createdMeetingId, setCreatedMeetingId] = useState<number | null>(null)
 
   useEffect(() => {
     setIsMobile(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent))
@@ -77,20 +85,21 @@ export default function NewMeetingPage() {
     return Array.from({ length: 10 }, (_, i) => i + 9)
   }
 
-  const handleSubmit = async (type: "save" | "next") => {
+  // 基本情報を保存する関数
+  const handleSubmit = async (type: "save" | "next"): Promise<number | null> => {
     if (!user) {
       alert("ログインしてください")
-      return
+      return null
     }
 
     if (!formData.companyName) {
       alert("顧客名を入力してください")
-      return
+      return null
     }
 
     if (!formData.companyNameBiz) {
       alert("企業名を入力してください")
-      return
+      return null
     }
 
     try {
@@ -119,6 +128,8 @@ export default function NewMeetingPage() {
       const response = await saveBasicInfo(basicInfoData)
       
       console.log("BasicInfo saved successfully:", response)
+      // 作成されたmeeting_idを保存
+      setCreatedMeetingId(response.meetingId)
       
       // 成功時の処理
       if (type === "next") {
@@ -128,6 +139,7 @@ export default function NewMeetingPage() {
       } else {
         // 保存成功メッセージを表示
         alert(`保存完了: ${response.message}`)
+        return response.meetingId // 会議IDを返す
       }
     } catch (error) {
       console.error("Error saving basic info:", error)
@@ -137,6 +149,8 @@ export default function NewMeetingPage() {
     } finally {
       setIsSubmitting(false)
     }
+    
+    return null // エラー時はnullを返す
   }
 
   const handleStartRecording = async () => {
@@ -145,11 +159,74 @@ export default function NewMeetingPage() {
   }
 
   const handleFileUpload = async (file: File) => {
-    console.log("Uploading file:", file)
-    // Implement your file upload logic here
-    // For example, you might use the Vercel Blob API to upload the file
-    // const { url } = await upload(file.name, file, { access: 'public' })
-    // console.log('File uploaded to:', url)
+    if (!user) {
+      alert("ログインしてください")
+      return
+    }
+    
+    try {
+      setIsUploading(true)
+      let meetingId = createdMeetingId
+      
+      // 最初に基本情報を保存して会議IDを取得する
+      if (!meetingId) {
+        setUploadStatus({ message: "商談情報を保存しています..." })
+        
+        // 基本情報を保存して会議IDを取得
+        meetingId = await handleSubmit("save")
+        
+        if (!meetingId) {
+          setUploadStatus({
+            success: false,
+            message: "商談情報の保存に失敗しました。もう一度お試しください。"
+          })
+          return
+        }
+      }
+      
+      setUploadStatus({ message: "音声をアップロード中..." })
+      
+      console.log("音声アップロード開始:", file.name, "会議ID:", meetingId)
+      
+      // meeting_idとuser_idを含むファイル名を生成
+      const userId = user.user_id
+      const timestamp = new Date().getTime()
+      const fileExt = file.name.split('.').pop() || 'mp3'
+      const fileName = `meeting_${meetingId}_user_${userId}_${timestamp}.${fileExt}`
+      
+      console.log("アップロード用ファイル名:", fileName)
+      
+      // Azure Blob Storageにアップロード
+      const blobUrl = await uploadToAzureStorage(file, fileName)
+      
+      console.log("アップロード成功:", blobUrl)
+      
+      // TODO: ここで会議情報を更新するAPIを呼び出し、BlobURLを保存する処理を追加
+      
+      setUploadStatus({
+        success: true,
+        message: "音声のアップロードに成功しました。ダッシュボードに移動します...",
+        url: blobUrl
+      })
+      
+      // 成功メッセージ表示後、ダッシュボードに遷移するよう変更
+      setTimeout(() => {
+        // ユーザーの権限に応じて適切なダッシュボードに遷移
+        if (user?.is_manager) {
+          router.push('/manager-dashboard')
+        } else {
+          router.push('/dashboard')
+        }
+      }, 2000)
+    } catch (error) {
+      console.error("アップロードエラー:", error)
+      setUploadStatus({
+        success: false,
+        message: "アップロードに失敗しました: " + (error instanceof Error ? error.message : String(error))
+      })
+    } finally {
+      setIsUploading(false)
+    }
   }
 
   const handleVoiceMemoImport = async () => {
@@ -162,8 +239,8 @@ export default function NewMeetingPage() {
     (acceptedFiles: File[]) => {
       if (acceptedFiles[0]) handleFileUpload(acceptedFiles[0])
     },
-    [handleFileUpload],
-  ) // Added handleFileUpload to dependencies
+    [handleFileUpload, createdMeetingId, user],
+  )
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -347,6 +424,19 @@ export default function NewMeetingPage() {
                 </div>
               )}
 
+              {uploadStatus && (
+                <div className={`mt-4 p-3 border rounded-md text-sm ${
+                  uploadStatus.success === undefined ? 'bg-blue-50 border-blue-200 text-blue-600' :
+                  uploadStatus.success ? 'bg-green-50 border-green-200 text-green-600' : 
+                  'bg-red-50 border-red-200 text-red-600'
+                }`}>
+                  <p>{uploadStatus.message}</p>
+                  {uploadStatus.url && (
+                    <p className="text-xs mt-2 break-all">URL: {uploadStatus.url}</p>
+                  )}
+                </div>
+              )}
+
               <div className="flex flex-col sm:flex-row gap-4 pt-4">
                 <Button 
                   variant="outline" 
@@ -364,9 +454,10 @@ export default function NewMeetingPage() {
                         variant="outline"
                         className="flex-1 whitespace-nowrap"
                         onClick={() => document.getElementById("file-upload")?.click()}
+                        disabled={isUploading}
                       >
                         <Upload className="w-4 h-4 mr-2" />
-                        音声をアップロード
+                        {isUploading ? "アップロード中..." : "音声をアップロード"}
                       </Button>
                       <input
                         id="file-upload"
@@ -386,19 +477,25 @@ export default function NewMeetingPage() {
                     // Desktop version
                     <div
                       {...getRootProps()}
-                      className={`flex-1 relative ${isDragActive ? "border-2 border-dashed border-primary" : ""}`}
+                      className={`flex-1 relative ${
+                        isDragActive ? "border-2 border-dashed border-primary" : ""
+                      }`}
                     >
                       <input {...getInputProps()} />
-                      <Button variant="outline" className="w-full whitespace-nowrap">
+                      <Button 
+                        variant="outline" 
+                        className="w-full whitespace-nowrap"
+                        disabled={isUploading}
+                      >
                         <Upload className="w-4 h-4 mr-2" />
-                        音声をアップロード
+                        {isUploading ? "アップロード中..." : "音声をアップロード"}
                       </Button>
                     </div>
                   )}
                   <Button 
                     className="flex-1 whitespace-nowrap" 
                     onClick={() => handleSubmit("next")}
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || isUploading}
                   >
                     録音へ
                   </Button>
