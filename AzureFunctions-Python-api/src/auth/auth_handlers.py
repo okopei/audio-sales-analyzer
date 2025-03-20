@@ -185,4 +185,50 @@ def check_manager(manager_name: str) -> bool:
         return result and result[0]['count'] > 0
     except Exception as e:
         logging.error(f"Error checking manager: {str(e)}")
-        return False 
+        return False
+
+def get_user_by_id(req: func.HttpRequest, users_query: func.SqlRowList) -> func.HttpResponse:
+    """
+    ユーザーIDに基づいて単一ユーザー情報を取得する
+    """
+    log_request(req, "GetUserById")
+    
+    # OPTIONSリクエスト処理
+    if req.method == "OPTIONS":
+        return handle_options_request()
+    
+    try:
+        # ルートパラメータからuser_idを取得
+        user_id = req.route_params.get('user_id')
+        if not user_id:
+            return create_error_response("user_id is required", 400)
+        
+        logging.info(f"Looking for user with ID: {user_id}")
+        
+        # ユーザーIDに基づいてユーザーを検索
+        user_data = None
+        for row in users_query:
+            row_user_id = str(row.get("user_id"))
+            if row_user_id == str(user_id):
+                user_data = dict(row)
+                break
+        
+        if not user_data:
+            return create_error_response("User not found", 404)
+        
+        # User モデルを使用してデータを整形
+        user = User(
+            user_id=user_data.get("user_id"),
+            user_name=user_data.get("user_name"),
+            email=user_data.get("email"),
+            role="manager" if user_data.get("is_manager") else "member",
+            is_active=user_data.get("is_active", True),
+            account_status=user_data.get("account_status", "active"),
+            manager_name=user_data.get("manager_name")
+        )
+        
+        # 機密情報を含まない形でユーザーデータを返す
+        return create_json_response({"user": user.to_dict()})
+    except Exception as e:
+        logging.error(f"Error retrieving user: {str(e)}")
+        return create_error_response(f"Internal server error: {str(e)}", 500) 

@@ -7,6 +7,7 @@ import { Search, PlusCircle, LogOut, User } from "lucide-react"
 import Link from "next/link"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useAuth } from "@/hooks/useAuth"
+import { useUser } from "@/hooks/useUser"
 import { useMembersMeetings } from "@/hooks/useMembersMeetings"
 import React, { useState, useEffect } from "react"
 import ProtectedRoute from "@/components/auth/ProtectedRoute"
@@ -14,6 +15,7 @@ import ProtectedRoute from "@/components/auth/ProtectedRoute"
 export default function ManagerDashboard() {
   // useAuthフックを使用してユーザー情報とログアウト関数を取得
   const { user, logout } = useAuth();
+  const { userInfo, loading: userLoading } = useUser();
   const { meetings, loading, error } = useMembersMeetings();
   
   const comments = [
@@ -76,7 +78,7 @@ export default function ManagerDashboard() {
           {/* ユーザー名とログアウトボタン */}
           <div className="flex justify-between items-center mb-4">
             <div className="text-xl font-medium">
-              {user?.user_name ? `${user.user_name} MGR` : 'MGR'}
+              {userInfo ? `${userInfo.user_name} MGR` : (user?.user_name ? `${user.user_name} MGR` : 'MGR')}
             </div>
             <Button 
               variant="outline" 

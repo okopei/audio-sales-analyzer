@@ -73,8 +73,6 @@ def get_members_meetings(req: func.HttpRequest, users_query: func.SqlRowList, me
         manager_id = req.params.get('manager_id')
         show_all = req.params.get('show_all', '').lower() == 'true'
         
-        logging.info(f"[DEBUG] Received manager_id: {manager_id}, show_all: {show_all}")
-        
         if not manager_id:
             return create_error_response("manager_id is required", 400)
         
@@ -84,8 +82,6 @@ def get_members_meetings(req: func.HttpRequest, users_query: func.SqlRowList, me
             if str(user.get("user_id")) == manager_id:
                 manager_name = user.get("user_name")
                 break
-        
-        logging.info(f"[DEBUG] Found manager_name: {manager_name}")
         
         if not manager_name:
             return create_error_response("Manager not found", 404)
@@ -97,15 +93,6 @@ def get_members_meetings(req: func.HttpRequest, users_query: func.SqlRowList, me
             if show_all or user_dict.get("manager_name") == manager_name:
                 user_id = str(user_dict.get("user_id"))
                 team_member_ids.append(user_id)
-                logging.info(f"[DEBUG] Found team member - user_id: {user_id}, user_name: {user_dict.get('user_name')}, manager_name: {user_dict.get('manager_name')}")
-        
-        logging.info(f"[DEBUG] Team member IDs: {team_member_ids}")
-        
-        # すべてのユーザーのmanager_name情報をログに出力
-        logging.info("[DEBUG] All users manager_name info:")
-        for user in users_query:
-            user_dict = dict(user)
-            logging.info(f"[DEBUG] user_id: {user_dict.get('user_id')}, user_name: {user_dict.get('user_name')}, manager_name: {user_dict.get('manager_name')}")
         
         # チームメンバーのミーティングを取得
         meetings = []
@@ -120,16 +107,12 @@ def get_members_meetings(req: func.HttpRequest, users_query: func.SqlRowList, me
                     meeting = Meeting.from_dict(row_dict)
                     meetings.append(meeting.to_dict())
                     meeting_count += 1
-                    logging.info(f"[DEBUG] Found meeting for team member - meeting_id: {row_dict.get('meeting_id')}, user_id: {row_user_id}, title: {row_dict.get('title')}")
             except Exception as row_error:
                 logging.error(f"Error processing row: {str(row_error)}")
-        
-        logging.info(f"[DEBUG] Total meetings found: {meeting_count}")
         
         if meetings:
             return create_json_response({"meetings": meetings})
         else:
-            logging.info(f"[DEBUG] No meetings found for team members with IDs: {team_member_ids}")
             return create_json_response({"message": "No meetings found for the team members"})
     except Exception as e:
         logging.error(f"Error retrieving team meetings: {str(e)}")
