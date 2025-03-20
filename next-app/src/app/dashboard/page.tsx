@@ -9,11 +9,13 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useAuth } from "@/hooks/useAuth"
+import { useUser } from "@/hooks/useUser"
 import { useMeetings } from "@/hooks/useMeetings"
 import ProtectedRoute from "@/components/auth/ProtectedRoute"
 
 export default function Dashboard() {
   const { user, logout, isManager } = useAuth()
+  const { userInfo, loading: userLoading } = useUser()
   const { meetings, loading, error } = useMeetings()
   const router = useRouter()
   
@@ -74,7 +76,7 @@ export default function Dashboard() {
           {/* ユーザー名とログアウトボタン */}
           <div className="flex justify-between items-center mb-4">
             <div className="text-xl font-medium">
-              {user?.user_name || "ユーザー"} 様
+              {userInfo?.user_name || user?.user_name || "ユーザー"} 様
             </div>
             <Button 
               variant="outline" 

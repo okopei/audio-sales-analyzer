@@ -8,7 +8,7 @@ import logging
 from azure.functions import AuthLevel, FunctionApp
 
 # モジュール構造からのインポート
-from src.auth import login, register
+from src.auth import login, register, get_user_by_id
 from src.meetings import get_meetings, get_members_meetings, save_meeting, save_basic_info
 
 # Azure Functions アプリケーションの初期化
@@ -41,6 +41,18 @@ def register_test(req: func.HttpRequest, users: func.Out[func.SqlRow]) -> func.H
 )
 def login_func(req: func.HttpRequest, usersQuery: func.SqlRowList) -> func.HttpResponse:
     return login(req, usersQuery)
+
+# ユーザー情報取得エンドポイント
+@app.function_name(name="GetUserById")
+@app.route(route="users/{user_id}", methods=["GET", "OPTIONS"])
+@app.generic_input_binding(
+    arg_name="usersQuery", 
+    type="sql",
+    CommandText="SELECT user_id, user_name, email, is_manager, manager_name, is_active, account_status FROM dbo.Users",
+    ConnectionStringSetting="SqlConnectionString"
+)
+def get_user_by_id_func(req: func.HttpRequest, usersQuery: func.SqlRowList) -> func.HttpResponse:
+    return get_user_by_id(req, usersQuery)
 
 #
 # 会議関連のエンドポイント
