@@ -39,8 +39,11 @@ export function useMeetings() {
 
       const data = await response.json()
       
+      // APIレスポンスの形式をチェック（配列またはmeetingsプロパティを持つオブジェクト）
+      const meetingsArray = Array.isArray(data) ? data : data.meetings || []
+      
       // 日時でソートし、最新10件を取得
-      const sortedMeetings = data.meetings
+      const sortedMeetings = meetingsArray
         .sort((a: Meeting, b: Meeting) => 
           new Date(b.meeting_datetime).getTime() - new Date(a.meeting_datetime).getTime()
         )

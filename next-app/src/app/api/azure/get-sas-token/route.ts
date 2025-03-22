@@ -12,10 +12,11 @@ export async function GET() {
     const accountKey = process.env.AZURE_STORAGE_ACCOUNT_KEY
     const containerName = process.env.NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME || 'moc-audio'
     
-    console.log('環境変数:', { 
-      accountName, 
-      containerName,
-      hasAccountKey: !!accountKey
+    console.log('環境変数詳細:', { 
+      accountName: accountName || '未設定', 
+      containerName: containerName || '未設定',
+      hasAccountKey: !!accountKey,
+      containerNameDefault: 'moc-audio'
     })
     
     if (!accountName || !accountKey) {

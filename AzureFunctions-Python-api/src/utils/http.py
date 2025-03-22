@@ -52,24 +52,13 @@ def parse_json_request(req):
 
 def log_request(req, function_name):
     """
-    リクエストの詳細をログに記録する
+    リクエストの基本情報をログに記録する
     """
     logging.info(f"{function_name} - {req.method} request received")
-    logging.info(f"URL: {req.url}")
-    logging.info(f"Headers: {dict(req.headers)}")
     
-    # POSTリクエストの場合はボディも記録
-    if req.method in ["POST", "PUT"] and req.get_body():
-        try:
-            body = req.get_json()
-            # パスワードなどの機密情報をマスク
-            if body and isinstance(body, dict):
-                if "password" in body:
-                    body["password"] = "********"
-                if "password_hash" in body:
-                    body["password_hash"] = "********"
-                if "salt" in body:
-                    body["salt"] = "********"
-            logging.info(f"Body: {body}")
-        except ValueError:
-            logging.info("Body: [non-JSON data]") 
+    # 詳細ログは開発環境でのみ出力
+    if os.environ.get("FUNCTIONS_ENVIRONMENT") == "Development":
+        logging.debug(f"URL: {req.url}")
+    
+    # 機密情報は記録しない
+    # ヘッダーやボディの詳細ログは削除 
