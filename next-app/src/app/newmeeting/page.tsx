@@ -14,6 +14,7 @@ import { saveBasicInfo } from "@/lib/api-client"
 import { useAuth } from "@/hooks/useAuth"
 import ProtectedRoute from "@/components/auth/ProtectedRoute"
 import { uploadToAzureStorage } from "@/lib/utils/azure-storage"
+import { toast } from "react-hot-toast"
 
 export default function NewMeetingPage() {
   const router = useRouter()
@@ -106,6 +107,9 @@ export default function NewMeetingPage() {
       setIsSubmitting(true)
       setSubmitError(null)
 
+      // 会議日時文字列を作成
+      const meeting_datetime = `${formData.year}-${formData.month.padStart(2, "0")}-${formData.day.padStart(2, "0")} ${formData.hour.padStart(2, "0")}:00:00`;
+      
       // Save basic info
       const basicInfoData = {
         userId: user.user_id,
@@ -119,7 +123,7 @@ export default function NewMeetingPage() {
         industry: formData.industry,
         scale: formData.scale,
         meeting_goal: formData.meetingGoal,
-        meeting_datetime: `${formData.year}-${formData.month.padStart(2, "0")}-${formData.day.padStart(2, "0")} ${formData.hour.padStart(2, "0")}:00:00`,
+        meeting_datetime: meeting_datetime,
       }
 
       console.log("Submitting form data:", basicInfoData);
@@ -128,34 +132,83 @@ export default function NewMeetingPage() {
       const response = await saveBasicInfo(basicInfoData)
       
       console.log("BasicInfo saved successfully:", response)
-      // 作成されたmeeting_idを保存
-      setCreatedMeetingId(response.meetingId)
+      
+      // ☆の情報をローカルストレージに保存（録音画面での検索用）
+      try {
+        const basicMeetingInfo = {
+          userId: user.user_id,
+          client_company_name: formData.companyNameBiz,
+          client_contact_name: formData.companyName,
+          meeting_datetime: meeting_datetime
+        };
+        
+        localStorage.setItem('basicMeetingInfo', JSON.stringify(basicMeetingInfo));
+        
+        // responseから検索情報を取得
+        if (response.search_info) {
+          console.log("検索情報をローカルストレージに保存:", response.search_info);
+        }
+        
+        console.log("基本情報をローカルストレージに保存:", basicMeetingInfo);
+      } catch (storageError) {
+        console.warn("ローカルストレージへの保存に失敗:", storageError);
+        // 処理は続行
+      }
       
       // 成功時の処理
       if (type === "next") {
-        // 録音ページへ移動（会議IDを渡す）
-        await startRecording()
-        router.push(`/recording?recording=true&meetingId=${response.meetingId}`)
+        // 会議IDの取得 - これは録音画面で検索される
+        console.log("BasicInfo保存完了、検索情報:", response.search_info);
+        
+        // 商談情報の保存完了をトーストで通知
+        toast.success("商談情報を保存しました。録音画面に移動します");
+        
+        // データベースへの反映を確実にするために少し待機
+        setTimeout(() => {
+          console.log("録音画面へ移動します");
+          // 録音ページへ移動
+          router.push(`/recording`);
+        }, 1000);
       } else {
         // 保存成功メッセージを表示
-        alert(`保存完了: ${response.message}`)
-        return response.meetingId // 会議IDを返す
+        toast.success(`商談情報を保存しました: ${response.message}`);
+        return null; // IDは録音画面で検索するため返さない
       }
     } catch (error) {
       console.error("Error saving basic info:", error)
-      // エラーメッセージを表示
-      setSubmitError(error instanceof Error ? error.message : "基本情報の保存に失敗しました")
-      alert("エラー: 基本情報の保存に失敗しました")
+      
+      // エラーメッセージの詳細を取得
+      let errorMessage = "基本情報の保存に失敗しました";
+      
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        
+        // データベース接続エラーの特別な処理
+        if (errorMessage.includes('データベース接続') || 
+            errorMessage.includes('SQLDriverConnect') ||
+            errorMessage.includes('ドライバー') ||
+            errorMessage.includes('connection') ||
+            errorMessage.includes('Failed to retrieve')) {
+          errorMessage = "データベース接続エラーが発生しました。サーバー管理者に連絡してください。";
+          toast.error("データベース接続エラー", {
+            duration: 6000,
+            icon: "🛑",
+          });
+          
+          console.error("データベース接続エラーの詳細:", error.message);
+        }
+      }
+      
+      // エラーメッセージを設定
+      setSubmitError(errorMessage);
+      
+      // モーダルやトーストでエラーを表示
+      toast.error(`エラー: ${errorMessage}`);
     } finally {
       setIsSubmitting(false)
     }
     
     return null // エラー時はnullを返す
-  }
-
-  const handleStartRecording = async () => {
-    await startRecording()
-    router.push("/recording?recording=true")
   }
 
   const handleFileUpload = async (file: File) => {

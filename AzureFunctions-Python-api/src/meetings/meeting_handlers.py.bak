@@ -1,0 +1,516 @@
+import logging
+import json
+import traceback
+import azure.functions as func
+from datetime import datetime, UTC
+
+from ..utils.http import get_cors_headers, handle_options_request, create_json_response, create_error_response, parse_json_request, log_request
+from ..utils.db import get_db_connection, execute_query, get_current_time
+from ..models.meeting import Meeting
+
+def get_meetings(req: func.HttpRequest, meetings_query: func.SqlRowList) -> func.HttpResponse:
+    """
+    ユーザーの会議一覧を取得する
+    """
+    log_request(req, "GetMeetings")
+    
+    # OPTIONSリクエスト処理
+    if req.method == "OPTIONS":
+        return handle_options_request()
+    
+    try:
+        user_id = req.params.get('user_id')
+        if not user_id:
+            return create_error_response("user_id is required", 400)
+        
+        # デバッグ用に、全てのミーティングデータをログに出力
+        meetings_list = list(meetings_query)
+        logging.info(f"Total meetings retrieved from DB: {len(meetings_list)}")
+        
+        # ユーザーIDフィルタリング
+        meetings = []
+        for row in meetings_list:
+            row_dict = dict(row)
+            row_user_id = row_dict.get("user_id")
+            
+            # ユーザーIDの比較
+            try:
+                if str(row_user_id) == str(user_id):
+                    # Meetingモデルを使用してデータを整形
+                    meeting = Meeting.from_dict(row_dict)
+                    meetings.append(meeting.to_dict())
+            except (ValueError, TypeError) as ve:
+                logging.error(f"Error converting user_id: {str(ve)}")
+        
+        # 最終的なミーティング数をログに出力
+        logging.info(f"Filtered meetings count: {len(meetings)}")
+        
+        if meetings:
+            return create_json_response({"meetings": meetings})
+        else:
+            return create_json_response({
+                "message": "No meetings found for the specified user",
+                "debug": {
+                    "user_id_requested": user_id,
+                    "total_records": len(meetings_list)
+                }
+            })
+    except Exception as e:
+        logging.error(f"Error retrieving meetings: {str(e)}")
+        return create_error_response(f"Internal server error: {str(e)}", 500)
+
+def get_members_meetings(req: func.HttpRequest, users_query: func.SqlRowList, meetings_query: func.SqlRowList) -> func.HttpResponse:
+    """
+    マネージャーのチームメンバーの会議一覧を取得する
+    """
+    log_request(req, "GetMembersMeetings")
+    
+    # OPTIONSリクエスト処理
+    if req.method == "OPTIONS":
+        return handle_options_request()
+    
+    try:
+        manager_id = req.params.get('manager_id')
+        show_all = req.params.get('show_all', '').lower() == 'true'
+        
+        if not manager_id:
+            return create_error_response("manager_id is required", 400)
+        
+        # マネージャー名を取得
+        manager_name = None
+        for user in users_query:
+            if str(user.get("user_id")) == manager_id:
+                manager_name = user.get("user_name")
+                break
+        
+        if not manager_name:
+            return create_error_response("Manager not found", 404)
+        
+        # マネージャーが管理するチームメンバーのIDを取得
+        team_member_ids = []
+        for user in users_query:
+            user_dict = dict(user)
+            if show_all or user_dict.get("manager_name") == manager_name:
+                user_id = str(user_dict.get("user_id"))
+                team_member_ids.append(user_id)
+        
+        # チームメンバーのミーティングを取得
+        meetings = []
+        meeting_count = 0
+        for row in meetings_query:
+            try:
+                row_dict = dict(row)
+                row_user_id = str(row_dict.get("user_id"))
+                
+                if row_user_id in team_member_ids:
+                    # Meetingモデルを使用してデータを整形
+                    meeting = Meeting.from_dict(row_dict)
+                    meetings.append(meeting.to_dict())
+                    meeting_count += 1
+            except Exception as row_error:
+                logging.error(f"Error processing row: {str(row_error)}")
+        
+        if meetings:
+            return create_json_response({"meetings": meetings})
+        else:
+            return create_json_response({"message": "No meetings found for the team members"})
+    except Exception as e:
+        logging.error(f"Error retrieving team meetings: {str(e)}")
+        return create_error_response(f"Internal server error: {str(e)}", 500)
+
+def save_meeting(req: func.HttpRequest, meetings_out: func.Out[func.SqlRow], last_meeting: func.SqlRowList) -> func.HttpResponse:
+    """
+    会議情報を保存する
+    """
+    log_request(req, "SaveMeeting")
+    
+    # OPTIONSリクエスト処理
+    if req.method == "OPTIONS":
+        return handle_options_request()
+    
+    try:
+        # JSONデータを取得
+        req_body = parse_json_request(req)
+        if not req_body:
+            return create_error_response("Invalid JSON data", 400)
+        
+        logging.info(f"Received data: {req_body}")
+        
+        # 必須フィールドの確認
+        year = req_body.get('year')
+        month = req_body.get('month')
+        day = req_body.get('day')
+        hour = req_body.get('hour')
+        company_name = req_body.get('companyName')
+        user_id = req_body.get('userId')
+        
+        # オプションフィールド
+        contact_person = req_body.get('contactPerson', '')
+        industry = req_body.get('industry', '')
+        scale = req_body.get('scale', '')
+        meeting_goal = req_body.get('meetingGoal', '')
+        
+        if not all([year, month, day, hour, company_name, user_id]):
+            missing_fields = []
+            if not year: missing_fields.append("year")
+            if not month: missing_fields.append("month")
+            if not day: missing_fields.append("day")
+            if not hour: missing_fields.append("hour")
+            if not company_name: missing_fields.append("companyName")
+            if not user_id: missing_fields.append("userId")
+            
+            logging.warning(f"Missing required fields: {', '.join(missing_fields)}")
+            return create_error_response(f"Missing required fields: {', '.join(missing_fields)}", 400)
+        
+        # 日付文字列を作成
+        meeting_date_str = f"{year}-{month}-{day}T{hour}:00:00"
+        
+        # タイトルを会社名から生成
+        title = f"{company_name}との商談"
+        
+        # 会議モデルを作成
+        meeting = Meeting(
+            user_id=user_id,
+            title=title,
+            meeting_datetime=meeting_date_str,
+            status="pending",
+            inserted_datetime=get_current_time(),
+            updated_datetime=get_current_time()
+        )
+        
+        # 最後の会議IDを取得
+        last_meeting_id = 0
+        for row in last_meeting:
+            last_meeting_id = row["meeting_id"]
+            break
+        
+        logging.info(f"Last meeting ID before insert: {last_meeting_id}")
+        
+        # SQLバインディングを使用してデータを挿入
+        meetings_out.set(func.SqlRow(meeting.to_sql_row()))
+        
+        # 新しい会議IDは最後の会議ID + 1と推定
+        new_meeting_id = last_meeting_id + 1
+        
+        # 成功レスポンス
+        response_data = {
+            "meetingId": new_meeting_id,
+            "message": f"Meeting with '{company_name}' created successfully."
+        }
+        
+        return create_json_response(response_data, 201)
+    except Exception as e:
+        logging.error(f"Error creating meeting: {str(e)}")
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        
+        return create_error_response(f"Error creating meeting: {str(e)}", 500)
+
+def save_basic_info(req: func.HttpRequest, basicInfo_out: func.Out[func.SqlRow], last_basicInfo: func.SqlRowList) -> func.HttpResponse:
+    """
+    基本情報を保存する
+    """
+    log_request(req, "SaveBasicInfo")
+    
+    # OPTIONSリクエスト処理
+    if req.method == "OPTIONS":
+        return handle_options_request()
+    
+    try:
+        # JSONデータを取得
+        req_body = parse_json_request(req)
+        if not req_body:
+            return create_error_response("Invalid JSON data", 400)
+        
+        logging.info(f"Received data: {req_body}")
+        
+        # 必須フィールドの確認
+        year = req_body.get('year')
+        month = req_body.get('month')
+        day = req_body.get('day')
+        hour = req_body.get('hour')
+        company_name = req_body.get('companyName')  # 顧客名（担当者名）- フロントエンドの互換性のために残す
+        user_id = req_body.get('userId')
+        
+        # フロントエンドから送信されるフィールド
+        client_company_name = req_body.get('client_company_name', '')  # 企業名
+        client_contact_name = req_body.get('client_contact_name', '')  # 顧客名
+        
+        # オプションフィールド
+        industry = req_body.get('industry', '')
+        scale = req_body.get('scale', '')
+        meeting_goal = req_body.get('meeting_goal', '')
+        
+        if not all([year, month, day, hour, company_name, user_id]):
+            missing_fields = []
+            if not year: missing_fields.append("year")
+            if not month: missing_fields.append("month")
+            if not day: missing_fields.append("day")
+            if not hour: missing_fields.append("hour")
+            if not company_name: missing_fields.append("companyName")
+            if not user_id: missing_fields.append("userId")
+            
+            logging.warning(f"Missing required fields: {', '.join(missing_fields)}")
+            return create_error_response(f"Missing required fields: {', '.join(missing_fields)}", 400)
+        
+        # 日付文字列を作成
+        meeting_date_str = f"{year}-{month}-{day}T{hour}:00:00"
+        
+        # 現在の時刻を取得
+        now = get_current_time()
+        
+        # SQLバインディングを使用してデータを挿入
+        basicInfo_out.set(func.SqlRow({
+            "user_id": user_id,
+            "meeting_datetime": meeting_date_str,
+            "client_company_name": client_company_name,  # フロントエンドから送信された企業名
+            "client_contact_name": client_contact_name,  # フロントエンドから送信された顧客名
+            "industry_type": industry if industry else None,
+            "company_scale": scale if scale else None,
+            "sales_goal": meeting_goal if meeting_goal else None,
+            "inserted_datetime": now,
+            "updated_datetime": now
+        }))
+        
+        # 直接データベースに接続して、挿入したレコードのIDを取得
+        try:
+            # SQLサーバーに接続
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            # 挿入したレコードを特定するクエリを実行
+            query = """
+                SELECT TOP 1 meeting_id 
+                FROM dbo.BasicInfo 
+                WHERE user_id = ? 
+                AND meeting_datetime = ? 
+                AND client_company_name = ? 
+                AND client_contact_name = ?
+                ORDER BY meeting_id DESC
+            """
+            
+            # パラメータ指定
+            params = (user_id, meeting_date_str, client_company_name, client_contact_name)
+            
+            # クエリ実行
+            cursor.execute(query, params)
+            
+            # 結果取得
+            row = cursor.fetchone()
+            new_basic_info_id = row[0] if row else 0
+            
+            cursor.close()
+            conn.close()
+            
+            logging.info(f"挿入後のレコードから取得した実際のmeeting_id: {new_basic_info_id}")
+            
+        except Exception as db_error:
+            logging.error(f"データベース検索中にエラーが発生しました: {str(db_error)}")
+            logging.error(traceback.format_exc())
+            
+            # エラー時はフォールバック: 古い方法で最後のIDを取得
+            new_basic_info_id = 0
+            for row in last_basicInfo:
+                new_basic_info_id = row["meeting_id"] + 1  # +1することで次のIDを推定
+                break
+                
+            logging.warning(f"フォールバック: 最後のIDから推定した会議ID: {new_basic_info_id}")
+        
+        logging.info("=== BasicInfo Save Debug ===")
+        logging.info(f"User ID: {user_id}")
+        logging.info(f"Company Name: {client_company_name}")
+        logging.info(f"Contact Name: {client_contact_name}")
+        logging.info(f"Generated meeting_id: {new_basic_info_id}")
+        logging.info(f"Last BasicInfo Query Result: {list(last_basicInfo)}")
+        logging.info("===========================")
+        
+        # 成功レスポンス
+        response_data = {
+            "meetingId": new_basic_info_id,
+            "message": f"BasicInfo for meeting with '{company_name}' created successfully."
+        }
+        
+        return create_json_response(response_data, 201)
+    except Exception as e:
+        logging.error(f"Error creating basic info: {str(e)}")
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        
+        return create_error_response(f"Error creating basic info: {str(e)}", 500)
+
+def update_recording_from_blob(req: func.HttpRequest, meetings_out: func.Out[func.SqlRow], basic_info: func.SqlRowList) -> func.HttpResponse:
+    """
+    録音情報をMeetingsテーブルに登録する
+    - EventGridトリガーでBlobストレージに挿入された音声ファイル情報を元に処理する場合
+    - クライアントから直接POSTされたデータを元に処理する場合
+    """
+    log_request(req, "UpdateRecordingFromBlob")
+    
+    # OPTIONSリクエスト処理
+    if req.method == "OPTIONS":
+        return handle_options_request()
+    
+    try:
+        # JSONデータを取得
+        req_body = parse_json_request(req)
+        if not req_body:
+            return create_error_response("Invalid JSON data", 400)
+        
+        logging.info(f"Received data: {req_body}")
+        
+        # APIからの直接POSTとEventGridからのデータを区別して処理
+        is_direct_api_call = "meetingId" in req_body or "meeting_id" in req_body
+        
+        if is_direct_api_call:
+            # クライアントからの直接呼び出しの場合
+            meeting_id = req_body.get("meetingId") or req_body.get("meeting_id")
+            user_id = req_body.get("userId") or req_body.get("user_id")
+            file_name = req_body.get("fileName") or req_body.get("file_name")
+            file_path = req_body.get("filePath") or req_body.get("file_path")
+            file_size = req_body.get("fileSize") or req_body.get("file_size") or 0
+            duration_seconds = req_body.get("durationSeconds") or req_body.get("duration_seconds") or 0
+            client_company_name = req_body.get("clientCompanyName") or req_body.get("client_company_name") or ""
+            client_contact_name = req_body.get("clientContactName") or req_body.get("client_contact_name") or ""
+            meeting_datetime = req_body.get("meetingDatetime") or req_body.get("meeting_datetime") or ""
+        else:
+            # EventGridからのデータ解析
+            event_data = req_body.get('data', {})
+            url = event_data.get('url')
+            content_length = event_data.get('contentLength', 0)
+            
+            if not url:
+                return create_error_response("Blob URL is missing in the event data", 400)
+            
+            # URLからファイル名を抽出
+            file_name = url.split('/')[-1]
+            file_path = url
+            file_size = int(content_length)
+            
+            # ファイル名からmeeting_idとuser_idを抽出
+            # 例: meeting_123_user_456_timestamp.webm
+            parts = file_name.split('_')
+            if len(parts) < 5:
+                return create_error_response(f"Invalid file name format: {file_name}", 400)
+            
+            try:
+                meeting_id = int(parts[1])
+                user_id = int(parts[3])
+            except (IndexError, ValueError) as e:
+                return create_error_response(f"Failed to extract meeting_id or user_id from filename: {e}", 400)
+
+        # BasicInfoテーブルから会議情報を取得
+        meeting_info = None
+        for row in basic_info:
+            if row["meeting_id"] == meeting_id and row["user_id"] == user_id:
+                meeting_info = row
+                break
+        
+        if not meeting_info:
+            return create_error_response(f"Meeting info not found for meeting_id: {meeting_id} and user_id: {user_id}", 404)
+        
+        # 現在の時刻を取得
+        now = get_current_time()
+        
+        # Meetingsテーブルに登録するデータを作成
+        # タイトルを会社名から生成
+        client_company_name = meeting_info["client_company_name"] if not client_company_name else client_company_name
+        client_contact_name = meeting_info["client_contact_name"] if not client_contact_name else client_contact_name
+        meeting_datetime = meeting_info["meeting_datetime"] if not meeting_datetime else meeting_datetime
+        title = f"{client_contact_name}({client_company_name})との商談"
+        
+        # SQLバインディングを使用してデータを挿入
+        meetings_out.set(func.SqlRow({
+            "meeting_id": meeting_id,
+            "user_id": user_id,
+            "title": title,
+            "file_name": file_name,
+            "file_path": file_path,
+            "file_size": int(file_size),
+            "duration_seconds": int(duration_seconds),
+            "status": "processing",
+            "transcript_text": None,
+            "error_message": None,
+            "client_company_name": client_company_name,
+            "client_contact_name": client_contact_name,
+            "meeting_datetime": meeting_datetime,
+            "start_datetime": now,
+            "end_datetime": None,
+            "inserted_datetime": now,
+            "updated_datetime": now
+        }))
+        
+        # 成功レスポンス
+        response_data = {
+            "success": True,
+            "message": f"Meeting recording info updated successfully for meeting_id: {meeting_id}"
+        }
+        
+        return create_json_response(response_data, 201)
+    except Exception as e:
+        logging.error(f"Error updating meeting recording info: {str(e)}")
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        
+        return create_error_response(f"Error updating meeting recording info: {str(e)}", 500)
+
+def get_basic_info(req: func.HttpRequest, basic_info_query: func.SqlRowList) -> func.HttpResponse:
+    """
+    会議の基本情報を取得する
+    """
+    log_request(req, "GetBasicInfo")
+    
+    # OPTIONSリクエスト処理
+    if req.method == "OPTIONS":
+        return handle_options_request()
+    
+    try:
+        # ルートから会議IDを取得
+        meeting_id = req.route_params.get('meeting_id')
+        # クエリパラメータからユーザーIDを取得
+        user_id = req.params.get('user_id')
+        
+        logging.info(f"GetBasicInfo: route_params={req.route_params}, meeting_id={meeting_id}")
+        
+        if not meeting_id:
+            return create_error_response("meeting_id is required", 400)
+            
+        # パラメータを数値に変換
+        try:
+            meeting_id = int(meeting_id)
+        except ValueError:
+            return create_error_response("meeting_id must be an integer", 400)
+            
+        if user_id:
+            try:
+                user_id = int(user_id)
+            except ValueError:
+                return create_error_response("user_id must be an integer", 400)
+        
+        # 基本情報の検索
+        basic_info = None
+        for row in basic_info_query:
+            row_dict = dict(row)
+            row_meeting_id = row_dict.get("meeting_id")
+            row_user_id = row_dict.get("user_id")
+            
+            # meeting_idによる検索
+            if row_meeting_id == meeting_id:
+                # user_idが指定されている場合は、それも一致するか確認
+                if not user_id or row_user_id == user_id:
+                    # 日付データをシリアライズ可能な形式に変換
+                    for key, value in row_dict.items():
+                        if isinstance(value, datetime):
+                            row_dict[key] = value.isoformat()
+                    
+                    basic_info = row_dict
+                    break
+        
+        if basic_info:
+            return create_json_response({"basic_info": basic_info})
+        else:
+            return create_json_response({
+                "message": "No basic info found for the specified meeting",
+                "meeting_id": meeting_id,
+                "user_id": user_id
+            }, 404)
+    except Exception as e:
+        logging.error(f"Error retrieving basic info: {str(e)}")
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        return create_error_response(f"Internal server error: {str(e)}", 500) 

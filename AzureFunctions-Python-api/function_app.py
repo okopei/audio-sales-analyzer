@@ -9,10 +9,35 @@ from azure.functions import AuthLevel, FunctionApp
 
 # モジュール構造からのインポート
 from src.auth import login, register, get_user_by_id
-from src.meetings import get_meetings, get_members_meetings, save_meeting, save_basic_info
+from src.meetings import get_meetings, get_members_meetings, save_basic_info, get_basic_info
+# 削除する関数のインポートをコメントアウト: save_meeting, update_recording_from_blob
 
 # Azure Functions アプリケーションの初期化
 app = FunctionApp(http_auth_level=AuthLevel.ANONYMOUS)
+
+# ヘルスチェックエンドポイント
+@app.function_name(name="HealthCheck")
+@app.route(route="health", methods=["GET", "OPTIONS"])
+def health_check(req: func.HttpRequest) -> func.HttpResponse:
+    """APIサーバーの稼働状態を確認するためのヘルスチェックエンドポイント"""
+    logging.info("Health check endpoint called")
+    
+    if req.method == "OPTIONS":
+        # CORS プリフライトリクエスト処理
+        headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        }
+        return func.HttpResponse(status_code=204, headers=headers)
+    
+    # ヘルスチェックレスポンス
+    headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+    return func.HttpResponse(
+        body='{"status":"ok","message":"API server is running"}',
+        status_code=200,
+        headers=headers
+    )
 
 #
 # 認証関連のエンドポイント
@@ -58,23 +83,7 @@ def get_user_by_id_func(req: func.HttpRequest, usersQuery: func.SqlRowList) -> f
 # 会議関連のエンドポイント
 #
 
-# 会議保存エンドポイント
-@app.function_name(name="SaveMeeting")
-@app.route(route="meetings/save", methods=["POST", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="lastMeeting", 
-    type="sql", 
-    CommandText="SELECT TOP 1 meeting_id FROM dbo.Meetings ORDER BY meeting_id DESC", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-@app.generic_output_binding(
-    arg_name="meetings", 
-    type="sql", 
-    CommandText="dbo.Meetings", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def save_meeting_func(req: func.HttpRequest, meetings: func.Out[func.SqlRow], lastMeeting: func.SqlRowList) -> func.HttpResponse:
-    return save_meeting(req, meetings, lastMeeting)
+# save_meeting_funcエンドポイントを削除（Meetingsテーブルへの挿入機能）
 
 # 基本情報保存エンドポイント
 @app.function_name(name="SaveBasicInfo")
@@ -123,3 +132,29 @@ def get_meetings_func(req: func.HttpRequest, meetingsQuery: func.SqlRowList) -> 
 )
 def get_members_meetings_func(req: func.HttpRequest, usersQuery: func.SqlRowList, meetingsQuery: func.SqlRowList) -> func.HttpResponse:
     return get_members_meetings(req, usersQuery, meetingsQuery)
+
+# update_meeting_with_recording_funcエンドポイントを削除（録音情報更新機能）
+
+# 基本情報取得エンドポイント
+@app.function_name(name="GetBasicInfo")
+@app.route(route="basicinfo/{meeting_id}", methods=["GET", "OPTIONS"])
+@app.generic_input_binding(
+    arg_name="basicInfoQuery", 
+    type="sql", 
+    CommandText="SELECT * FROM dbo.BasicInfo", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+def get_basic_info_func(req: func.HttpRequest, basicInfoQuery: func.SqlRowList) -> func.HttpResponse:
+    return get_basic_info(req, basicInfoQuery)
+
+# 基本情報検索エンドポイント
+@app.function_name(name="SearchBasicInfo")
+@app.route(route="basicinfo/search", methods=["GET", "OPTIONS"])
+@app.generic_input_binding(
+    arg_name="basicInfoQuery", 
+    type="sql", 
+    CommandText="SELECT * FROM dbo.BasicInfo", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+def search_basic_info_func(req: func.HttpRequest, basicInfoQuery: func.SqlRowList) -> func.HttpResponse:
+    return get_basic_info(req, basicInfoQuery, search_mode=True)
