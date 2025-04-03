@@ -36,8 +36,8 @@ export default function TestNavigation() {
     { name: '新規商談', path: '/newmeeting', needsAuth: true },
     { name: '録音', path: '/recording', needsAuth: true },
     { name: '商談検索', path: '/search', needsAuth: true },
-    { name: 'フィードバック', path: '/feedback', needsAuth: true },
     { name: '新規登録', path: '/register', needsAuth: false },
+    { name: 'アップロードテスト', path: '/test-upload', needsAuth: true },
   ]
 
   // テスト用の認証情報をセットアップして指定ページに遷移する関数（要削除）

@@ -415,3 +415,192 @@ git push origin --force --all
 4. **ドキュメント化**
    - READMEに環境変数の設定手順を記載
    - 新しい開発者のオンボーディングを容易にする 
+
+# フィードバック機能の実装
+
+## アーキテクチャ設計
+
+### 1. バックエンド機能の分離
+
+フィードバック機能は独立したAzure Functionsプロジェクトとして実装。これにより以下の利点を得られる：
+
+- 責任の分離 - 文字起こし処理と独立した開発・デプロイが可能
+- 適切なスケーリング - フィードバック機能はリアルタイム性が高く軽量な処理が中心
+- リソース競合の防止 - 重い処理（文字起こし）と分離することでパフォーマンス向上
+
+### 2. SQL接続方式
+
+Azure Functions SQLバインディングを活用し、pyodbcを使わずに実装：
+
+```python
+@app.function_name(name="GetConversationSegments")
+@app.route(route="api/conversation/segments/{meeting_id}", methods=["GET", "OPTIONS"])
+@app.generic_input_binding(
+    arg_name="segmentsQuery", 
+    type="sql", 
+    CommandText="SELECT s.segment_id, s.user_id, s.speaker_id, s.meeting_id, s.content, s.file_name, s.file_path, s.file_size, s.duration_seconds, s.status, s.inserted_datetime, s.updated_datetime, sp.speaker_name, sp.speaker_role FROM dbo.ConversationSegments s LEFT JOIN dbo.Speakers sp ON s.speaker_id = sp.speaker_id WHERE s.deleted_datetime IS NULL", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+```
+
+local.settings.json:
+```json
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
+    "SqlConnectionString": "Driver={ODBC Driver 17 for SQL Server};Server=localhost;Database=AudioSalesAnalyzer;Trusted_Connection=yes;"
+  },
+  "Host": {
+    "LocalHttpPort": 7073,
+    "CORS": "http://localhost:3000",
+    "CORSCredentials": true
+  }
+}
+```
+
+### 3. API設計
+
+| エンドポイント | メソッド | 説明 |
+|--------------|-------|------|
+| `/api/conversation/segments/{meeting_id}` | GET | 会話セグメント取得 |
+| `/api/comments/{segment_id}` | GET | コメント取得 |
+| `/api/comments` | POST | コメント追加 |
+| `/api/comments/read` | POST | コメント既読状態更新 |
+
+## データモデル
+
+### 関連テーブル
+
+- `ConversationSegments` - 会話内容、話者情報を保持
+- `Comments` - コメント情報を保持
+- `CommentReads` - コメントの既読状態を管理
+- `Speakers` - 話者情報を管理
+
+### TypeScriptでのインターフェース
+
+```typescript
+interface ConversationSegment {
+  segment_id: number
+  user_id: number
+  speaker_id: number
+  meeting_id: number
+  content: string
+  file_name: string
+  file_path: string
+  file_size: number
+  duration_seconds: number
+  status: string
+  inserted_datetime: string
+  updated_datetime: string
+  speaker_name?: string
+  speaker_role?: string
+}
+
+interface Comment {
+  comment_id: number
+  segment_id: number
+  meeting_id: number
+  user_id: number
+  user_name: string
+  content: string
+  inserted_datetime: string
+  updated_datetime: string
+  readers: CommentReader[]
+}
+
+interface CommentReader {
+  reader_id: number
+  read_datetime: string
+}
+```
+
+## フロントエンド実装
+
+### ディレクトリ構造
+
+```
+next-app/
+├── src/
+│   ├── app/
+│   │   ├── feedback/
+│   │   │   ├── [meeting_id]/
+│   │   │   │   └── page.tsx   # 詳細ページ
+│   │   │   └── page.tsx       # 一覧ページ
+│   │   ├── lib/
+│   │   │   ├── api/
+│   │   │   │   └── feedback.ts    # API通信モジュール
+```
+
+### API通信モジュール
+
+API呼び出しの統一インターフェースを実装：
+
+```typescript
+export const getConversationSegments = async (meetingId: string | number) => {
+  try {
+    const response = await fetch(`http://localhost:7073/api/conversation/segments/${meetingId}`)
+    const data = await response.json()
+    if (!data.success) {
+      throw new Error(data.message || 'セグメント取得に失敗しました')
+    }
+    return data.segments
+  } catch (error) {
+    console.error('会話セグメント取得エラー:', error)
+    throw error
+  }
+}
+```
+
+### UI実装
+
+- チャットのような表示形式を採用
+- 話者によって背景色を変更 (営業担当：青系、顧客：緑系)
+- コメント表示と追加機能を実装
+- 既読状態の自動管理機能を実装
+
+## デプロイ方法
+
+1. Azure Functionプロジェクトのデプロイ
+   ```
+   cd AzureFunctions-Python-Feedback
+   func azure functionapp publish <function-app-name>
+   ```
+
+2. Next.jsアプリケーションのデプロイ
+   ```
+   cd next-app
+   pnpm build
+   # Vercelなどへのデプロイ手順
+   ```
+
+## 今後の拡張可能性
+
+1. **リアルタイム通知機能**
+   - WebSocketやSignalRを活用した即時通知機能
+
+2. **AI分析機能**
+   - 会話内容の自動タグ付け
+   - 感情分析によるハイライト表示
+
+3. **オーディオ連携機能**
+   - コメント時点のオーディオタイムスタンプリンク
+   - 音声再生機能と連動したUI
+
+4. **レポート機能**
+   - コメントや会話内容を基にした自動レポート生成
+
+## 開発時の注意点
+
+1. **CORS設定**
+   - フロントエンドとバックエンドの接続時にCORS問題が発生しやすい
+   - local.settings.jsonの設定を適切に行う必要がある
+
+2. **TypeScript型安全性**
+   - APIレスポンスとフロントエンドの型定義を一致させる
+
+3. **SQL接続**
+   - Azure FunctionsのSQL接続はバインディングを活用するとシンプルに実装可能
+   - パフォーマンスのためにクエリの最適化が必要な場合もある

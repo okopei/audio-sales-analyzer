@@ -1,8 +1,3 @@
-"""
-Audio Sales Analyzer API
-Azure Functions アプリケーションのエントリーポイント
-"""
-
 import azure.functions as func
 import logging
 import json
@@ -10,13 +5,11 @@ from typing import Optional
 from datetime import datetime
 from azure.functions import AuthLevel, FunctionApp
 
-# モジュール構造からのインポート
-from src.auth import login, register, get_user_by_id
-from src.meetings import get_meetings, get_members_meetings, save_basic_info, get_basic_info
-# 削除する関数のインポートをコメントアウト: save_meeting, update_recording_from_blob
+# 独自のモジュールをインポート
+# from src.comments import get_comments, add_comment, update_read_status
+# from src.conversation import get_segments
 
-# Azure Functions アプリケーションの初期化
-app = FunctionApp(http_auth_level=AuthLevel.ANONYMOUS)
+app = func.FunctionApp(http_auth_level=AuthLevel.ANONYMOUS)
 
 # ヘルスチェックエンドポイント
 @app.function_name(name="HealthCheck")
@@ -41,130 +34,6 @@ def health_check(req: func.HttpRequest) -> func.HttpResponse:
         status_code=200,
         headers=headers
     )
-
-#
-# 認証関連のエンドポイント
-#
-
-# テスト用ユーザー登録エンドポイント
-@app.function_name(name="RegisterTest")
-@app.route(route="register/test", methods=["GET", "POST", "OPTIONS"])
-@app.generic_output_binding(
-    arg_name="users",
-    type="sql",
-    CommandText="[dbo].[Users]",
-    ConnectionStringSetting="SqlConnectionString"
-)
-def register_test(req: func.HttpRequest, users: func.Out[func.SqlRow]) -> func.HttpResponse:
-    return register(req, users)
-
-# ログインエンドポイント
-@app.function_name(name="Login")
-@app.route(route="users/login", methods=["POST", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="usersQuery", 
-    type="sql",
-    CommandText="SELECT * FROM dbo.Users",
-    ConnectionStringSetting="SqlConnectionString"
-)
-def login_func(req: func.HttpRequest, usersQuery: func.SqlRowList) -> func.HttpResponse:
-    return login(req, usersQuery)
-
-# ユーザー情報取得エンドポイント
-@app.function_name(name="GetUserById")
-@app.route(route="users/{user_id}", methods=["GET", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="usersQuery", 
-    type="sql",
-    CommandText="SELECT user_id, user_name, email, is_manager, manager_name, is_active, account_status FROM dbo.Users",
-    ConnectionStringSetting="SqlConnectionString"
-)
-def get_user_by_id_func(req: func.HttpRequest, usersQuery: func.SqlRowList) -> func.HttpResponse:
-    return get_user_by_id(req, usersQuery)
-
-#
-# 会議関連のエンドポイント
-#
-
-# save_meeting_funcエンドポイントを削除（Meetingsテーブルへの挿入機能）
-
-# 基本情報保存エンドポイント
-@app.function_name(name="SaveBasicInfo")
-@app.route(route="basicinfo", methods=["POST", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="lastBasicInfo", 
-    type="sql", 
-    CommandText="SELECT TOP 1 meeting_id FROM dbo.BasicInfo ORDER BY meeting_id DESC", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-@app.generic_output_binding(
-    arg_name="basicInfo", 
-    type="sql", 
-    CommandText="dbo.BasicInfo", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def save_basic_info_func(req: func.HttpRequest, basicInfo: func.Out[func.SqlRow], lastBasicInfo: func.SqlRowList) -> func.HttpResponse:
-    return save_basic_info(req, basicInfo, lastBasicInfo)
-
-# 会議一覧取得エンドポイント
-@app.function_name(name="GetMeetings")
-@app.route(route="meetings", methods=["GET", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="meetingsQuery", 
-    type="sql", 
-    CommandText="SELECT meeting_id, user_id, client_contact_name, client_company_name, meeting_datetime, duration_seconds, status, transcript_text, file_name, file_size, error_message FROM dbo.Meetings", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def get_meetings_func(req: func.HttpRequest, meetingsQuery: func.SqlRowList) -> func.HttpResponse:
-    return get_meetings(req, meetingsQuery)
-
-# メンバー会議一覧取得エンドポイント
-@app.function_name(name="GetMembersMeetings")
-@app.route(route="members-meetings", methods=["GET", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="usersQuery", 
-    type="sql", 
-    CommandText="SELECT user_id, user_name, manager_name FROM dbo.Users", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-@app.generic_input_binding(
-    arg_name="meetingsQuery", 
-    type="sql", 
-    CommandText="SELECT m.meeting_id, m.user_id, m.client_contact_name, m.client_company_name, m.meeting_datetime, m.duration_seconds, m.status, m.transcript_text, m.file_name, m.file_size, m.error_message, u.user_name FROM dbo.Meetings m JOIN dbo.Users u ON m.user_id = u.user_id", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def get_members_meetings_func(req: func.HttpRequest, usersQuery: func.SqlRowList, meetingsQuery: func.SqlRowList) -> func.HttpResponse:
-    return get_members_meetings(req, usersQuery, meetingsQuery)
-
-# update_meeting_with_recording_funcエンドポイントを削除（録音情報更新機能）
-
-# 基本情報取得エンドポイント
-@app.function_name(name="GetBasicInfo")
-@app.route(route="basicinfo/{meeting_id}", methods=["GET", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="basicInfoQuery", 
-    type="sql", 
-    CommandText="SELECT * FROM dbo.BasicInfo", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def get_basic_info_func(req: func.HttpRequest, basicInfoQuery: func.SqlRowList) -> func.HttpResponse:
-    return get_basic_info(req, basicInfoQuery)
-
-# 基本情報検索エンドポイント
-@app.function_name(name="SearchBasicInfo")
-@app.route(route="basicinfo/search", methods=["GET", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="basicInfoQuery", 
-    type="sql", 
-    CommandText="SELECT * FROM dbo.BasicInfo", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def search_basic_info_func(req: func.HttpRequest, basicInfoQuery: func.SqlRowList) -> func.HttpResponse:
-    return get_basic_info(req, basicInfoQuery, search_mode=True)
-
-#
-# フィードバック関連のエンドポイント（AzureFunctions-Python-Feedbackから移行）
-#
 
 # 会話セグメント取得API
 @app.function_name(name="GetConversationSegments")
@@ -192,21 +61,6 @@ def get_conversation_segments(req: func.HttpRequest, segmentsQuery: func.SqlRowL
         segments = []
         for row in segmentsQuery:
             if int(row['meeting_id']) == int(meeting_id):
-                # 日付時刻の適切な変換
-                inserted_datetime = row['inserted_datetime']
-                updated_datetime = row['updated_datetime']
-                
-                # datetime型の場合のみisoformat()を適用
-                if hasattr(inserted_datetime, 'isoformat'):
-                    inserted_datetime = inserted_datetime.isoformat()
-                elif inserted_datetime is not None and not isinstance(inserted_datetime, str):
-                    inserted_datetime = str(inserted_datetime)
-                
-                if hasattr(updated_datetime, 'isoformat'):
-                    updated_datetime = updated_datetime.isoformat()
-                elif updated_datetime is not None and not isinstance(updated_datetime, str):
-                    updated_datetime = str(updated_datetime)
-                
                 segments.append({
                     "segment_id": row['segment_id'],
                     "user_id": row['user_id'],
@@ -218,8 +72,8 @@ def get_conversation_segments(req: func.HttpRequest, segmentsQuery: func.SqlRowL
                     "file_size": row['file_size'],
                     "duration_seconds": row['duration_seconds'],
                     "status": row['status'],
-                    "inserted_datetime": inserted_datetime,
-                    "updated_datetime": updated_datetime,
+                    "inserted_datetime": row['inserted_datetime'].isoformat() if row['inserted_datetime'] else None,
+                    "updated_datetime": row['updated_datetime'].isoformat() if row['updated_datetime'] else None,
                     "speaker_name": row['speaker_name'],
                     "speaker_role": row['speaker_role']
                 })
@@ -256,7 +110,13 @@ def get_conversation_segments(req: func.HttpRequest, segmentsQuery: func.SqlRowL
     CommandText="SELECT c.comment_id, c.segment_id, c.meeting_id, c.user_id, c.content, c.inserted_datetime, c.updated_datetime, u.user_name FROM dbo.Comments c JOIN dbo.Users u ON c.user_id = u.user_id WHERE c.deleted_datetime IS NULL", 
     ConnectionStringSetting="SqlConnectionString"
 )
-def get_segment_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) -> func.HttpResponse:
+@app.generic_input_binding(
+    arg_name="commentReadsQuery", 
+    type="sql", 
+    CommandText="SELECT comment_id, reader_id, read_datetime FROM dbo.CommentReads", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+def get_segment_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList, commentReadsQuery: func.SqlRowList) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
             # CORS プリフライトリクエスト処理
@@ -273,23 +133,14 @@ def get_segment_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) 
         comments = []
         for row in commentsQuery:
             if int(row['segment_id']) == int(segment_id):
-                # 既読情報（一時的に空配列を返す）
+                # 既読情報を取得
                 readers = []
-                
-                # 日付時刻の適切な変換
-                inserted_datetime = row['inserted_datetime']
-                updated_datetime = row['updated_datetime']
-                
-                # datetime型の場合のみisoformat()を適用
-                if hasattr(inserted_datetime, 'isoformat'):
-                    inserted_datetime = inserted_datetime.isoformat()
-                elif inserted_datetime is not None and not isinstance(inserted_datetime, str):
-                    inserted_datetime = str(inserted_datetime)
-                
-                if hasattr(updated_datetime, 'isoformat'):
-                    updated_datetime = updated_datetime.isoformat()
-                elif updated_datetime is not None and not isinstance(updated_datetime, str):
-                    updated_datetime = str(updated_datetime)
+                for read_row in commentReadsQuery:
+                    if int(read_row['comment_id']) == int(row['comment_id']):
+                        readers.append({
+                            "reader_id": read_row['reader_id'],
+                            "read_datetime": read_row['read_datetime'].isoformat() if read_row['read_datetime'] else None
+                        })
                 
                 comments.append({
                     "comment_id": row['comment_id'],
@@ -298,8 +149,8 @@ def get_segment_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) 
                     "user_id": row['user_id'],
                     "user_name": row['user_name'],
                     "content": row['content'],
-                    "inserted_datetime": inserted_datetime,
-                    "updated_datetime": updated_datetime,
+                    "inserted_datetime": row['inserted_datetime'].isoformat() if row['inserted_datetime'] else None,
+                    "updated_datetime": row['updated_datetime'].isoformat() if row['updated_datetime'] else None,
                     "readers": readers
                 })
         
@@ -375,8 +226,8 @@ def create_comment(req: func.HttpRequest, commentOut: func.Out[func.SqlRow], las
             new_comment_id = int(row['comment_id']) + 1
             break
         
-        # 現在の日時をSQL Serverに適した形式で文字列化
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # 現在の日時
+        now = datetime.now()
         
         # コメントをデータベースに挿入
         comment_row = func.SqlRow()
@@ -413,10 +264,16 @@ def create_comment(req: func.HttpRequest, commentOut: func.Out[func.SqlRow], las
             headers=headers
         )
 
-# コメント既読状態更新API - 一時的に空レスポンスを返すように修正
+# コメント既読状態更新API
 @app.function_name(name="MarkCommentAsRead")
 @app.route(route="api/comments/read", methods=["POST", "OPTIONS"])
-def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
+@app.generic_output_binding(
+    arg_name="commentReadOut", 
+    type="sql", 
+    CommandText="dbo.CommentReads", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+def mark_comment_as_read(req: func.HttpRequest, commentReadOut: func.Out[func.SqlRow]) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
             # CORS プリフライトリクエスト処理
@@ -426,11 +283,36 @@ def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
                 "Access-Control-Allow-Headers": "Content-Type",
             }
             return func.HttpResponse(status_code=204, headers=headers)
+            
+        req_body = req.get_json()
         
-        # 正常なレスポンスを返す（実際の処理は行わない）
+        # リクエストのバリデーション
+        comment_id = req_body.get('comment_id')
+        user_id = req_body.get('user_id')
+        
+        if not all([comment_id, user_id]):
+            headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+            return func.HttpResponse(
+                json.dumps({"success": False, "message": "必須パラメータが不足しています"}, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=400,
+                headers=headers
+            )
+        
+        # 現在の日時
+        now = datetime.now()
+        
+        # 既読情報をデータベースに挿入
+        comment_read_row = func.SqlRow()
+        comment_read_row["comment_id"] = comment_id
+        comment_read_row["reader_id"] = user_id
+        comment_read_row["read_datetime"] = now
+        
+        commentReadOut.set(comment_read_row)
+        
         response = {
             "success": True,
-            "message": "既読機能は一時的に無効化されています"
+            "message": "コメントが既読としてマークされました"
         }
         
         headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
@@ -452,14 +334,20 @@ def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
 
 # 最新コメント取得API
 @app.function_name(name="GetLatestComments")
-@app.route(route="api/comments-latest", methods=["GET", "OPTIONS"])
+@app.route(route="api/comments/latest", methods=["GET", "OPTIONS"])
 @app.generic_input_binding(
     arg_name="commentsQuery", 
     type="sql", 
     CommandText="SELECT TOP 20 c.comment_id, c.segment_id, c.meeting_id, c.user_id, c.content, c.inserted_datetime, c.updated_datetime, u.user_name, m.client_company_name, m.client_contact_name FROM dbo.Comments c JOIN dbo.Users u ON c.user_id = u.user_id JOIN dbo.Meetings m ON c.meeting_id = m.meeting_id WHERE c.deleted_datetime IS NULL ORDER BY c.inserted_datetime DESC", 
     ConnectionStringSetting="SqlConnectionString"
 )
-def get_latest_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) -> func.HttpResponse:
+@app.generic_input_binding(
+    arg_name="commentReadsQuery", 
+    type="sql", 
+    CommandText="SELECT comment_id, reader_id, read_datetime FROM dbo.CommentReads", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+def get_latest_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList, commentReadsQuery: func.SqlRowList) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
             # CORS プリフライトリクエスト処理
@@ -470,31 +358,9 @@ def get_latest_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) -
             }
             return func.HttpResponse(status_code=204, headers=headers)
             
-        # クエリパラメータからユーザーIDを取得
-        user_id = 1  # デフォルト値
-        limit = 5    # デフォルト値
-        
-        try:
-            # userId パラメータのチェック
-            if 'userId' in req.params:
-                user_id_str = req.params.get('userId')
-                logging.info(f"受信したuserIdパラメータ: {user_id_str}")
-                # 数値であることを確認
-                if user_id_str and user_id_str.isdigit():
-                    user_id = int(user_id_str)
-            
-            # limit パラメータのチェック
-            if 'limit' in req.params:
-                limit_str = req.params.get('limit')
-                if limit_str and limit_str.isdigit():
-                    limit = int(limit_str)
-            
-            logging.info(f"処理するパラメータ: userId={user_id}, limit={limit}")
-        
-        except Exception as e:
-            logging.warning(f"パラメータ処理中にエラーが発生しました: {e}")
-            logging.warning(f"受信したパラメータ: userId={req.params.get('userId')}, limit={req.params.get('limit')}")
-            logging.warning("デフォルト値を使用します: userId=1, limit=5")
+        # クエリパラメータから値を取得
+        user_id = req.params.get('userId', '1')  # デフォルト値1
+        limit = int(req.params.get('limit', '5'))  # デフォルト値5
         
         # データベースから最新コメントを取得
         comments = []
@@ -504,23 +370,12 @@ def get_latest_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) -
             if count >= limit:
                 break
                 
-            # 既読情報（一時的にすべて既読とする）
-            is_read = True
-            
-            # 日付時刻の適切な変換
-            inserted_datetime = row['inserted_datetime']
-            updated_datetime = row['updated_datetime']
-            
-            # datetime型の場合のみisoformat()を適用
-            if hasattr(inserted_datetime, 'isoformat'):
-                inserted_datetime = inserted_datetime.isoformat()
-            elif inserted_datetime is not None and not isinstance(inserted_datetime, str):
-                inserted_datetime = str(inserted_datetime)
-            
-            if hasattr(updated_datetime, 'isoformat'):
-                updated_datetime = updated_datetime.isoformat()
-            elif updated_datetime is not None and not isinstance(updated_datetime, str):
-                updated_datetime = str(updated_datetime)
+            # 既読情報を取得
+            is_read = False
+            for read_row in commentReadsQuery:
+                if int(read_row['comment_id']) == int(row['comment_id']) and int(read_row['reader_id']) == int(user_id):
+                    is_read = True
+                    break
             
             comments.append({
                 "comment_id": row['comment_id'],
@@ -529,8 +384,8 @@ def get_latest_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) -
                 "user_id": row['user_id'],
                 "user_name": row['user_name'],
                 "content": row['content'],
-                "inserted_datetime": inserted_datetime,
-                "updated_datetime": updated_datetime,
+                "inserted_datetime": row['inserted_datetime'].isoformat() if row['inserted_datetime'] else None,
+                "updated_datetime": row['updated_datetime'].isoformat() if row['updated_datetime'] else None,
                 "client_company_name": row['client_company_name'],
                 "client_contact_name": row['client_contact_name'],
                 "isRead": is_read
@@ -539,7 +394,7 @@ def get_latest_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) -
         
         response = {
             "success": True,
-            "message": f"最新コメントを取得しました（userId: {user_id}, limit: {limit}）",
+            "message": f"最新コメントを取得しました（limit: {limit}）",
             "comments": comments
         }
         
@@ -558,4 +413,4 @@ def get_latest_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) -
             mimetype="application/json",
             status_code=500,
             headers=headers
-        )
+        ) 
