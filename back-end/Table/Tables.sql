@@ -90,7 +90,7 @@ CREATE TABLE Speakers (
 -- ミーティングメモ（文字起こし結果を含む）
 CREATE TABLE ConversationSegments (
     segment_id INT PRIMARY KEY IDENTITY(1,1),        -- セグメントの一意識別子
-    user_id INT NOT NULL,                            -- 作成者
+    user_id INT NULL,                                -- 作成者（NULL許容）
     speaker_id INT NOT NULL,                         -- 発言者
     meeting_id INT NOT NULL,                         -- 関連する会議ID
     content NVARCHAR(MAX),                           -- 文字起こし内容

@@ -12,41 +12,56 @@ import { useAuth } from "@/hooks/useAuth"
 import { useUser } from "@/hooks/useUser"
 import { useMeetings } from "@/hooks/useMeetings"
 import ProtectedRoute from "@/components/auth/ProtectedRoute"
+import { getLatestComments } from "@/lib/api/feedback"
+
+interface LatestComment {
+  comment_id: number
+  segment_id: number
+  meeting_id: number
+  user_id: number
+  user_name: string
+  content: string
+  inserted_datetime: string
+  updated_datetime: string
+  client_company_name?: string
+  client_contact_name?: string
+  isRead: boolean
+}
 
 export default function Dashboard() {
   const { user, logout, isManager } = useAuth()
   const { userInfo, loading: userLoading } = useUser()
   const { meetings, loading, error } = useMeetings()
   const router = useRouter()
+  const [latestComments, setLatestComments] = useState<LatestComment[]>([])
+  const [commentsLoading, setCommentsLoading] = useState(true)
   
   // ログアウト処理
   const handleLogout = () => {
     logout()
   }
 
-  const comments = [
-    {
-      id: 1,
-      client: "株式会社ABC",
-      comment: "予算について具体的な話し合いができました。次回は見積書を持参します。",
-      commentTime: "02-07 15:30",
-      isRead: false,
-    },
-    {
-      id: 2,
-      client: "DEF工業",
-      comment: "技術的な課題について深い議論ができました。開発チームに確認が必要です。",
-      commentTime: "02-07 13:00",
-      isRead: true,
-    },
-    {
-      id: 3,
-      client: "GHIシステムズ",
-      comment: "導入に前向きな反応でした。来週までに提案書を準備します。",
-      commentTime: "02-06 16:30",
-      isRead: false,
-    },
-  ]
+  // 最新のコメントを取得
+  useEffect(() => {
+    const fetchLatestComments = async () => {
+      try {
+        setCommentsLoading(true)
+        // 一時的にAPI呼び出しを無効化していたコードを削除し、APIコールを復活させる
+        console.log('コメント取得に使用するユーザーID:', user?.user_id)
+        const userId = user?.user_id  // ログインしているユーザーのIDを使用
+        const comments = await getLatestComments(userId)
+        setLatestComments(comments)
+      } catch (error) {
+        console.error('最新コメント取得エラー:', error)
+        // エラーが発生した場合は空の配列をセット
+        setLatestComments([])
+      } finally {
+        setCommentsLoading(false)
+      }
+    }
+
+    fetchLatestComments()
+  }, [user])
 
   // 日付をフォーマットする関数
   const formatDateTime = (dateTimeStr: string) => {
@@ -66,6 +81,18 @@ export default function Dashboard() {
     const hours = Math.floor(minutes / 60)
     const remainingMinutes = minutes % 60
     return `${hours}時間${remainingMinutes > 0 ? `${remainingMinutes}分` : ''}`
+  }
+
+  // コメント日時を表示用にフォーマットする関数
+  const formatCommentTime = (dateTimeStr: string) => {
+    const date = new Date(dateTimeStr)
+    return date.toLocaleDateString("ja-JP", {
+      month: "2-digit",
+      day: "2-digit"
+    }) + " " + date.toLocaleTimeString("ja-JP", {
+      hour: "2-digit",
+      minute: "2-digit"
+    })
   }
 
   return (
@@ -182,25 +209,38 @@ export default function Dashboard() {
           <Card className="p-4 sm:p-6">
             <h2 className="text-lg sm:text-xl font-semibold mb-4">最新のコメント</h2>
             <ScrollArea className="h-[300px] sm:h-[600px]">
-              <div className="space-y-4">
-                {comments.map((comment) => (
-                  <div key={comment.id} className="block border-b last:border-0 pb-4 hover:bg-slate-50 rounded-lg transition-colors">
-                    <Link href={`/feedback#${comment.id}`} className="block">
-                      <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <div className="text-sm font-medium">佐藤部長</div>
-                          <div className="text-sm text-gray-500">{comment.client}</div>
+              {commentsLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-rose-500"></div>
+                </div>
+              ) : latestComments.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-[200px] text-gray-500">
+                  <p>コメントデータがありません</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {latestComments.map((comment) => (
+                    <div key={comment.comment_id} className="block border-b last:border-0 pb-4 hover:bg-slate-50 rounded-lg transition-colors">
+                      <Link href={`/feedback/${comment.meeting_id}?segment=${comment.segment_id}`} className="block">
+                        <div className="flex justify-between items-start mb-2">
+                          <div>
+                            <div className="text-sm font-medium">{comment.user_name}</div>
+                            <div className="text-sm text-gray-500">
+                              {comment.client_company_name && `${comment.client_company_name} - `}
+                              {comment.client_contact_name || '顧客名なし'}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {!comment.isRead && <Badge variant="destructive">未読</Badge>}
+                            <span className="text-sm text-gray-500">{formatCommentTime(comment.inserted_datetime)}</span>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {!comment.isRead && <Badge variant="destructive">未読</Badge>}
-                          <span className="text-sm text-gray-500">{comment.commentTime}</span>
-                        </div>
-                      </div>
-                      <p className="text-sm text-gray-600">{comment.comment}</p>
-                    </Link>
-                  </div>
-                ))}
-              </div>
+                        <p className="text-sm text-gray-600">{comment.content}</p>
+                      </Link>
+                    </div>
+                  ))}
+                </div>
+              )}
             </ScrollArea>
           </Card>
         </div>

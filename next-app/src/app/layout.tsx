@@ -20,7 +20,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ja">
-      <body className={`${inter.className} min-h-screen bg-[#1F1F1F]`}>
+      <body className={`${inter.className} min-h-screen bg-white`}>
         <ClientProviders>
           {children}
           <SonnerToaster />
