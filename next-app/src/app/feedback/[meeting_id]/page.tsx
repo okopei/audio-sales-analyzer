@@ -6,6 +6,8 @@ import { ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
 import { getConversationSegments, getComments, addComment as apiAddComment, markAsRead } from '@/lib/api/feedback'
 import { useAuth } from '@/hooks/useAuth'
+import ChatMessage from '@/components/ChatMessage'
+import AudioSegmentPlayer from '@/components/AudioSegmentPlayer'
 
 interface Speaker {
   speaker_id: number
@@ -246,9 +248,9 @@ export default function FeedbackPage() {
         </div>
       )}
 
-      <div className="space-y-0.5">
-        {segments.length === 0 ? (
-          <div className="text-center py-10">
+      <div className="space-y-4 mt-6">
+        {!segments.length ? (
+          <div className="text-center py-8">
             <p className="text-gray-500">会話データがありません</p>
           </div>
         ) : (
@@ -257,26 +259,25 @@ export default function FeedbackPage() {
             const speakerName = segment.speaker_name || (isCustomer ? 'お客様' : '営業担当');
             const commentCount = comments[segment.segment_id]?.length || 0;
             const isExpanded = expandedSegments[segment.segment_id];
-            // ログインユーザーのメッセージかどうか判定
             const isCurrentUser = segment.user_id === userId;
-            // コンテンツの一部を表示（全文表示機能のため）
             const displayContent = segment.content;
             const shouldShowExpandButton = segment.content.length > 100;
             
             return (
               <div key={segment.segment_id} className="flex flex-col">
                 <div className={`flex items-start ${isCurrentUser ? 'justify-end' : 'justify-start'}`}>
-                  {/* 会話内容 */}
                   <div className={`flex-1 max-w-[80%] ${isCurrentUser ? 'ml-12' : 'mr-12'}`}>
-                    <div className={`relative p-3 rounded-lg mb-1 ${isCurrentUser ? 'bg-blue-100' : isCustomer ? 'bg-green-50' : 'bg-blue-50'}`}>
+                    {/* メッセージ本体 */}
+                    <div className={`relative p-3 rounded-lg ${
+                      isCurrentUser ? 'bg-blue-100' : isCustomer ? 'bg-green-50' : 'bg-blue-50'
+                    }`}>
                       <div className="flex justify-between items-start mb-1">
                         <div className="font-semibold">{speakerName}</div>
-                        <span className="text-xs text-gray-500 ml-2">{segment.inserted_datetime && formatTime(segment.inserted_datetime)}</span>
+                        <span className="text-xs text-gray-500 ml-2">
+                          {segment.inserted_datetime && formatTime(segment.inserted_datetime)}
+                        </span>
                       </div>
-                      <p className="whitespace-pre-wrap text-sm">
-                        {displayContent}
-                      </p>
-                      {/* 全文表示ボタン */}
+                      <p className="whitespace-pre-wrap text-sm">{displayContent}</p>
                       {shouldShowExpandButton && (
                         <button 
                           className="text-xs text-blue-600 mt-1 flex items-center gap-1"
@@ -289,9 +290,15 @@ export default function FeedbackPage() {
                         </button>
                       )}
                     </div>
-                    
-                    {/* コメント部分 */}
-                    <div className={`flex items-center mb-2 ${isCurrentUser ? 'justify-end' : 'justify-start'}`}>
+
+                    {/* コントロール部分（再生ボタンとコメントを横並びに） */}
+                    <div className="flex items-center gap-2 mt-2">
+                      <AudioSegmentPlayer
+                        segmentId={segment.segment_id}
+                        startTime={segment.start_time}
+                        endTime={segment.end_time}
+                        audioUrl={segment.file_path}
+                      />
                       <button 
                         className={`text-xs flex items-center gap-1 px-2 py-1 rounded-full ${
                           commentCount > 0 
@@ -306,8 +313,8 @@ export default function FeedbackPage() {
                         <span>コメント ({commentCount})</span>
                       </button>
                     </div>
-                    
-                    {/* コメント一覧と入力フォーム - 初期状態では非表示 */}
+
+                    {/* コメント一覧と入力フォーム */}
                     <div id={`comments-list-${segment.segment_id}`} className={`pl-4 mb-4 hidden ${isCurrentUser ? 'text-right' : 'text-left'}`}>
                       {comments[segment.segment_id]?.length > 0 ? (
                         <div className="space-y-2 mb-3">
@@ -323,7 +330,7 @@ export default function FeedbackPage() {
                         </div>
                       ) : <div className="text-sm text-gray-500 mb-3">まだコメントはありません</div>}
                       
-                      {/* コメント入力フォーム - コメントリストと一緒に表示/非表示切り替え */}
+                      {/* コメント入力フォーム */}
                       <div className="mt-3">
                         <div className="flex gap-2">
                           <input

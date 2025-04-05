@@ -604,3 +604,48 @@ export const getConversationSegments = async (meetingId: string | number) => {
 3. **SQL接続**
    - Azure FunctionsのSQL接続はバインディングを活用するとシンプルに実装可能
    - パフォーマンスのためにクエリの最適化が必要な場合もある
+
+# 音声部分再生の要件
+
+## 必要な情報
+1. **音声ファイルのURL**
+2. **開始時間**（秒単位）
+3. **終了時間**（秒単位）
+
+## 実装方法
+```typescript
+const AudioPlayer = ({ audioUrl, startTime, endTime }: {
+  audioUrl: string
+  startTime: number  // 秒単位
+  endTime: number    // 秒単位
+}) => {
+  const audioRef = useRef<HTMLAudioElement>(null)
+
+  const playSegment = () => {
+    if (!audioRef.current) return
+    audioRef.current.currentTime = startTime
+    audioRef.current.play()
+
+    const stopAtEnd = () => {
+      if (audioRef.current?.currentTime >= endTime) {
+        audioRef.current.pause()
+      }
+    }
+
+    audioRef.current.addEventListener('timeupdate', stopAtEnd)
+  }
+
+  return <audio ref={audioRef} src={audioUrl} />
+}
+```
+
+## 技術的なポイント
+- HTML5のaudio要素の`currentTime`プロパティを使用
+- `timeupdate`イベントで終了時間を監視
+- 指定された時間範囲のみを再生可能
+
+## データベース設計への影響
+フィードバック画面で音声再生を実装するために、以下のデータが必要：
+- 音声ファイルの保存場所（URL）
+- 各セグメントの開始時間
+- 各セグメントの終了時間

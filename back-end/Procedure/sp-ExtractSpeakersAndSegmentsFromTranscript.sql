@@ -122,7 +122,9 @@ BEGIN
         CREATE TABLE #TempSegments (
             speaker_name NVARCHAR(50),
             content NVARCHAR(MAX),
-            segment_order INT IDENTITY(1,1)
+            segment_order INT IDENTITY(1,1),
+            start_time FLOAT NULL,
+            end_time FLOAT NULL
         );
         
         -- 文字起こしテキストからセグメントを抽出
@@ -170,12 +172,32 @@ BEGIN
             -- テキストを抽出（角括弧を除く）
             SET @segment_text = SUBSTRING(@transcript_text, @text_start + 1, @text_end - @text_start - 1);
             
-            -- 一時テーブルに挿入（会話の順序が自動的に記録される）
-            INSERT INTO #TempSegments (speaker_name, content)
-            VALUES (@speaker_name, @segment_text);
+            -- 時間情報を抽出（例：{start:10.5,end:15.2}の形式を想定）
+            DECLARE @time_start INT = CHARINDEX('{', @segment_text, @text_end);
+            DECLARE @time_end INT = CHARINDEX('}', @segment_text, @time_start);
+            DECLARE @start_time FLOAT = NULL;
+            DECLARE @end_time FLOAT = NULL;
+            
+            IF @time_start > 0 AND @time_end > 0
+            BEGIN
+                DECLARE @time_info NVARCHAR(100) = SUBSTRING(@segment_text, @time_start, @time_end - @time_start + 1);
+                
+                -- start_timeを抽出
+                DECLARE @start_pos INT = CHARINDEX('start:', @time_info) + 6;
+                DECLARE @start_end INT = CHARINDEX(',', @time_info, @start_pos);
+                SET @start_time = CAST(SUBSTRING(@time_info, @start_pos, @start_end - @start_pos) AS FLOAT);
+                
+                -- end_timeを抽出
+                DECLARE @end_pos INT = CHARINDEX('end:', @time_info) + 4;
+                SET @end_time = CAST(SUBSTRING(@time_info, @end_pos, CHARINDEX('}', @time_info) - @end_pos) AS FLOAT);
+            END
+            
+            -- 一時テーブルに挿入（時間情報を含める）
+            INSERT INTO #TempSegments (speaker_name, content, start_time, end_time)
+            VALUES (@speaker_name, @segment_text, @start_time, @end_time);
             
             -- 次の検索位置を設定
-            SET @pos = @text_end + 1;
+            SET @pos = ISNULL(@time_end, @text_end) + 1;
         END
         
         -- セグメントをConversationSegmentsテーブルに挿入（会話の順序でソート）
@@ -189,6 +211,8 @@ BEGIN
             file_size,
             duration_seconds,
             status,
+            start_time,
+            end_time,
             inserted_datetime,
             updated_datetime
         )
@@ -202,6 +226,8 @@ BEGIN
             @file_size,
             @duration_seconds,
             'completed',
+            ts.start_time,
+            ts.end_time,
             GETDATE(),
             GETDATE()
         FROM 

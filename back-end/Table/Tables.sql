@@ -102,6 +102,8 @@ CREATE TABLE ConversationSegments (
     inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),
     updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),
     deleted_datetime DATETIME NULL,
+    start_time FLOAT NULL,
+    end_time FLOAT NULL
     
     CONSTRAINT FK_ConversationSegments_Users 
         FOREIGN KEY (user_id) REFERENCES Users(user_id),
