@@ -68,18 +68,6 @@ export const AudioSegmentPlayer: React.FC<AudioSegmentPlayerProps> = ({
 
     const finalUrl = `${blobUrl}${normalizedSasToken}`
 
-    if (process.env.NODE_ENV === 'development') {
-      console.log('Audio URL construction:', {
-        inputPath: audioPath,
-        normalizedPath,
-        baseUrl,
-        containerUrl,
-        blobUrl,
-        normalizedSasToken: normalizedSasToken.replace(/sig=([^&]+)/, 'sig=REDACTED'),
-        finalUrl: finalUrl.replace(/sig=([^&]+)/, 'sig=REDACTED')
-      })
-    }
-
     return finalUrl
   }
 
@@ -123,16 +111,6 @@ export const AudioSegmentPlayer: React.FC<AudioSegmentPlayerProps> = ({
 
   // startTimeの値を検証して変換する関数
   const validateStartTime = (value: unknown): number => {
-    if (process.env.NODE_ENV === 'development') {
-      console.log('startTime validation:', {
-        value,
-        type: typeof value,
-        isNumber: typeof value === 'number',
-        isString: typeof value === 'string',
-        parsed: typeof value === 'string' ? parseFloat(value) : value
-      })
-    }
-
     if (value === undefined || value === null) {
       throw new Error('Invalid startTime: value is null or undefined')
     }

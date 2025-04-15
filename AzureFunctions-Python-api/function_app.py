@@ -172,7 +172,7 @@ def search_basic_info_func(req: func.HttpRequest, basicInfoQuery: func.SqlRowLis
 @app.generic_input_binding(
     arg_name="segmentsQuery", 
     type="sql", 
-    CommandText="SELECT s.segment_id, s.user_id, s.speaker_id, s.meeting_id, s.content, s.file_name, s.file_path, s.file_size, s.duration_seconds, s.status, s.inserted_datetime, s.updated_datetime, sp.speaker_name, sp.speaker_role FROM dbo.ConversationSegments s LEFT JOIN dbo.Speakers sp ON s.speaker_id = sp.speaker_id WHERE s.deleted_datetime IS NULL", 
+    CommandText="SELECT s.segment_id, s.user_id, s.speaker_id, s.meeting_id, s.content, s.file_name, s.file_path, s.file_size, s.duration_seconds, s.status, s.inserted_datetime, s.updated_datetime, s.start_time, s.end_time, sp.speaker_name, sp.speaker_role FROM dbo.ConversationSegments s LEFT JOIN dbo.Speakers sp ON s.speaker_id = sp.speaker_id WHERE s.deleted_datetime IS NULL", 
     ConnectionStringSetting="SqlConnectionString"
 )
 def get_conversation_segments(req: func.HttpRequest, segmentsQuery: func.SqlRowList) -> func.HttpResponse:
@@ -220,6 +220,8 @@ def get_conversation_segments(req: func.HttpRequest, segmentsQuery: func.SqlRowL
                     "status": row['status'],
                     "inserted_datetime": inserted_datetime,
                     "updated_datetime": updated_datetime,
+                    "start_time": row['start_time'],
+                    "end_time": row['end_time'],
                     "speaker_name": row['speaker_name'],
                     "speaker_role": row['speaker_role']
                 })
