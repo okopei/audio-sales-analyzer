@@ -649,3 +649,463 @@ const AudioPlayer = ({ audioUrl, startTime, endTime }: {
 - 音声ファイルの保存場所（URL）
 - 各セグメントの開始時間
 - 各セグメントの終了時間
+
+# Azure StorageのURL構築に関する問題
+
+## 問題
+- Azure Blob StorageのURL構築時に403エラーが発生
+- URLの形式が正しくない（SASトークンとファイル名の間に?が不足）
+- 環境変数の重複と混乱
+- SASトークンの権限が過剰（racwdlmeo）
+- SASトークンの認証エラー（署名が正しくない）
+
+## 解決策
+1. 環境変数の整理
+   - 重複した環境変数を削除
+   - 必要な環境変数のみを保持
+   - コメントを追加して整理
+
+2. URL構築ロジックの修正
+   - SASトークンとファイル名の間に?を追加
+   - デバッグログの追加
+   - エラーハンドリングの改善
+
+3. SASトークンの権限見直し
+   - 読み取り（Read）とリスト（List）のみに制限
+   - 新しいSASトークンを生成
+   - 環境変数を更新
+
+4. SASトークンの再生成
+   - Azure Portalで新しいSASトークンを生成
+   - 適切な権限設定
+   - 正しい署名方法の選択
+
+## 環境変数の設定
+```env
+NEXT_PUBLIC_AZURE_STORAGE_ACCOUNT_NAME=audiosalesanalyzeraudio
+NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME=moc-audio
+NEXT_PUBLIC_AZURE_STORAGE_SAS_TOKEN=sp=rl&st=2025-04-15T06:57:11Z&se=2026-04-01T14:57:11Z&spr=https&sv=2024-11-04&sr=c&sig=h4KOq0I%2FbZc4kA%2B6ZBCKCw5Ei4%2FfAr302lbiUOP0Ldg%3D
+```
+
+## 注意点
+- SASトークンとファイル名の間に?が必要
+- 環境変数は`NEXT_PUBLIC_`プレフィックスを使用してクライアントサイドで利用可能にする
+- デバッグログを活用してURLの構築を確認する
+- SASトークンの権限は必要最小限に制限する
+- SASトークンの署名方法を確認する
+
+## 正しいURLの形式
+```
+https://{ストレージアカウント名}.blob.core.windows.net/{ファイル名}?{SASトークン}
+```
+
+例：
+```
+https://audiosalesanalyzeraudio.blob.core.windows.net/1742097766757_meeting_001.wav?sp=rl&st=2025-04-15T06:57:11Z&se=2026-04-01T14:57:11Z&spr=https&sv=2024-11-04&sr=c&sig=h4KOq0I%2FbZc4kA%2B6ZBCKCw5Ei4%2FfAr302lbiUOP0Ldg%3D
+```
+
+## SASトークンの権限
+- `sp=rl`：より広範な権限を含む
+- 前回の`sp=racwdlmeo`より多くの権限
+- 必要な権限を適切に設定
+
+## SASトークンの生成手順
+1. Azure Portalにログイン
+2. ストレージアカウントを選択
+3. 左メニューから「Shared Access Signature」を選択
+4. 以下の設定で新しいSASトークンを生成：
+   - 許可されたサービス：Blob
+   - 許可されたリソースタイプ：コンテナー、オブジェクト
+   - 許可されたアクセス許可：読み取り、リスト、追加、作成、削除、更新
+   - 開始時間：現在時刻
+   - 有効期限：適切な期間（例：1年）
+   - 許可されたプロトコル：HTTPSのみ
+   - 署名方法：アカウントキー
+
+# SASトークンの署名エラー詳細
+
+## 1. ストレージアカウントキーの不一致
+### 問題点
+- Azure PortalでSASトークンを生成する際に使用したストレージアカウントキーが、現在のストレージアカウントのキーと異なる
+- キーのローテーション（更新）が行われた可能性がある
+
+### 影響
+- 署名の検証に失敗
+- 403エラーが発生
+- アクセスが拒否される
+
+### 確認方法
+1. Azure Portalで現在のストレージアカウントキーを確認
+2. SASトークン生成時に使用したキーと比較
+3. キーのローテーション履歴を確認
+
+## 2. パラメータの順序の不一致
+### 問題点
+- SASトークンのパラメータの順序がAzureの期待する形式と異なる
+- 署名生成時のパラメータ順序と検証時の順序が一致していない
+
+### 正しい順序
+```typescript
+const stringToSign = [
+  permissions,    // sp
+  startTime,      // st
+  expiryTime,     // se
+  canonicalizedResource,  // リソースパス
+  identifier,     // si
+  ipRange,        // sip
+  protocol,       // spr
+  version,        // sv
+  resourceTypes,  // sr
+  cacheControl,   // rscc
+  contentDisposition,  // rscd
+  contentEncoding,     // rsce
+  contentLanguage,     // rscl
+  contentType          // rsct
+].join('\n')
+```
+
+### 影響
+- 署名の検証に失敗
+- 403エラーが発生
+- アクセスが拒否される
+
+## 3. エンコード/デコードの問題
+### 問題点
+- URLエンコード/デコードの処理が不適切
+- 特殊文字（例：`%`、`&`、`=`）のエンコードが正しく行われていない
+- Base64エンコードの処理に問題がある
+
+### 影響
+- 署名の検証に失敗
+- 403エラーが発生
+- アクセスが拒否される
+
+### 確認すべき点
+1. **URLエンコード**：
+   - `%` → `%25`
+   - `&` → `%26`
+   - `=` → `%3D`
+
+2. **Base64エンコード**：
+   - 正しいエンコード方式を使用
+   - パディングの処理が適切
+
+3. **特殊文字の処理**：
+   - 署名に含まれる特殊文字の適切なエンコード
+   - デコード時の文字化け防止
+
+## トラブルシューティング手順
+1. **ストレージアカウントキーの確認**：
+   - Azure Portalで現在のキーを確認
+   - 必要に応じてキーを再生成
+   - 新しいキーでSASトークンを生成
+
+2. **パラメータ順序の確認**：
+   - Azureのドキュメントで正しい順序を確認
+   - パラメータの順序を修正
+   - 新しいSASトークンを生成
+
+3. **エンコード/デコードの確認**：
+   - URLエンコードの処理を確認
+   - Base64エンコードの処理を確認
+   - 特殊文字の適切な処理を確認
+
+## 推奨される対応
+1. Azure Portalで新しいSASトークンを生成
+2. 環境変数を更新
+3. アプリケーションを再起動
+4. ブラウザのキャッシュをクリア
+5. デバッグログでURL構築を確認
+
+# Azure Storageアカウントのトラブルシューティング
+
+## 403エラーの原因と解決策
+
+### 1. ストレージアカウントの状態確認
+```typescript
+// 確認すべき項目
+{
+  subscription: {
+    status: 'Active' | 'Disabled' | 'Deleted',
+    paymentStatus: 'Current' | 'PastDue'
+  },
+  storageAccount: {
+    status: 'Online' | 'Offline',
+    provisioningState: 'Succeeded' | 'Failed',
+    networkRules: {
+      defaultAction: 'Allow' | 'Deny',
+      ipRules: string[],
+      virtualNetworkRules: string[]
+    }
+  }
+}
+```
+
+### 2. アクセス制限の確認
+1. **ネットワーク設定**:
+   - パブリックアクセスが許可されているか
+   - IPアドレスが許可されているか
+   - 仮想ネットワークの設定
+
+2. **ファイアウォール設定**:
+   - 必要なIPアドレスの許可
+   - 仮想ネットワークの設定
+   - サービスエンドポイントの設定
+
+### 3. 認証情報の確認
+1. **ストレージアカウントキー**:
+   - キーが有効か
+   - キーのローテーション履歴
+   - アクセス許可の設定
+
+2. **SASトークン**:
+   - 権限設定の確認
+   - 時間範囲の確認
+   - 署名の検証
+
+### 4. トラブルシューティング手順
+1. **Azure Portalでの確認**:
+   - サブスクリプションの状態
+   - ストレージアカウントの状態
+   - ネットワーク設定
+   - アクセスキー
+
+2. **SASトークンの再生成**:
+   - 新しいSASトークンを生成
+   - 適切な権限設定
+   - 正しい時間範囲
+
+3. **ネットワーク設定の確認**:
+   - パブリックアクセスの許可
+   - IPアドレスの許可
+   - ファイアウォール設定
+
+### 5. エラーメッセージの解釈
+```typescript
+// 403エラーの詳細
+{
+  errorCode: 'AuthenticationFailed',
+  message: 'Server failed to authenticate the request',
+  possibleCauses: [
+    'Invalid storage account key',
+    'Invalid SAS token signature',
+    'Expired SAS token',
+    'Insufficient permissions',
+    'Network restrictions'
+  ]
+}
+```
+
+### 6. ベストプラクティス
+1. **定期的な確認**:
+   - サブスクリプションの状態
+   - ストレージアカウントの状態
+   - ネットワーク設定
+
+2. **セキュリティ設定**:
+   - 最小限の権限設定
+   - 適切なネットワーク制限
+   - 定期的なキーのローテーション
+
+3. **モニタリング**:
+   - アクセスログの確認
+   - エラーアラートの設定
+   - パフォーマンスモニタリング
+
+# Azure Storageのトラブルシューティング表
+
+## 問題点、対応方法、検証結果の管理
+
+| 問題点 | 対応方法 | 検証結果 | ステータス | 備考 |
+|--------|----------|----------|------------|------|
+| **サブスクリプションの状態** | 1. Azure Portalでサブスクリプションの状態を確認<br>2. 支払い状況を確認<br>3. リソースグループの状態を確認 | ✅ アクティブ<br>✅ 支払い状況：正常<br>✅ リソースグループ：存在 | 完了 | サブスクリプションは正常に動作中 |
+| **ストレージアカウントの状態** | 1. Azure Portalでストレージアカウントの状態を確認<br>2. プロビジョニング状態を確認<br>3. アクティビティログを確認 | ✅ プロビジョニング状態：Succeeded<br>✅ ディスク状態：Available<br>✅ 作成日：2025/2/8 10:27:12 | 完了 | ストレージアカウントは正常に動作中 |
+| **ネットワーク設定** | 1. パブリックアクセスの設定を確認<br>2. ファイアウォールルールを確認<br>3. 仮想ネットワークの設定を確認 | ✅ アクセス許可：All networks<br>✅ セキュア転送：Enabled<br>✅ TLSバージョン：1.2 | 完了 | ネットワーク設定は適切 |
+| **ストレージアカウントキー** | 1. 現在のキーを確認<br>2. キーのローテーション履歴を確認<br>3. 新しいキーを生成 | ✅ キー1：有効（最終更新：2025/2/8）<br>✅ キー2：有効（最終更新：2025/2/8）<br>⚠️ 66日間更新なし | 要確認 | キーは有効だが、更新が必要な可能性あり |
+| **コンテナーの設定** | 1. コンテナーの存在確認<br>2. アクセスレベル確認<br>3. パブリックアクセス設定確認 | ✅ コンテナー：存在<br>✅ リース状態：Available<br>✅ 暗号化：account-encryption-key | 完了 | コンテナーは正常に設定されている |
+| **SASトークンの設定** | 1. 権限設定を確認（sp=rl）<br>2. 時間範囲を確認<br>3. プロトコル設定を確認<br>4. リソースタイプを確認 | ✅ 権限：Read, List（sp=rl）<br>✅ 開始：2025/4/15 15:57:11<br>✅ 終了：2026/4/1 23:57:11<br>✅ プロトコル：HTTPS<br>✅ リソース：Container | 完了 | 適切な権限と設定で生成済み |
+| **URL構築の問題** | 1. URLの形式を確認<br>2. SASトークンの配置を確認<br>3. エンコード処理を確認 | ✅ ベースURL：正しい<br>✅ SASトークン：正しい形式<br>✅ エンコード：適切 | 完了 | Blob SAS URLが正しく生成されている |
+| **エンコード/デコード** | 1. URLエンコードの処理を確認<br>2. Base64エンコードの処理を確認<br>3. 特殊文字の処理を確認 | ✅ URLエンコード：適切<br>✅ 特殊文字：正しく処理<br>✅ 署名：正しく生成 | 完了 | エンコーディングは適切 |
+| **クライアント側の実装** | 1. コードのURL構築ロジックを確認<br>2. エラーハンドリングを確認<br>3. デバッグログを確認 | 未検証 | 未対応 | クライアント側の実装を確認する必要あり |
+
+## 確認済みの設定
+
+### SASトークン設定
+```typescript
+{
+  sasToken: {
+    permissions: 'rl',  // Read, List
+    startTime: '2025-04-15T06:57:11Z',
+    expiryTime: '2026-04-01T14:57:11Z',
+    protocol: 'https',
+    version: '2024-11-04',
+    resourceType: 'c',  // Container
+    signature: 'h4KOq0I/bZc4kA+6ZBCKCw5Ei4/fAr302lbiUOP0Ldg='
+  }
+}
+```
+
+### Blob SAS URL
+```typescript
+{
+  baseUrl: 'https://audiosalesanalyzeraudio.blob.core.windows.net/moc-audio',
+  sasToken: 'sp=rl&st=2025-04-15T06:57:11Z&se=2026-04-01T14:57:11Z&spr=https&sv=2024-11-04&sr=c&sig=h4KOq0I%2FbZc4kA%2B6ZBCKCw5Ei4%2FfAr302lbiUOP0Ldg%3D',
+  fullUrl: 'https://audiosalesanalyzeraudio.blob.core.windows.net/moc-audio?sp=rl&st=2025-04-15T06:57:11Z&se=2026-04-01T14:57:11Z&spr=https&sv=2024-11-04&sr=c&sig=h4KOq0I%2FbZc4kA%2B6ZBCKCw5Ei4%2FfAr302lbiUOP0Ldg%3D'
+}
+```
+
+## 次のステップ
+
+1. **環境変数の更新**
+   ```env
+   NEXT_PUBLIC_AZURE_STORAGE_ACCOUNT_NAME=audiosalesanalyzeraudio
+   NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME=moc-audio
+   NEXT_PUBLIC_AZURE_STORAGE_SAS_TOKEN=sp=rl&st=2025-04-15T06:57:11Z&se=2026-04-01T14:57:11Z&spr=https&sv=2024-11-04&sr=c&sig=h4KOq0I%2FbZc4kA%2B6ZBCKCw5Ei4%2FfAr302lbiUOP0Ldg%3D
+   ```
+
+2. **クライアント側の実装確認**
+   - コードのURL構築ロジックを確認
+   - エラーハンドリングを確認
+   - デバッグログを確認
+
+3. **動作確認**
+   - アプリケーションを再起動
+   - ブラウザのキャッシュをクリア
+   - 音声ファイルのアクセスを確認
+
+# SASトークンの更新履歴
+
+## 2024-04-15の更新
+- **更新日時**: 2024-04-15
+- **有効期間**: 2025-04-15 06:57:11 UTC から 2026-04-01 14:57:11 UTC
+- **権限**: Read, List (sp=rl)
+- **プロトコル**: HTTPS のみ
+- **リソースタイプ**: Container (sr=c)
+- **バージョン**: 2024-11-04
+
+### 設定内容
+```typescript
+interface SASTokenSettings {
+  permissions: 'rl' // Read, List のみ
+  startTime: '2025-04-15T06:57:11Z'
+  expiryTime: '2026-04-01T14:57:11Z'
+  protocol: 'https'
+  version: '2024-11-04'
+  resourceType: 'c' // Container
+  signature: 'h4KOq0I/bZc4kA+6ZBCKCw5Ei4/fAr302lbiUOP0Ldg='
+}
+```
+
+### 環境変数設定
+```typescript
+NEXT_PUBLIC_AZURE_STORAGE_ACCOUNT_NAME=audiosalesanalyzeraudio
+NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME=moc-audio
+NEXT_PUBLIC_AZURE_STORAGE_SAS_TOKEN=sp=rl&st=2025-04-15T06:57:11Z&se=2026-04-01T14:57:11Z&spr=https&sv=2024-11-04&sr=c&sig=h4KOq0I%2FbZc4kA%2B6ZBCKCw5Ei4%2FfAr302lbiUOP0Ldg%3D
+```
+
+### 重要な注意点
+1. アプリケーションの再起動が必要
+2. ブラウザキャッシュのクリア推奨
+3. デバッグログでURL構築を確認
+4. 音声ファイルの再生テスト実施
+
+### トラブルシューティング
+- 403エラーが発生した場合：
+  - SASトークンの有効期限確認
+  - 権限設定の確認（Read, List）
+  - プロトコル（HTTPS）の確認
+  - 署名の正当性確認
+
+- 404エラーが発生した場合：
+  - コンテナ名の確認
+  - ファイルパスの正規化確認
+  - ストレージアカウント名の確認
+
+# 音声再生の問題解決進展
+
+## SASトークンの問題解決 (2024-04-15)
+### 解決した問題
+- 403エラー（認証エラー）が発生
+- URLにコンテナ名が含まれていなかった
+
+### 解決方法
+1. URLの構築ロジックを修正
+   ```typescript
+   const baseUrl = `https://${storageAccount}.blob.core.windows.net/`
+   const containerPath = `${container}/${normalizedPath}`
+   const encodedPath = encodeURIComponent(containerPath)
+   ```
+2. コンテナ名を環境変数から取得するように変更
+3. パスの正規化処理を改善
+
+### 効果
+- 403エラーが解消
+- 新しい問題（currentTimeの設定エラー）が顕在化
+
+## 新しい問題：currentTimeの設定エラー
+### エラー内容
+```
+TypeError: Failed to set the 'currentTime' property on 'HTMLMediaElement': The provided double value is non-finite.
+at handlePlay (AudioSegmentPlayer.tsx:109:35)
+```
+
+### 考えられる原因
+1. `startTime`プロパティが不正な値（NaN、Infinity、undefined）
+2. 音声ファイルのメタデータが正しく読み込まれていない
+3. `audioRef.current`の状態が不安定
+
+### 次のステップ
+1. `startTime`の値をログ出力して確認
+2. `onLoadedMetadata`イベントの後にcurrentTimeを設定するように修正
+3. 音声ファイルの読み込み状態を確認してからcurrentTimeを設定
+
+## 音声再生機能の修正（2024-04-15）
+
+### ブランチ名
+`feature/audio-player-implementation`
+
+### 変更内容の概要
+- 音声ファイルの再生機能を実装
+- Azure Blob Storageからの音声ファイル取得を実装
+- 音声再生のUI/UXを実装
+
+### 詳細な説明
+1. 音声ファイルの再生機能
+   - HTML5 Audio APIを使用した再生機能
+   - 開始時間・終了時間の指定による部分再生
+   - 再生状態の管理（再生/停止/一時停止）
+
+2. Azure Blob Storage連携
+   - SASトークンを使用した安全なアクセス
+   - 音声ファイルのURL構築ロジック
+   - エラーハンドリングの実装
+
+3. UI/UX実装
+   - 再生コントロール（再生/停止ボタン）
+   - 再生時間の表示
+   - エラー表示の実装
+
+### 確認事項
+- [x] 音声ファイルの再生が正常に動作
+- [x] 部分再生（開始時間・終了時間指定）が機能
+- [x] エラーハンドリングが適切に動作
+
+### 次回の作業予定
+1. 音声再生の品質改善
+   - バッファリング処理の最適化
+   - 再生の安定性向上
+
+2. UI/UXの改善
+   - プログレスバーの実装
+   - 音量コントロールの追加
+   - 再生速度調整機能の追加
+
+3. エラー処理の強化
+   - より詳細なエラーメッセージ
+   - リトライ機能の実装
+   - フォールバック処理の追加
+
+### 注意事項
+- 環境変数の設定が正しいことを確認
+- 音声ファイルのパスが正しく設定されていることを確認
+- ブラウザの互換性を考慮した実装

@@ -30,6 +30,8 @@ interface ConversationSegment {
   updated_datetime: string
   speaker_name?: string
   speaker_role?: string
+  start_time: number
+  end_time: number
 }
 
 interface CommentReader {
@@ -297,7 +299,7 @@ export default function FeedbackPage() {
                         segmentId={segment.segment_id}
                         startTime={segment.start_time}
                         endTime={segment.end_time}
-                        audioUrl={segment.file_path}
+                        audioPath={segment.file_path}
                       />
                       <button 
                         className={`text-xs flex items-center gap-1 px-2 py-1 rounded-full ${
@@ -315,7 +317,7 @@ export default function FeedbackPage() {
                     </div>
 
                     {/* コメント一覧と入力フォーム */}
-                    <div id={`comments-list-${segment.segment_id}`} className={`pl-4 mb-4 hidden ${isCurrentUser ? 'text-right' : 'text-left'}`}>
+                    <div id={`comments-list-${segment.segment_id}`} className="mt-2 hidden">
                       {comments[segment.segment_id]?.length > 0 ? (
                         <div className="space-y-2 mb-3">
                           {comments[segment.segment_id].map(comment => (
@@ -331,29 +333,27 @@ export default function FeedbackPage() {
                       ) : <div className="text-sm text-gray-500 mb-3">まだコメントはありません</div>}
                       
                       {/* コメント入力フォーム */}
-                      <div className="mt-3">
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            className="flex-1 px-3 py-1 border rounded-md text-sm"
-                            placeholder="コメントを入力..."
-                            value={newComments[segment.segment_id] || ''}
-                            onChange={(e) => handleCommentChange(segment.segment_id, e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleAddComment(segment.segment_id)}
-                          />
-                          <button
-                            className="px-3 py-1 bg-primary text-white rounded-md text-sm hover:bg-primary/90 transition-colors"
-                            onClick={() => handleAddComment(segment.segment_id)}
-                          >
-                            送信
-                          </button>
-                        </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          className="flex-1 px-3 py-1 border rounded-md text-sm"
+                          placeholder="コメントを入力..."
+                          value={newComments[segment.segment_id] || ''}
+                          onChange={(e) => handleCommentChange(segment.segment_id, e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleAddComment(segment.segment_id)}
+                        />
+                        <button
+                          className="px-3 py-1 bg-primary text-white rounded-md text-sm hover:bg-primary/90 transition-colors"
+                          onClick={() => handleAddComment(segment.segment_id)}
+                        >
+                          送信
+                        </button>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
-            );
+            )
           })
         )}
       </div>
