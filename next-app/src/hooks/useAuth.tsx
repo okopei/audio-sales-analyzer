@@ -9,8 +9,9 @@ interface User {
   user_id: number
   email: string
   user_name: string
-  is_manager: boolean
-  role?: string  // roleフィールドを追加
+  account_status: string
+  is_active: boolean
+  role?: string
 }
 
 // 認証コンテキストの型定義
@@ -43,8 +44,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // ユーザーがマネージャーかどうかを判定する関数
   const checkIsManager = (userData: User): boolean => {
-    // is_managerフラグがtrueの場合、またはroleが'manager'の場合はマネージャー
-    return userData.is_manager === true || userData.role === 'manager'
+    // account_statusが'ACTIVE'でroleが'manager'の場合はマネージャー
+    return userData.account_status === 'ACTIVE' && userData.role === 'manager'
   }
 
   // 初期化時にCookieとローカルストレージからユーザー情報を取得
@@ -71,9 +72,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (storedUser && storedToken) {
             const parsedUser = JSON.parse(storedUser)
             
-            // ユーザーデータにis_managerフラグがない場合、roleから設定
-            if (parsedUser.role === 'manager' && parsedUser.is_manager !== true) {
-              parsedUser.is_manager = true
+            // ユーザーデータにaccount_statusがない場合、roleから設定
+            if (parsedUser.role === 'manager' && parsedUser.account_status !== 'ACTIVE') {
+              parsedUser.account_status = 'ACTIVE'
             }
             
             setUser(parsedUser)
@@ -133,9 +134,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await response.json()
       console.log('Login successful:', data.user)
       
-      // roleからis_managerフラグを設定
-      if (data.user.role === 'manager' && data.user.is_manager !== true) {
-        data.user.is_manager = true
+      // roleからaccount_statusを設定
+      if (data.user.role === 'manager' && data.user.account_status !== 'ACTIVE') {
+        data.user.account_status = 'ACTIVE'
       }
       
       // ブラウザ環境の場合、ローカルストレージとCookieの両方に保存
