@@ -16,7 +16,7 @@ export default function RegisterPage() {
     email: "",
     password: "",
     role: "member", // デフォルトは一般ユーザー
-    manager_name: "",
+    account_status: "ACTIVE",
   })
 
   const [showPassword, setShowPassword] = useState(false)
@@ -35,7 +35,7 @@ export default function RegisterPage() {
         email: formData.email,
         password: formData.password,
         role: formData.role,
-        manager_name: formData.role === "member" ? formData.manager_name : undefined
+        account_status: formData.role === "manager" ? "ACTIVE" : "ACTIVE"
       }
 
       // APIエンドポイントにPOSTリクエスト
@@ -136,18 +136,6 @@ export default function RegisterPage() {
               </div>
             </RadioGroup>
           </div>
-          
-          {formData.role === "member" && (
-            <div className="space-y-2">
-              <Label htmlFor="manager_name">マネージャー名</Label>
-              <Input
-                id="manager_name"
-                value={formData.manager_name}
-                onChange={(e) => setFormData({ ...formData, manager_name: e.target.value })}
-                required={formData.role === "member"}
-              />
-            </div>
-          )}
           
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? "登録中..." : "登録"}

@@ -20,18 +20,18 @@ def get_meetings(req: func.HttpRequest, meeting_rows: func.SqlRowList) -> func.H
         return handle_options_request()
     
     user_id = None
-    manager_id = None
+    account_status = None
     
     # クエリパラメータからuser_idを取得
     if 'user_id' in req.params:
         user_id = req.params.get('user_id')
     
-    # クエリパラメータからmanager_idを取得
-    if 'manager_id' in req.params:
-        manager_id = req.params.get('manager_id')
+    # クエリパラメータからaccount_statusを取得
+    if 'account_status' in req.params:
+        account_status = req.params.get('account_status')
     
-    # ユーザーIDまたはマネージャーIDが存在する場合に処理を続行
-    if user_id or manager_id:
+    # ユーザーIDまたはアカウントステータスが存在する場合に処理を続行
+    if user_id or account_status:
         rows = []
         
         for row in meeting_rows:
@@ -39,21 +39,20 @@ def get_meetings(req: func.HttpRequest, meeting_rows: func.SqlRowList) -> func.H
             if user_id and str(row['user_id']) == user_id:
                 rows.append(dict(row))
             
-            # manager_idフィルターが存在する場合、今後のロジックで処理する予定（現時点では未実装）
-            elif manager_id:
-                # TODO: manager_idに基づくフィルタリングロジックを実装する
-                pass
+            # account_statusフィルターが存在する場合、該当するレコードを追加
+            elif account_status and row['account_status'] == account_status:
+                rows.append(dict(row))
         
         return create_json_response(rows)
     
-    # user_idもmanager_idも指定されていない場合はすべての会議を返す
+    # user_idもaccount_statusも指定されていない場合はすべての会議を返す
     else:
         rows = [dict(row) for row in meeting_rows]
         return create_json_response(rows)
 
 def get_members_meetings(req: func.HttpRequest, members_rows: func.SqlRowList, meeting_rows: func.SqlRowList) -> func.HttpResponse:
     """
-    マネージャーIDに基づいてメンバーの会議一覧を取得する
+    アカウントステータスに基づいてメンバーの会議一覧を取得する
     """
     log_request(req, "GetMembersMeetings")
     
@@ -61,18 +60,18 @@ def get_members_meetings(req: func.HttpRequest, members_rows: func.SqlRowList, m
     if req.method == "OPTIONS":
         return handle_options_request()
     
-    # クエリパラメータからmanager_idを取得
-    manager_id = req.params.get('manager_id')
-    if not manager_id:
-        return create_error_response("Manager ID is required", 400)
+    # クエリパラメータからaccount_statusを取得
+    account_status = req.params.get('account_status')
+    if not account_status:
+        return create_error_response("Account status is required", 400)
     
-    # manager_idに基づいてメンバーのuser_idを取得
+    # account_statusに基づいてメンバーのuser_idを取得
     member_user_ids = []
     for row in members_rows:
-        if str(row['manager_id']) == manager_id:
+        if row['account_status'] == account_status:
             member_user_ids.append(str(row['user_id']))
     
-    # 特定のマネージャーのメンバーの会議を取得
+    # 特定のアカウントステータスのメンバーの会議を取得
     meetings = []
     for row in meeting_rows:
         # user_idをstr型に変換して比較

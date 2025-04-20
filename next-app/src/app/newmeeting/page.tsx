@@ -265,7 +265,7 @@ export default function NewMeetingPage() {
       // 成功メッセージ表示後、ダッシュボードに遷移するよう変更
       setTimeout(() => {
         // ユーザーの権限に応じて適切なダッシュボードに遷移
-        if (user?.is_manager) {
+        if (user?.account_status === 'ACTIVE' && user?.role === 'manager') {
           router.push('/manager-dashboard')
         } else {
           router.push('/dashboard')
