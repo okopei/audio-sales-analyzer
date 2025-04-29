@@ -1181,3 +1181,30 @@ BLOBストレージ（moc-audio） → トリガー検知 → 音声処理 → �
 - 両方のトリガーが同時に動作する可能性があるため、冪等性を考慮
 - 処理中のファイルの重複処理を防ぐ仕組みが必要
 - エラー発生時のリトライ処理の実装が必要
+
+## トラブルシューティング
+
+### APIエラー
+
+#### 1. `/api/members-meetings` 500エラー
+
+**問題**: `GET http://localhost:7071/api/members-meetings?account_status=ACTIVE` で500エラーが発生
+
+**発生状況**:
+- フロントエンドから`/api/members-meetings`エンドポイントに`account_status=ACTIVE`パラメータを付けてリクエスト
+- Azure Functionsの`get_members_meetings`関数で処理中にエラーが発生
+
+**原因**:
+1. `Users`テーブルから`account_status`カラムを取得していなかった
+2. `Meetings`テーブルとの結合で`account_status`を取得していなかった
+3. エラーハンドリングが不十分だった
+
+**解決方法**:
+1. `Users`テーブルのクエリに`account_status`カラムを追加
+2. `Meetings`テーブルとの結合クエリに`account_status`を追加
+3. エラーハンドリングを改善し、詳細なログを記録するように修正
+
+**関連システム**:
+- Azure Functions (Python)
+- SQL Database
+- Next.jsフロントエンド

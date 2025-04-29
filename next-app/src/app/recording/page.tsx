@@ -460,47 +460,27 @@ export default function RecordingPage() {
         
         toast.success("録音データが保存されました");
         
-        // 成功後、ミーティング情報も更新
-        try {
-          // 取得した基本情報を利用
-          const updateData = {
-            meetingId: meetingIdNum,
-            userId: user.user_id,
-            fileName: fileName,
-            filePath: blobUrl,
-            fileSize: file.size,
-            durationSeconds: recordingTime,
-            clientCompanyName: basicInfo?.client_company_name || '',  
-            clientContactName: basicInfo?.client_contact_name || '', 
-            meetingDatetime: basicInfo?.meeting_datetime || ''     
-          };
-          
-          const updateResult = await updateMeetingWithRecording(updateData);
-        } catch (updateError) {
-          console.error("ミーティング情報の更新エラー:", updateError);
-        }
-        
-        // ダッシュボードに遷移
+        // 成功後、ダッシュボードに遷移
         setTimeout(() => {
-          router.push("/dashboard");
-        }, 1000);
-      } catch (error) {
-        toast.error(`録音データの処理中にエラーが発生しました: ${error instanceof Error ? error.message : String(error)}`);
+          // ユーザーの権限に応じて適切なダッシュボードに遷移
+          if (user?.account_status === 'ACTIVE' && user?.role === 'manager') {
+            router.push('/manager-dashboard');
+          } else {
+            router.push('/dashboard');
+          }
+        }, 2000);
         
-        setTimeout(() => {
-          router.push("/dashboard");
-        }, 3000);
+      } catch (uploadError) {
+        console.error("アップロードエラー:", uploadError);
+        toast.error("録音データのアップロードに失敗しました");
       } finally {
         setIsUploading(false);
       }
     } catch (error) {
-      toast.error(`予期せぬエラーが発生しました: ${error instanceof Error ? error.message : String(error)}`);
-      
-      setTimeout(() => {
-        router.push("/dashboard");
-      }, 3000);
+      console.error("録音停止処理エラー:", error);
+      toast.error("録音の停止処理中にエラーが発生しました");
     }
-  }
+  };
 
   const handlePauseResume = () => {
     if (isPaused) {

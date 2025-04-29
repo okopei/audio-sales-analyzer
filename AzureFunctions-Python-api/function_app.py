@@ -118,19 +118,38 @@ def save_basic_info_func(req: func.HttpRequest, basicInfo: func.Out[func.SqlRow]
 def get_meetings_func(req: func.HttpRequest, meetingsQuery: func.SqlRowList) -> func.HttpResponse:
     return get_meetings(req, meetingsQuery)
 
+# 録音情報更新エンドポイント
+@app.function_name(name="UpdateRecording")
+@app.route(route="meetings/update-recording", methods=["POST", "OPTIONS"])
+@app.generic_input_binding(
+    arg_name="meetingQuery", 
+    type="sql", 
+    CommandText="SELECT meeting_id, user_id, client_contact_name, client_company_name, meeting_datetime, duration_seconds, status, transcript_text, file_name, file_size, error_message FROM dbo.Meetings", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+@app.generic_output_binding(
+    arg_name="meetingOut", 
+    type="sql", 
+    CommandText="dbo.Meetings", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+def update_recording_func(req: func.HttpRequest, meetingOut: func.Out[func.SqlRow], meetingQuery: func.SqlRowList) -> func.HttpResponse:
+    from src.meetings.meeting_handlers import update_recording
+    return update_recording(req, meetingOut, meetingQuery)
+
 # メンバー会議一覧取得エンドポイント
 @app.function_name(name="GetMembersMeetings")
 @app.route(route="members-meetings", methods=["GET", "OPTIONS"])
 @app.generic_input_binding(
     arg_name="usersQuery", 
     type="sql", 
-    CommandText="SELECT user_id, user_name, manager_name FROM dbo.Users", 
+    CommandText="SELECT user_id, user_name, manager_name, account_status FROM dbo.Users", 
     ConnectionStringSetting="SqlConnectionString"
 )
 @app.generic_input_binding(
     arg_name="meetingsQuery", 
     type="sql", 
-    CommandText="SELECT m.meeting_id, m.user_id, m.client_contact_name, m.client_company_name, m.meeting_datetime, m.duration_seconds, m.status, m.transcript_text, m.file_name, m.file_size, m.error_message, u.user_name FROM dbo.Meetings m JOIN dbo.Users u ON m.user_id = u.user_id", 
+    CommandText="SELECT m.meeting_id, m.user_id, m.client_contact_name, m.client_company_name, m.meeting_datetime, m.duration_seconds, m.status, m.transcript_text, m.file_name, m.file_size, m.error_message, u.user_name, u.account_status FROM dbo.Meetings m JOIN dbo.Users u ON m.user_id = u.user_id", 
     ConnectionStringSetting="SqlConnectionString"
 )
 def get_members_meetings_func(req: func.HttpRequest, usersQuery: func.SqlRowList, meetingsQuery: func.SqlRowList) -> func.HttpResponse:
