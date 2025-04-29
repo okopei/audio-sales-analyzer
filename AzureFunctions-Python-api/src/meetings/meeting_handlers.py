@@ -4,6 +4,8 @@ import traceback
 import azure.functions as func
 from datetime import datetime, UTC
 import re
+import os
+from azure.storage.blob import BlobServiceClient
 
 from ..utils.http import get_cors_headers, handle_options_request, create_json_response, create_error_response, parse_json_request, log_request
 from ..utils.db import get_db_connection, execute_query, get_current_time
@@ -56,29 +58,34 @@ def get_members_meetings(req: func.HttpRequest, members_rows: func.SqlRowList, m
     """
     log_request(req, "GetMembersMeetings")
     
-    # OPTIONSリクエスト処理
-    if req.method == "OPTIONS":
-        return handle_options_request()
-    
-    # クエリパラメータからaccount_statusを取得
-    account_status = req.params.get('account_status')
-    if not account_status:
-        return create_error_response("Account status is required", 400)
-    
-    # account_statusに基づいてメンバーのuser_idを取得
-    member_user_ids = []
-    for row in members_rows:
-        if row['account_status'] == account_status:
-            member_user_ids.append(str(row['user_id']))
-    
-    # 特定のアカウントステータスのメンバーの会議を取得
-    meetings = []
-    for row in meeting_rows:
-        # user_idをstr型に変換して比較
-        if str(row['user_id']) in member_user_ids:
-            meetings.append(dict(row))
-    
-    return create_json_response(meetings)
+    try:
+        # OPTIONSリクエスト処理
+        if req.method == "OPTIONS":
+            return handle_options_request()
+        
+        # クエリパラメータからaccount_statusを取得
+        account_status = req.params.get('account_status')
+        if not account_status:
+            return create_error_response("Account status is required", 400)
+        
+        # account_statusに基づいてメンバーのuser_idを取得
+        member_user_ids = []
+        for row in members_rows:
+            if row['account_status'] == account_status:
+                member_user_ids.append(str(row['user_id']))
+        
+        # 特定のアカウントステータスのメンバーの会議を取得
+        meetings = []
+        for row in meeting_rows:
+            # user_idをstr型に変換して比較
+            if str(row['user_id']) in member_user_ids:
+                meetings.append(dict(row))
+        
+        return create_json_response(meetings)
+    except Exception as e:
+        logging.error(f"Error in get_members_meetings: {str(e)}")
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        return create_error_response(f"Internal server error: {str(e)}", 500)
 
 def save_basic_info(req: func.HttpRequest, basicInfo_out: func.Out[func.SqlRow], last_basicInfo: func.SqlRowList) -> func.HttpResponse:
     """
@@ -132,8 +139,15 @@ def save_basic_info(req: func.HttpRequest, basicInfo_out: func.Out[func.SqlRow],
         # 現在の時刻を取得
         now = get_current_time()
         
-        # SQLバインディングを使用してデータを挿入
+        # 新しいmeeting_idを生成
+        new_meeting_id = 1
+        for row in last_basicInfo:
+            new_meeting_id = int(row['meeting_id']) + 1
+            break
+        
+        # BasicInfoテーブルにデータを挿入
         basicInfo_out.set(func.SqlRow({
+            "meeting_id": new_meeting_id,  # 明示的にmeeting_idを設定
             "user_id": user_id,
             "meeting_datetime": meeting_date_str,
             "client_company_name": client_company_name,  # フロントエンドから送信された企業名
@@ -150,6 +164,7 @@ def save_basic_info(req: func.HttpRequest, basicInfo_out: func.Out[func.SqlRow],
             "success": True,
             "message": f"BasicInfo for meeting with '{company_name}' saved successfully.",
             "search_info": {
+                "meeting_id": new_meeting_id,
                 "user_id": user_id,
                 "client_company_name": client_company_name,
                 "client_contact_name": client_contact_name,
