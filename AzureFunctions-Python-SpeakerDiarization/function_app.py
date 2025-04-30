@@ -20,6 +20,7 @@ from azure.storage.blob import BlobServiceClient, BlobClient
 import subprocess
 import shutil
 import wave
+import requests
 
 # デバッグログの設定
 logging.basicConfig(
@@ -122,8 +123,136 @@ def check_database_connection(meetingsTable):
         logger.error(f"Error details: {traceback.format_exc()}")
     logger.info("=== Database Connection Check Complete ===")
 
-@app.function_name(name="ProcessAudio")
+def convert_webm_to_wav(webm_path: str) -> str:
+    """
+    WebMファイルをWAVファイルに変換する
+    """
+    try:
+        logger.info(f"Converting WebM to WAV: {webm_path}")
+        wav_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.wav")
+        
+        # ffmpegを使用してWebMからWAVに変換
+        result = subprocess.run([
+            'ffmpeg', '-i', webm_path,
+            '-acodec', 'pcm_s16le',  # 16-bit PCM
+            '-ar', '16000',          # 16kHz
+            '-ac', '1',              # モノラル
+            '-y',                    # 上書き
+            wav_path
+        ], check=True, capture_output=True, text=True)
+        
+        logger.info(f"ffmpeg conversion completed. Output: {result.stdout}")
+        
+        # 変換後のファイルを確認
+        if os.path.exists(wav_path):
+            logger.info(f"Successfully converted to WAV: {wav_path}")
+            # 変換後のWAVファイルの情報を確認
+            with wave.open(wav_path, 'rb') as wav_file:
+                channels = wav_file.getnchannels()
+                sample_width = wav_file.getsampwidth()
+                frame_rate = wav_file.getframerate()
+                frames = wav_file.getnframes()
+                duration = frames / float(frame_rate)
+                logger.info(f"Converted WAV file details:")
+                logger.info(f"- Channels: {channels} (should be 1 for mono)")
+                logger.info(f"- Sample width: {sample_width} bytes (should be 2 for 16-bit)")
+                logger.info(f"- Frame rate: {frame_rate} Hz (should be 16000)")
+                logger.info(f"- Duration: {duration:.2f} seconds")
+                logger.info(f"- File size: {os.path.getsize(wav_path)} bytes")
+            
+            return wav_path
+        else:
+            raise RuntimeError("WAV conversion failed: output file not found")
+            
+    except subprocess.CalledProcessError as e:
+        error_message = f"Failed to convert WebM to WAV: {e.stderr}"
+        logger.error(error_message)
+        raise RuntimeError(error_message)
+    except Exception as e:
+        error_message = f"Error in convert_webm_to_wav: {str(e)}"
+        logger.error(error_message)
+        raise RuntimeError(error_message)
+
+@app.function_name(name="TriggerTranscriptionJob")
 @app.event_grid_trigger(arg_name="event")
+def trigger_transcription_job(event: func.EventGridEvent):
+    """
+    Blob アップロード完了時に発火し、Speech-to-Text 非同期ジョブを REST API で作成する
+    """
+    try:
+        blob_url = event.get_json().get("url")
+        logger.info(f"Received blob URL: {blob_url}")
+
+        # BlobのURLからコンテナ名とBLOB名を抽出
+        path_parts = blob_url.split('/')
+        container_name = path_parts[-2]  # コンテナ名
+        blob_name = path_parts[-1]       # Blobファイル名
+        
+        logger.info(f"コンテナ名: {container_name}, Blob名: {blob_name}")
+
+        # BlobServiceClientの作成
+        blob_service_client = BlobServiceClient.from_connection_string(os.environ["AzureWebJobsStorage"])
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+        
+        # 一時ファイルの作成
+        temp_webm_path = os.path.join(tempfile.gettempdir(), blob_name)
+        with open(temp_webm_path, "wb") as temp_file:
+            blob_data = blob_client.download_blob()
+            blob_data.readinto(temp_file)
+        
+        # WebMからWAVに変換
+        temp_wav_path = convert_webm_to_wav(temp_webm_path)
+        
+        # 変換したWAVファイルを新しいBlobとしてアップロード
+        wav_blob_name = f"{os.path.splitext(blob_name)[0]}.wav"
+        wav_blob_client = blob_service_client.get_blob_client(container=container_name, blob=wav_blob_name)
+        
+        with open(temp_wav_path, "rb") as wav_file:
+            wav_blob_client.upload_blob(wav_file, overwrite=True)
+        
+        # WAVファイルのURLを取得
+        wav_blob_url = wav_blob_client.url
+        
+        # 一時ファイルの削除
+        os.remove(temp_webm_path)
+        os.remove(temp_wav_path)
+
+        speech_key = os.environ["SPEECH_KEY"]
+        region = os.environ["SPEECH_REGION"]
+        endpoint = f"https://{region}.api.cognitive.microsoft.com/speechtotext/v3.0/transcriptions"
+
+        # Webhook 用の Function URL
+        callback_url = os.environ["TRANSCRIPTION_CALLBACK_URL"]
+
+        payload = {
+            "contentUrls": [wav_blob_url],
+            "locale": "ja-JP",
+            "displayName": f"transcription-{uuid.uuid4()}",
+            "properties": {
+                "diarizationEnabled": True,
+                "wordLevelTimestampsEnabled": True,
+                "punctuationMode": "DictatedAndAutomatic",
+                "profanityFilterMode": "Masked",
+                "callbackUrl": callback_url
+            }
+        }
+
+        headers = {
+            "Ocp-Apim-Subscription-Key": speech_key,
+            "Content-Type": "application/json"
+        }
+
+        response = requests.post(endpoint, headers=headers, json=payload)
+        response.raise_for_status()
+        logger.info("Transcription job successfully created")
+        return func.HttpResponse("Transcription job created", status_code=200)
+
+    except Exception as e:
+        logger.error(f"Error in trigger_transcription_job: {str(e)}")
+        return func.HttpResponse(f"Error: {str(e)}", status_code=500)
+
+@app.function_name(name="TranscriptionCallback")
+@app.route(route="transcription-callback", methods=["POST"])
 @app.generic_output_binding(
     arg_name="meetingsTable",
     type="sql",
@@ -131,281 +260,121 @@ def check_database_connection(meetingsTable):
     ConnectionStringSetting="SqlConnectionString"
 )
 @app.generic_input_binding(
-    arg_name="basicInfoQuery", 
-    type="sql", 
-    CommandText="SELECT meeting_id, client_company_name, client_contact_name, meeting_datetime FROM dbo.BasicInfo", 
+    arg_name="basicInfoQuery",
+    type="sql",
+    CommandText="SELECT client_company_name, client_contact_name FROM dbo.BasicInfo WHERE meeting_id = @meeting_id",
     ConnectionStringSetting="SqlConnectionString"
 )
-def process_audio(event: func.EventGridEvent, meetingsTable: func.Out[func.SqlRow], basicInfoQuery: func.SqlRowList) -> None:
+def transcription_callback(req: func.HttpRequest, meetingsTable: func.Out[func.SqlRow], basicInfoQuery: func.SqlRowList) -> func.HttpResponse:
     """
-    EventGridTriggerを使用して音声ファイルを処理する関数
+    Speech Service から transcription 完了通知を受け取る
+    結果 JSON のダウンロード → 話者分離結果を整形 → Meetings テーブルに保存
     """
-    logger.info("=== EventGridTriggerによる音声ファイル処理開始 ===")
-    
-    # 環境変数の確認
-    check_environment_variables()
-    
-    # イベントデータからBlobの情報を取得
-    event_data = event.get_json()
-    blob_url = event_data.get('url', '')
-    logger.info(f"Received blob URL: {blob_url}")
-    
-    # BlobのURLからパスを抽出
-    # 例: https://storageaccount.blob.core.windows.net/moc-audio/file.wav
-    if not blob_url:
-        logger.error("Blob URLが見つかりません")
-        return
-    
-    # BlobのURLからコンテナ名とBLOB名を抽出
     try:
-        # URLからパスを抽出
-        path_parts = blob_url.split('/')
-        container_name = path_parts[-2]  # コンテナ名
-        blob_name = path_parts[-1]       # Blobファイル名
+        data = req.get_json()
+        transcription_url = data.get("self")
+        logger.info(f"Webhook called. Transcription job URL: {transcription_url}")
+
+        # ファイル名とパスを取得
+        content_urls = data.get("contentUrls", [])
+        if not content_urls:
+            logger.error("No content URLs found in webhook data")
+            return func.HttpResponse("No content URLs found", status_code=400)
+
+        # URLからファイル名を抽出
+        file_url = content_urls[0]
+        file_name = file_url.split('/')[-1]
+        file_path = '/'.join(file_url.split('/')[-2:])  # コンテナ名/ファイル名
+        logger.info(f"Processing file: {file_name}")
+        logger.info(f"File path: {file_path}")
         
-        logger.info(f"コンテナ名: {container_name}, Blob名: {blob_name}")
-        
-        # ファイル名からmeeting_idとuser_idを抽出
-        pattern = r'^meeting_(\d+)_user_(\d+)_[\d\-T:Z]+\.[^.]+$'
-        match = re.match(pattern, blob_name)
+        # 正規表現でmeeting_idとuser_idを抽出
+        match = re.match(r"meeting_(\d+)_user_(\d+)_.*\.webm", file_name)
         if not match:
-            error_message = f"Invalid file name format: {blob_name}. Expected format: meeting_[meetingId]_user_[userId]_[timestamp].[ext]"
-            logger.error(error_message)
-            raise ValueError(error_message)
+            logger.error(f"Invalid file name format: {file_name}")
+            return func.HttpResponse("Invalid file name format", status_code=400)
             
         meeting_id = int(match.group(1))
         user_id = int(match.group(2))
-        logger.info(f"Successfully extracted meeting_id: {meeting_id} and user_id: {user_id} from blob name")
-        
-        # BlobServiceClientの作成
-        try:
-            blob_service_client = BlobServiceClient.from_connection_string(os.environ["AzureWebJobsStorage"])
-            blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
-            blob_data = blob_client.download_blob()
-            logging.info(f"Successfully downloaded blob: {blob_name}")
-            logging.info(f"Blob size: {blob_data.size} bytes")
-            logging.info(f"Blob properties: {blob_data.properties}")
-        except Exception as e:
-            error_message = f"Failed to download blob {blob_name}: {str(e)}"
-            logging.error(error_message)
-            raise RuntimeError(error_message)
+        logger.info(f"Extracted meeting_id: {meeting_id}, user_id: {user_id}")
 
-        # 一時音声ファイルの作成
-        try:
-            temp_audio_path = os.path.join(tempfile.gettempdir(), blob_name)
-            with open(temp_audio_path, "wb") as temp_file:
-                bytes_written = blob_data.readinto(temp_file)
-            logging.info(f"Successfully created temporary audio file: {temp_audio_path}")
-            logging.info(f"Bytes written: {bytes_written}")
-            logging.info(f"File size: {os.path.getsize(temp_audio_path)}")
-            
-            # ファイルの先頭を確認
-            with open(temp_audio_path, 'rb') as f:
-                header = f.read(4)
-                logging.info(f"File header: {header.hex()}")
-            
-            # WebM形式の場合、WAVに変換
-            if header.hex() == '1a45dfa3':  # WebM形式のヘッダー
-                logging.info("WebM format detected, converting to WAV...")
-                temp_wav_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.wav")
-                
-                # ffmpegを使用してWebMからWAVに変換
-                try:
-                    logging.info(f"Starting ffmpeg conversion from {temp_audio_path} to {temp_wav_path}")
-                    result = subprocess.run([
-                        'ffmpeg', '-i', temp_audio_path,
-                        '-acodec', 'pcm_s16le',  # 16-bit PCM
-                        '-ar', '16000',          # 16kHz
-                        '-ac', '1',              # モノラル
-                        '-y',                    # 上書き
-                        temp_wav_path
-                    ], check=True, capture_output=True, text=True)
-                    
-                    logging.info(f"ffmpeg conversion completed. Output: {result.stdout}")
-                    
-                    # 変換後のファイルを確認
-                    if os.path.exists(temp_wav_path):
-                        logging.info(f"Successfully converted to WAV: {temp_wav_path}")
-                        # 変換後のWAVファイルの情報を確認
-                        with wave.open(temp_wav_path, 'rb') as wav_file:
-                            channels = wav_file.getnchannels()
-                            sample_width = wav_file.getsampwidth()
-                            frame_rate = wav_file.getframerate()
-                            frames = wav_file.getnframes()
-                            duration = frames / float(frame_rate)
-                            logging.info(f"Converted WAV file details:")
-                            logging.info(f"- Channels: {channels} (should be 1 for mono)")
-                            logging.info(f"- Sample width: {sample_width} bytes (should be 2 for 16-bit)")
-                            logging.info(f"- Frame rate: {frame_rate} Hz (should be 16000)")
-                            logging.info(f"- Duration: {duration:.2f} seconds")
-                            logging.info(f"- File size: {os.path.getsize(temp_wav_path)} bytes")
-                        
-                        # 元のファイルを削除
-                        os.remove(temp_audio_path)
-                        # 変換後のファイルを元のパスに移動
-                        shutil.move(temp_wav_path, temp_audio_path)
-                        logging.info(f"Moved converted WAV file to {temp_audio_path}")
-                    else:
-                        raise RuntimeError("WAV conversion failed: output file not found")
-                        
-                except subprocess.CalledProcessError as e:
-                    error_message = f"Failed to convert WebM to WAV: {e.stderr}"
-                    logging.error(error_message)
-                    raise RuntimeError(error_message)
-            
-            # 音声ファイルの形式を確認
-            with wave.open(temp_audio_path, 'rb') as wav_file:
-                channels = wav_file.getnchannels()
-                sample_width = wav_file.getsampwidth()
-                frame_rate = wav_file.getframerate()
-                logging.info(f"Audio file format: {channels} channels, {sample_width} bytes per sample, {frame_rate} Hz")
-                
-                if channels != 1:
-                    logging.warning("Audio file is not mono. Converting to mono...")
-                    # TODO: モノラルへの変換処理を実装
-                
-                if frame_rate != 16000:
-                    logging.warning("Audio file is not 16kHz. Converting to 16kHz...")
-                    # TODO: 16kHzへの変換処理を実装
-        except Exception as e:
-            error_message = f"Failed to create temporary audio file {temp_audio_path}: {str(e)}"
-            logging.error(error_message)
-            raise RuntimeError(error_message)
+        # BasicInfoからクライアント情報を取得
+        client_info = None
+        for row in basicInfoQuery:
+            if row["meeting_id"] == meeting_id:
+                client_info = row
+                break
 
-        # 音声ファイルの処理確認
-        check_audio_file(temp_audio_path)
+        if not client_info:
+            logger.warning(f"No client info found for meeting_id: {meeting_id}")
+            client_company_name = "不明企業"
+            client_contact_name = "不明担当者"
+        else:
+            client_company_name = client_info["client_company_name"]
+            client_contact_name = client_info["client_contact_name"]
+            logger.info(f"Found client info - Company: {client_company_name}, Contact: {client_contact_name}")
 
-        # Speech Serviceの設定
-        try:
-            # SpeechConfigの作成と設定
-            speech_config = configure_speech_service()
-            
-            # AudioConfigの作成
-            audio_config = AudioConfig(filename=temp_audio_path)
-            
-            # SpeechRecognizerの作成
-            speech_recognizer = SpeechRecognizer(
-                speech_config=speech_config,
-                audio_config=audio_config
-            )
-            logger.info("Successfully configured Speech Service with diarization")
-        except Exception as e:
-            logger.error(f"Failed to configure Speech Service: {str(e)}")
-            logger.error(f"Error type: {type(e)}")
-            logger.error(f"Error details: {traceback.format_exc()}")
-            raise
+        headers = {
+            "Ocp-Apim-Subscription-Key": os.environ["SPEECH_KEY"]
+        }
 
-        # 話者分離を含む文字起こし結果を格納するリスト
-        transcription_results = []
+        # transcription status を取得
+        status_resp = requests.get(transcription_url, headers=headers)
+        status_resp.raise_for_status()
+        status_json = status_resp.json()
 
-        # 連続認識のコールバック
-        def handle_result(evt):
-            if evt.result.reason == ResultReason.RecognizedSpeech:
-                # 話者IDとテキストを取得
-                speaker_id = evt.result.speaker_id
-                text = evt.result.text
-                transcription_results.append({
-                    'speaker_id': speaker_id,
-                    'text': text
-                })
-                logging.info(f"Recognized speech from Speaker{speaker_id}: {text}")
+        if status_json["status"] != "Succeeded":
+            logger.warning(f"Transcription job not succeeded: {status_json['status']}")
+            return func.HttpResponse(status_code=202)
 
-        # コールバックの登録
-        speech_recognizer.recognized.connect(handle_result)
+        results_url = status_json["resultsUrls"]["channel_0"]
+        result_json = requests.get(results_url, headers=headers).json()
 
-        # 連続認識の開始
-        speech_recognizer.start_continuous_recognition()
-        # 音声ファイルの長さに応じて待機
-        time.sleep(get_audio_duration(temp_audio_path) + 1)
-        # 連続認識の停止
-        speech_recognizer.stop_continuous_recognition()
+        transcript = []
+        for phrase in result_json["recognizedPhrases"]:
+            speaker = phrase.get("speaker", "Unknown")
+            text = phrase["nBest"][0]["display"]
+            transcript.append(f"(Speaker{speaker})[{text}]")
 
-        # 話者分離結果の整形
-        formatted_transcript = format_transcript_with_speakers(transcription_results)
-        logging.info(f"Formatted transcript with speakers: {formatted_transcript}")
+        transcript_text = " ".join(transcript)
 
-        # BasicInfoテーブルからの情報取得
-        try:
-            basic_info = list(basicInfoQuery)
-            if not basic_info:
-                error_message = f"No basic info found for meeting_id: {meeting_id}"
-                logging.error(error_message)
-                raise ValueError(error_message)
-            
-            client_company_name = basic_info[0]["client_company_name"]
-            client_contact_name = basic_info[0]["client_contact_name"]
-            meeting_datetime = basic_info[0]["meeting_datetime"]
-            logging.info(f"Successfully retrieved basic info for meeting_id: {meeting_id}")
-        except Exception as e:
-            error_message = f"Failed to retrieve basic info: {str(e)}"
-            logging.error(error_message)
-            raise RuntimeError(error_message)
+        # ファイル名から日時を抽出
+        datetime_match = re.search(r"(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3})", file_name)
+        meeting_datetime = datetime.strptime(datetime_match.group(1), "%Y-%m-%dT%H-%M-%S-%f") if datetime_match else datetime.now(UTC)
 
-        # Meetingsテーブルへのデータ挿入
-        try:
-            logger.info("=== Attempting to insert data into Meetings table ===")
-            current_time = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
-            meeting_data = {
-                "meeting_id": meeting_id,
-                "user_id": user_id,
-                "title": f"{client_company_name} - {client_contact_name}様との商談",
-                "file_name": blob_name,
-                "file_path": f"{container_name}/{blob_name}",
-                "file_size": blob_data.size,
-                "duration_seconds": get_audio_duration(temp_audio_path),
-                "status": "completed",
-                "transcript_text": formatted_transcript,
-                "error_message": None,
-                "client_company_name": client_company_name,
-                "client_contact_name": client_contact_name,
-                "meeting_datetime": meeting_datetime,
-                "start_datetime": current_time,
-                "end_datetime": current_time,
-                "inserted_datetime": current_time,
-                "updated_datetime": current_time,
-                "deleted_datetime": None
-            }
-            meetingsTable.set(func.SqlRow(meeting_data))
-            logger.info("Successfully inserted data into Meetings table")
-        except Exception as e:
-            logger.error(f"Failed to insert into Meetings table: {str(e)}")
-            logger.error(f"Error type: {type(e)}")
-            logger.error(f"Error details: {traceback.format_exc()}")
-            raise
+        # Blob Storageからファイル情報を取得
+        blob_service_client = BlobServiceClient.from_connection_string(os.environ["AzureWebJobsStorage"])
+        container_name = file_path.split('/')[0]
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=file_name)
+        blob_properties = blob_client.get_blob_properties()
 
-        finally:
-            # 一時ファイルの削除
-            if temp_audio_path and os.path.exists(temp_audio_path):
-                try:
-                    os.remove(temp_audio_path)
-                    logging.info(f"Successfully deleted temporary audio file: {temp_audio_path}")
-                except Exception as e:
-                    logging.warning(f"Failed to delete temporary audio file {temp_audio_path}: {str(e)}")
+        meeting_data = {
+            "meeting_id": meeting_id,
+            "user_id": user_id,
+            "title": f"会議 {meeting_datetime.strftime('%Y-%m-%d %H:%M')}",
+            "file_name": file_name,
+            "file_path": file_path,
+            "file_size": blob_properties.size,
+            "duration_seconds": 0,  # TODO: 音声ファイルの長さを取得
+            "status": "completed",
+            "transcript_text": transcript_text,
+            "error_message": None,
+            "client_company_name": client_company_name,
+            "client_contact_name": client_contact_name,
+            "meeting_datetime": meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),
+            "start_datetime": meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),
+            "end_datetime": meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),
+            "inserted_datetime": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S'),
+            "updated_datetime": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
+        }
+
+        meetingsTable.set(func.SqlRow(meeting_data))
+        logger.info("Webhook transcription result saved to DB")
+        return func.HttpResponse("Success", status_code=200)
 
     except Exception as e:
-        logger.error(f"エラー発生: {str(e)}")
-        error_time = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
-        if 'meeting_id' in locals() and 'user_id' in locals() and 'file_name' in locals():
-            meetingsTable.set(func.SqlRow({
-                "meeting_id": int(meeting_id),
-                "user_id": int(user_id),
-                "file_name": blob_name,
-                "title": blob_name,
-                "file_path": f"{container_name}/{blob_name}",
-                "file_size": blob_data.size if 'blob_data' in locals() else 0,
-                "duration_seconds": 0,  # エラー時は0を設定
-                "status": "error",
-                "error_message": str(e),
-                "meeting_datetime": error_time,
-                "start_datetime": error_time,
-                "client_company_name": "不明企業",
-                "client_contact_name": "不明担当者",
-                "inserted_datetime": error_time,
-                "updated_datetime": error_time
-            }))
-        raise
-
-    logger.info("=== EventGridTriggerによる音声ファイル処理完了 ===")
+        logger.error(f"Error in webhook callback: {str(e)}")
+        return func.HttpResponse("Error", status_code=500)
 
 @app.function_name(name="TestProcessAudio")
 @app.route(route="test-process-audio", methods=["POST"])
@@ -426,27 +395,26 @@ def test_process_audio(req: func.HttpRequest, meetingsTable: func.Out[func.SqlRo
     HTTPトリガーを使用してEventGridイベントをシミュレートする関数
     """
     try:
-        # リクエストボディからEventGridイベントデータを取得
-        event_data = req.get_json()
+        # リクエストボディからURLを取得
+        data = req.get_json()
+        blob_url = data.get('url')
         
         # EventGridイベントオブジェクトを作成
         event = func.EventGridEvent(
             id=str(uuid.uuid4()),
-            topic=event_data.get('topic', '/subscriptions/{subscription-id}/resourceGroups/Storage/providers/Microsoft.Storage/storageAccounts/audiosalesanalyzeraudio'),
-            subject=event_data.get('subject', ''),
-            event_type=event_data.get('eventType', ''),
+            topic='/subscriptions/{subscription-id}/resourceGroups/Storage/providers/Microsoft.Storage/storageAccounts/audiosalesanalyzeraudio',
+            subject=f'/blobServices/default/containers/moc-audio/blobs/{blob_url.split("/")[-1]}',
+            event_type='Microsoft.Storage.BlobCreated',
             event_time=datetime.now(UTC).isoformat(),
-            data_version=event_data.get('dataVersion', '1.0'),
-            data=event_data.get('data', {})
+            data_version='1.0',
+            data={
+                'url': blob_url
+            }
         )
         
-        # 既存のprocess_audio関数を呼び出し
-        process_audio(event, meetingsTable, basicInfoQuery)
+        # trigger_transcription_jobを呼び出し
+        return trigger_transcription_job(event)
         
-        return func.HttpResponse(
-            "EventGridイベントの処理が完了しました",
-            status_code=200
-        )
     except Exception as e:
         logger.error(f"テスト処理中にエラーが発生: {str(e)}")
         logger.error(f"エラーの詳細: {traceback.format_exc()}")
