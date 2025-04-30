@@ -137,32 +137,10 @@ export const useRecording = () => {
       // 音声レベル監視を開始
       animationFrameRef.current = requestAnimationFrame(updateAudioLevel)
       
-      // 試行する順番でmimeTypeのリストを作成
-      const mimeTypes = [
-        'audio/webm',                // 一般的なWebM形式
-        'audio/webm;codecs=pcm',     // PCMコーデック付きWebM
-        'audio/webm;codecs=opus',    // Opusコーデック付きWebM（広く対応）
-        'audio/ogg;codecs=opus',     // OggOpus（Firefoxが対応）
-        'audio/mp4;codecs=mp4a.40.5' // AAC（Safariが対応）
-      ];
-      
-      // サポートされているmimeTypeを見つける
-      let mimeType = '';
-      for (const type of mimeTypes) {
-        if (MediaRecorder.isTypeSupported(type)) {
-          mimeType = type;
-          console.log(`サポートされているメディアタイプ: ${mimeType}`);
-          break;
-        }
-      }
-      
       // MediaRecorderのオプション
       const options: MediaRecorderOptions = {
         audioBitsPerSecond: 128000, // 音質を指定（128kbps）
-      };
-      
-      if (mimeType) {
-        options.mimeType = mimeType;
+        mimeType: 'audio/webm'
       }
       
       // メディアレコーダーを初期化
@@ -187,8 +165,10 @@ export const useRecording = () => {
           // 必要に応じて途中経過のBlobを作成（長時間録音時の保険）
           if (chunkCounter % 10 === 0) {
             try {
-              const tempBlob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType || 'audio/webm' });
-              console.log(`途中経過のBlob生成: ${tempBlob.size} bytes`);
+              // 実際のMIMEタイプを取得
+              const mimeType = mediaRecorder.mimeType || 'audio/webm';
+              const tempBlob = new Blob(chunksRef.current, { type: mimeType });
+              console.log(`途中経過のBlob生成: ${tempBlob.size} bytes, type: ${mimeType}`);
               // 状態は更新せず、参照のみ保持
               recordingBlobRef.current = tempBlob;
             } catch (error) {
@@ -325,8 +305,10 @@ export const useRecording = () => {
     
     if (chunksRef.current.length > 0) {
       try {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        console.log(`チャンクから新規Blob生成: ${blob.size} bytes`);
+        // 実際のMIMEタイプを取得
+        const mimeType = mediaRecorderRef.current?.mimeType || 'audio/webm';
+        const blob = new Blob(chunksRef.current, { type: mimeType });
+        console.log(`チャンクから新規Blob生成: ${blob.size} bytes, type: ${mimeType}`);
         // 作成したBlobを保存しておく
         saveRecordingBlob(blob);
         return blob;
@@ -358,7 +340,7 @@ export const useRecording = () => {
 
   const sendAudioToServer = async (audioBlob: Blob) => {
     try {
-      setProcessingStatus('音声データを送信中...')
+      setProcessingStatus(`音声データを送信中... (形式: ${audioBlob.type}, サイズ: ${(audioBlob.size / 1024 / 1024).toFixed(2)}MB)`)
       const formData = new FormData()
       formData.append('audio', audioBlob)
 

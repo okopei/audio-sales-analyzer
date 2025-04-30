@@ -149,7 +149,7 @@ def update_recording_func(req: func.HttpRequest, meetingOut: func.Out[func.SqlRo
 @app.generic_input_binding(
     arg_name="meetingsQuery", 
     type="sql", 
-    CommandText="SELECT m.meeting_id, m.user_id, m.client_contact_name, m.client_company_name, m.meeting_datetime, m.duration_seconds, m.status, m.transcript_text, m.file_name, m.file_size, m.error_message, u.user_name, u.account_status FROM dbo.Meetings m JOIN dbo.Users u ON m.user_id = u.user_id", 
+    CommandText="SELECT m.meeting_id, m.user_id, m.client_contact_name, m.client_company_name, m.meeting_datetime, m.duration_seconds, m.status, m.transcript_text, m.file_name, m.file_size, m.error_message, u.user_name FROM dbo.Meetings m JOIN dbo.Users u ON m.user_id = u.user_id", 
     ConnectionStringSetting="SqlConnectionString"
 )
 def get_members_meetings_func(req: func.HttpRequest, usersQuery: func.SqlRowList, meetingsQuery: func.SqlRowList) -> func.HttpResponse:

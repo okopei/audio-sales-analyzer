@@ -435,10 +435,15 @@ export default function RecordingPage() {
         setIsUploading(true);
         toast.info("録音データをアップロード中...");
         
-        // ファイル名を生成（拡張子をwavに変更）
+        // 実際のMIMEタイプを取得
+        const mimeType = blobToUse.type;
+        console.log("録音データのMIMEタイプ:", mimeType);
+        
+        // ファイル名を生成
         const userId = user.user_id;
-        const timestamp = new Date().getTime();
-        const fileName = `meeting_${meetingId}_user_${userId}_${timestamp}.wav`;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const filename = `meeting_${meetingId}_user_${userId}_${timestamp}.webm`
+        console.log('生成されたファイル名:', filename)
         
         // meetingIdの検証
         const meetingIdNum = parseInt(meetingId, 10);
@@ -447,16 +452,16 @@ export default function RecordingPage() {
         }
         
         // ファイル名のmeeting_id部分を検証
-        const fileNameMeetingId = fileName.match(/meeting_(\d+)_/);
+        const fileNameMeetingId = filename.match(/meeting_(\d+)_/);
         if (!fileNameMeetingId || fileNameMeetingId[1] !== meetingId) {
           throw new Error("ファイル名の会議IDが一致しません");
         }
         
-        // ファイルオブジェクトを作成
-        const file = new File([blobToUse], fileName, { type: 'audio/wav' });
+        // ファイルオブジェクトを作成（実際のMIMEタイプを使用）
+        const file = new File([blobToUse], filename, { type: mimeType });
         
         // Azure Blob Storageにアップロード
-        const blobUrl = await uploadToAzureStorage(file, fileName);
+        const blobUrl = await uploadToAzureStorage(file, filename);
         
         toast.success("録音データが保存されました");
         

@@ -1,18 +1,23 @@
 {
-  "id": "12345678-1234-5678-abcd-1234567890ab",
-  "subject": "/blobServices/default/containers/moc-audio/blobs/test_audio.wav",
+  "topic": "/subscriptions/{subscription-id}/resourceGroups/Storage/providers/Microsoft.Storage/storageAccounts/mocaudio",
+  "subject": "/blobServices/default/containers/moc-audio/blobs/meeting_67_user_27_2025-04-30T00-52-11-814Z.webm",
   "eventType": "Microsoft.Storage.BlobCreated",
-  "eventTime": "2023-05-20T12:34:56.789Z",
-  "dataVersion": "1.0",
+  "eventTime": "2024-03-14T00:52:11.814Z",
+  "id": "b9f12925-b7c1-4793-b58d-018f3b0a5e5f",
   "data": {
     "api": "PutBlob",
-    "clientRequestId": "abcdef12-3456-7890-abcd-ef1234567890",
-    "requestId": "request-id",
-    "eTag": "0x8DB4567890ABCDEF",
-    "contentType": "audio/wav",
-    "contentLength": 10485760,
+    "clientRequestId": "6d79eb3b-1f75-4d20-8c45-4b0b3a0c5f87",
+    "requestId": "b9f12925-b7c1-4793-b58d-018f3b0a5e5f",
+    "eTag": "0x8DB3F0C7B7B6D4B",
+    "contentType": "audio/webm",
+    "contentLength": 15000,
     "blobType": "BlockBlob",
-    "url": "http://127.0.0.1:10000/devstoreaccount1/moc-audio/test_audio.wav",
-    "sequencer": "000000000000000000000000000000000000000000000000"
-  }
+    "url": "https://mocaudio.blob.core.windows.net/moc-audio/meeting_67_user_27_2025-04-30T00-52-11-814Z.webm",
+    "sequencer": "00000000000000000000000000000000000000000000000000",
+    "storageDiagnostics": {
+      "batchId": "b9f12925-b7c1-4793-b58d-018f3b0a5e5f"
+    }
+  },
+  "dataVersion": "",
+  "metadataVersion": "1"
 } 
