@@ -1305,3 +1305,42 @@ BLOBストレージ（moc-audio） → トリガー検知 → 音声処理 → �
 | E004 | Azure Functions | バインディングパラメータの不一致 | `FunctionLoadError: cannot load the ProcessAudio function: the following parameters are declared in function.json but not in Python` | 関数のパラメータにバインディングパラメータを追加し、適切な型アノテーションを設定 | 解決：`process_audio`関数のパラメータに`meetingsTable`と`basicInfoQuery`を追加し、型アノテーションを設定 | 関数が正常に読み込まれるようになる |
 | E035 | Azure Functions | 複数トリガーの設定エラー | 1つの関数に複数のトリガー（EventGridとHTTP）を設定しようとした<br>エラー：`ValueError: A trigger was already registered to this function` | EventGridトリガーのみを残し、HTTPトリガーの設定を削除 | ✅ エラー解消：EventGridトリガーのみの設定に修正 | 1. テストの実行<br>2. エラーハンドリングの確認<br>3. ログ出力の確認 |
 | E036 | Azure Functions | EventGridトリガーの404エラー | EventGridトリガーに直接HTTPリクエストを送信した際に404エラーが発生 | 1. `/admin/functions/ProcessAudio`エンドポイントを使用してテスト<br>2. テストJSONファイルを使用してイベントデータを送信<br>3. `test_trigger.py`スクリプトを使用してテスト | ✅ エラー解消：正しいエンドポイントを使用してテスト可能に | 1. テストの実行<br>2. エラーハンドリングの確認<br>3. ログ出力の確認 |
+
+# 技術的知見・トラブルシューティング
+
+## トラブルシューティング一覧表
+
+| システム | 問題 | 発生状況 | 解決方法 |
+|---------|------|----------|----------|
+| Azure Speech SDK | 話者分離機能の設定エラー | Azure Functions実行時 | 1. `PropertyId`の代わりに文字列リテラルを使用<br>2. `set_property_by_name`と`get_property_by_name`を使用<br>3. SDKバージョンを1.43.0に更新 |
+| Azure Functions | EventGridトリガーのテスト困難 | ローカル開発時 | 1. HTTPトリガーによるシミュレーション<br>2. テスト用JSONファイルの作成<br>3. curlコマンドによるテスト実行 |
+| Azure Blob Storage | 音声ファイルの形式変換 | WebMファイルアップロード時 | 1. FFmpegを使用したWAV形式への変換<br>2. 16kHz、16ビットPCM、モノラルに変換 |
+| Azure SQL Database | 接続エラー | データベース操作時 | 1. 接続文字列の確認<br>2. ファイアウォール設定の確認<br>3. 認証情報の確認 |
+
+## データベース関連
+
+### 制約条件
+- 主キー制約：`meeting_id`と`user_id`の組み合わせ
+- 外部キー制約：`meeting_id`は`BasicInfo`テーブルを参照
+- 一意性制約：`file_path`は一意である必要がある
+
+### ベクトル検索実装
+- Azure Cognitive Searchを使用
+- 音声認識結果のテキストをベクトル化
+- コサイン類似度による検索
+- インデックス設計の最適化
+
+### Azure Database Services
+- Azure SQL Database
+  - 適切なサービス層の選択
+  - パフォーマンスチューニング
+  - バックアップ戦略
+- Azure Cosmos DB
+  - グローバル分散
+  - 低レイテンシー
+  - スケーラビリティ
+
+### フィードバック機能
+- ユーザーフィードバックの収集
+- 機械学習モデルの改善
+- 品質指標の追跡

@@ -10,7 +10,8 @@ from azure.cognitiveservices.speech import (
     SpeechConfig,
     AudioConfig,
     SpeechRecognizer,
-    ResultReason
+    ResultReason,
+    PropertyId
 )
 from azure.data.tables import TableClient
 from azure.identity import DefaultAzureCredential
@@ -18,6 +19,7 @@ import traceback
 from azure.storage.blob import BlobServiceClient, BlobClient
 import subprocess
 import shutil
+import wave
 
 # デバッグログの設定
 logging.basicConfig(
@@ -27,6 +29,98 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+
+# 環境変数の確認
+def check_environment_variables():
+    required_env_vars = ["SPEECH_KEY", "SPEECH_REGION", "AzureWebJobsStorage"]
+    for var in required_env_vars:
+        if not os.environ.get(var):
+            logger.error(f"Missing required environment variable: {var}")
+        else:
+            logger.info(f"Environment variable {var} is set")
+
+# Speech Serviceの設定確認
+def configure_speech_service():
+    try:
+        logger.info("=== Speech Service Configuration Start ===")
+        speech_key = os.environ["SPEECH_KEY"]
+        speech_region = os.environ["SPEECH_REGION"]
+        
+        logger.info(f"Using region: {speech_region}")
+        
+        # SpeechConfigの作成
+        speech_config = SpeechConfig(
+            subscription=speech_key,
+            region=speech_region
+        )
+        
+        # 話者分離機能を有効化（set_property_by_nameを使用）
+        logger.info("Attempting to enable diarization")
+        speech_config.set_property_by_name(
+            "SpeechServiceConnection.EnableDiarization",
+            "true"
+        )
+        speech_config.set_property_by_name(
+            "SpeechServiceConnection.SpeakerCount",
+            "2"
+        )
+        
+        # 設定の確認（get_property_by_nameを使用）
+        diarization_enabled = speech_config.get_property_by_name("SpeechServiceConnection.EnableDiarization")
+        speaker_count = speech_config.get_property_by_name("SpeechServiceConnection.SpeakerCount")
+        logger.info(f"Diarization enabled: {diarization_enabled}")
+        logger.info(f"Speaker count: {speaker_count}")
+        
+        logger.info("=== Speech Service Configuration Complete ===")
+        return speech_config
+    except Exception as e:
+        logger.error(f"Failed to configure Speech Service: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        raise
+
+# 音声ファイルの処理確認
+def check_audio_file(file_path):
+    logger.info(f"=== Audio File Check Start ===")
+    logger.info(f"Processing audio file: {file_path}")
+    logger.info(f"File exists: {os.path.exists(file_path)}")
+    if os.path.exists(file_path):
+        logger.info(f"File size: {os.path.getsize(file_path)} bytes")
+        try:
+            with wave.open(file_path, 'rb') as wav_file:
+                channels = wav_file.getnchannels()
+                sample_width = wav_file.getsampwidth()
+                frame_rate = wav_file.getframerate()
+                frames = wav_file.getnframes()
+                duration = frames / float(frame_rate)
+                logger.info(f"Audio file details:")
+                logger.info(f"- Channels: {channels}")
+                logger.info(f"- Sample width: {sample_width} bytes")
+                logger.info(f"- Frame rate: {frame_rate} Hz")
+                logger.info(f"- Duration: {duration:.2f} seconds")
+        except Exception as e:
+            logger.error(f"Failed to read audio file: {str(e)}")
+    logger.info(f"=== Audio File Check Complete ===")
+
+# データベース接続確認
+def check_database_connection(meetingsTable):
+    logger.info("=== Database Connection Check Start ===")
+    try:
+        # テスト用のデータを挿入
+        test_data = {
+            "meeting_id": 0,
+            "user_id": 0,
+            "title": "Test Connection",
+            "status": "test",
+            "inserted_datetime": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
+        }
+        meetingsTable.set(func.SqlRow(test_data))
+        logger.info("Database connection test successful")
+    except Exception as e:
+        logger.error(f"Database connection test failed: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+    logger.info("=== Database Connection Check Complete ===")
 
 @app.function_name(name="ProcessAudio")
 @app.event_grid_trigger(arg_name="event")
@@ -46,12 +140,15 @@ def process_audio(event: func.EventGridEvent, meetingsTable: func.Out[func.SqlRo
     """
     EventGridTriggerを使用して音声ファイルを処理する関数
     """
-    logger.debug("=== EventGridTriggerによる音声ファイル処理開始 ===")
-    logger.debug(f"イベントデータ: {event.get_json()}")
+    logger.info("=== EventGridTriggerによる音声ファイル処理開始 ===")
+    
+    # 環境変数の確認
+    check_environment_variables()
     
     # イベントデータからBlobの情報を取得
     event_data = event.get_json()
     blob_url = event_data.get('url', '')
+    logger.info(f"Received blob URL: {blob_url}")
     
     # BlobのURLからパスを抽出
     # 例: https://storageaccount.blob.core.windows.net/moc-audio/file.wav
@@ -114,32 +211,49 @@ def process_audio(event: func.EventGridEvent, meetingsTable: func.Out[func.SqlRo
                 
                 # ffmpegを使用してWebMからWAVに変換
                 try:
-                    subprocess.run([
+                    logging.info(f"Starting ffmpeg conversion from {temp_audio_path} to {temp_wav_path}")
+                    result = subprocess.run([
                         'ffmpeg', '-i', temp_audio_path,
                         '-acodec', 'pcm_s16le',  # 16-bit PCM
                         '-ar', '16000',          # 16kHz
                         '-ac', '1',              # モノラル
                         '-y',                    # 上書き
                         temp_wav_path
-                    ], check=True, capture_output=True)
+                    ], check=True, capture_output=True, text=True)
+                    
+                    logging.info(f"ffmpeg conversion completed. Output: {result.stdout}")
                     
                     # 変換後のファイルを確認
                     if os.path.exists(temp_wav_path):
                         logging.info(f"Successfully converted to WAV: {temp_wav_path}")
+                        # 変換後のWAVファイルの情報を確認
+                        with wave.open(temp_wav_path, 'rb') as wav_file:
+                            channels = wav_file.getnchannels()
+                            sample_width = wav_file.getsampwidth()
+                            frame_rate = wav_file.getframerate()
+                            frames = wav_file.getnframes()
+                            duration = frames / float(frame_rate)
+                            logging.info(f"Converted WAV file details:")
+                            logging.info(f"- Channels: {channels} (should be 1 for mono)")
+                            logging.info(f"- Sample width: {sample_width} bytes (should be 2 for 16-bit)")
+                            logging.info(f"- Frame rate: {frame_rate} Hz (should be 16000)")
+                            logging.info(f"- Duration: {duration:.2f} seconds")
+                            logging.info(f"- File size: {os.path.getsize(temp_wav_path)} bytes")
+                        
                         # 元のファイルを削除
                         os.remove(temp_audio_path)
                         # 変換後のファイルを元のパスに移動
                         shutil.move(temp_wav_path, temp_audio_path)
+                        logging.info(f"Moved converted WAV file to {temp_audio_path}")
                     else:
                         raise RuntimeError("WAV conversion failed: output file not found")
                         
                 except subprocess.CalledProcessError as e:
-                    error_message = f"Failed to convert WebM to WAV: {e.stderr.decode()}"
+                    error_message = f"Failed to convert WebM to WAV: {e.stderr}"
                     logging.error(error_message)
                     raise RuntimeError(error_message)
             
             # 音声ファイルの形式を確認
-            import wave
             with wave.open(temp_audio_path, 'rb') as wav_file:
                 channels = wav_file.getnchannels()
                 sample_width = wav_file.getsampwidth()
@@ -158,25 +272,28 @@ def process_audio(event: func.EventGridEvent, meetingsTable: func.Out[func.SqlRo
             logging.error(error_message)
             raise RuntimeError(error_message)
 
+        # 音声ファイルの処理確認
+        check_audio_file(temp_audio_path)
+
         # Speech Serviceの設定
         try:
-            speech_config = SpeechConfig(
-                subscription=os.environ["SPEECH_KEY"],
-                region=os.environ["SPEECH_REGION"]
-            )
-            speech_config.speech_recognition_language = "ja-JP"
-            # 話者分離を有効化
-            speech_config.enable_diarization()
+            # SpeechConfigの作成と設定
+            speech_config = configure_speech_service()
+            
+            # AudioConfigの作成
             audio_config = AudioConfig(filename=temp_audio_path)
+            
+            # SpeechRecognizerの作成
             speech_recognizer = SpeechRecognizer(
                 speech_config=speech_config,
                 audio_config=audio_config
             )
-            logging.info("Successfully configured Speech Service with diarization")
+            logger.info("Successfully configured Speech Service with diarization")
         except Exception as e:
-            error_message = f"Failed to configure Speech Service: {str(e)}"
-            logging.error(error_message)
-            raise RuntimeError(error_message)
+            logger.error(f"Failed to configure Speech Service: {str(e)}")
+            logger.error(f"Error type: {type(e)}")
+            logger.error(f"Error details: {traceback.format_exc()}")
+            raise
 
         # 話者分離を含む文字起こし結果を格納するリスト
         transcription_results = []
@@ -226,6 +343,7 @@ def process_audio(event: func.EventGridEvent, meetingsTable: func.Out[func.SqlRo
 
         # Meetingsテーブルへのデータ挿入
         try:
+            logger.info("=== Attempting to insert data into Meetings table ===")
             current_time = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
             meeting_data = {
                 "meeting_id": meeting_id,
@@ -248,11 +366,12 @@ def process_audio(event: func.EventGridEvent, meetingsTable: func.Out[func.SqlRo
                 "deleted_datetime": None
             }
             meetingsTable.set(func.SqlRow(meeting_data))
-            logging.info(f"Successfully inserted data into Meetings table for meeting_id: {meeting_id}")
+            logger.info("Successfully inserted data into Meetings table")
         except Exception as e:
-            error_message = f"Failed to insert data into Meetings table: {str(e)}"
-            logging.error(error_message)
-            raise RuntimeError(error_message)
+            logger.error(f"Failed to insert into Meetings table: {str(e)}")
+            logger.error(f"Error type: {type(e)}")
+            logger.error(f"Error details: {traceback.format_exc()}")
+            raise
 
         finally:
             # 一時ファイルの削除
@@ -285,6 +404,56 @@ def process_audio(event: func.EventGridEvent, meetingsTable: func.Out[func.SqlRo
                 "updated_datetime": error_time
             }))
         raise
+
+    logger.info("=== EventGridTriggerによる音声ファイル処理完了 ===")
+
+@app.function_name(name="TestProcessAudio")
+@app.route(route="test-process-audio", methods=["POST"])
+@app.generic_output_binding(
+    arg_name="meetingsTable",
+    type="sql",
+    CommandText="dbo.Meetings",
+    ConnectionStringSetting="SqlConnectionString"
+)
+@app.generic_input_binding(
+    arg_name="basicInfoQuery", 
+    type="sql", 
+    CommandText="SELECT meeting_id, client_company_name, client_contact_name, meeting_datetime FROM dbo.BasicInfo", 
+    ConnectionStringSetting="SqlConnectionString"
+)
+def test_process_audio(req: func.HttpRequest, meetingsTable: func.Out[func.SqlRow], basicInfoQuery: func.SqlRowList) -> func.HttpResponse:
+    """
+    HTTPトリガーを使用してEventGridイベントをシミュレートする関数
+    """
+    try:
+        # リクエストボディからEventGridイベントデータを取得
+        event_data = req.get_json()
+        
+        # EventGridイベントオブジェクトを作成
+        event = func.EventGridEvent(
+            id=str(uuid.uuid4()),
+            topic=event_data.get('topic', '/subscriptions/{subscription-id}/resourceGroups/Storage/providers/Microsoft.Storage/storageAccounts/audiosalesanalyzeraudio'),
+            subject=event_data.get('subject', ''),
+            event_type=event_data.get('eventType', ''),
+            event_time=datetime.now(UTC).isoformat(),
+            data_version=event_data.get('dataVersion', '1.0'),
+            data=event_data.get('data', {})
+        )
+        
+        # 既存のprocess_audio関数を呼び出し
+        process_audio(event, meetingsTable, basicInfoQuery)
+        
+        return func.HttpResponse(
+            "EventGridイベントの処理が完了しました",
+            status_code=200
+        )
+    except Exception as e:
+        logger.error(f"テスト処理中にエラーが発生: {str(e)}")
+        logger.error(f"エラーの詳細: {traceback.format_exc()}")
+        return func.HttpResponse(
+            f"エラーが発生しました: {str(e)}",
+            status_code=500
+        )
 
 def get_audio_duration(audio_path: str) -> int:
     """音声ファイルの長さを秒単位で取得"""
