@@ -117,3 +117,202 @@
 - 話者分離テストは実際の会話データで実施
 - 音声変換機能はエラーハンドリングを徹底
 - 未読・既読機能はパフォーマンスを考慮した実装
+
+## テスト実施手順
+
+### 1. ローカル環境でのテスト
+
+#### 1.1 環境準備
+1. Azure Functions Core Toolsのインストール
+   ```powershell
+   pnpm install -g azure-functions-core-tools@4 --unsafe-perm true
+   ```
+
+2. Azure Functionsの起動
+   ```powershell
+   cd AzureFunctions-Python-SpeakerDiarization
+   func start
+   ```
+
+#### 1.2 テスト用音声ファイルの準備
+1. テスト用音声ファイルの要件
+   - 形式：WebM（音声コーデック：Opus）
+   - 長さ：1-2分程度
+   - 話者：2人以上
+   - 内容：日本語の会話
+
+2. 音声ファイルの配置
+   - `test-data/audio/`ディレクトリに配置
+   - ファイル名形式：`meeting_[meetingId]_user_[userId]_[timestamp].webm`
+   - 例：`meeting_71_user_27_2025-04-30T02-11-30-801.webm`
+
+3. WebMからWAVへの変換確認
+   - 変換処理のログを確認
+     - 入力ファイルの情報（チャンネル数、サンプルレート等）
+     - 変換後のWAVファイルの情報
+       - チャンネル数：1（モノラル）
+       - サンプルレート：16kHz
+       - ビット深度：16bit
+   - 変換後のWAVファイルが本番用Blob Storageに正しくアップロードされていることを確認
+   - 一時ファイルが適切に削除されていることを確認
+
+#### 1.3 テスト実行
+1. 音声ファイルのアップロード
+   ```powershell
+   # Azure Storage Explorerを使用して本番用ストレージアカウントにアップロード
+   # コンテナ名：moc-audio
+   ```
+
+2. EventGridイベントのシミュレート
+   ```powershell
+   # curlを使用してテストエンドポイントにリクエスト
+   curl -X POST http://localhost:7072/api/test-process-audio -H "Content-Type: application/json" -d "{\"url\":\"https://[本番用ストレージアカウント名].blob.core.windows.net/moc-audio/meeting_71_user_27_2025-04-30T02-11-30-801.webm\"}"
+   ```
+
+3. ログの確認
+   ```powershell
+   # Azure Functionsのログを確認
+   # 以下のイベントを確認：
+   # - Blob URLの受信
+   # - 文字起こしジョブの作成
+   # - Webhookの受信
+   # - データベースへの保存
+   ```
+
+### 2. 本番環境でのテスト
+
+#### 2.1 環境準備
+1. Azure Portalでの設定
+   - Azure Speech Servicesのリソース作成
+   - Azure Functionsのアプリケーション設定
+     - `SPEECH_KEY`
+     - `SPEECH_REGION`
+     - `TRANSCRIPTION_CALLBACK_URL`
+     - `SqlConnectionString`
+     - `AzureWebJobsStorage`（本番用ストレージアカウントの接続文字列）
+
+2. デプロイ
+   ```powershell
+   # Azure Functionsのデプロイ
+   func azure functionapp publish w-paas-salesanalyzer-speakerdiarization
+   ```
+
+#### 2.2 テスト実行
+1. 音声ファイルのアップロード
+   - Azure Portalのストレージエクスプローラーを使用
+   - または、アプリケーションのアップロード機能を使用
+
+2. 処理の監視
+   - Application Insightsでのログ確認
+   - Azure Functionsのログ確認
+   - データベースの更新確認
+
+### 3. テスト項目
+
+#### 3.1 基本機能テスト
+- [ ] 音声ファイルのアップロード
+- [ ] WebMからWAVへの変換
+  - [ ] 変換処理の成功
+  - [ ] 変換後のWAVファイルの仕様確認
+  - [ ] 一時ファイルの適切な削除
+- [ ] EventGridトリガーの発火
+- [ ] 文字起こしジョブの作成
+- [ ] Webhookの受信
+- [ ] データベースへの保存
+
+#### 3.2 エラー処理テスト
+- [ ] 不正な音声ファイル形式
+  - [ ] 不正なWebMファイル
+  - [ ] 破損したWebMファイル
+  - [ ] 空のWebMファイル
+- [ ] 変換処理のエラー
+  - [ ] ffmpegの実行エラー
+  - [ ] 一時ファイルの作成エラー
+  - [ ] 変換後のWAVファイルの検証エラー
+- [ ] 文字起こしジョブの失敗
+- [ ] Webhookのタイムアウト
+- [ ] データベース接続エラー
+
+#### 3.3 パフォーマンステスト
+- [ ] 複数ファイルの同時処理
+- [ ] 長時間音声の処理
+- [ ] 高負荷時の動作
+
+### 4. 期待される結果
+
+#### 4.1 成功パターン
+1. 音声ファイルのアップロード
+   - EventGridトリガーが発火
+   - 文字起こしジョブが作成される
+
+2. 文字起こしの完了
+   - Webhookが受信される
+   - 話者分離結果が取得される
+   - データベースに保存される
+
+3. データベースの確認
+   - `Meetings`テーブルに新しいレコードが追加される
+   - 話者分離情報が正しく保存される
+
+#### 4.2 エラーパターン
+1. 音声ファイルのエラー
+   - エラーメッセージがログに記録される
+   - データベースにエラー状態が保存される
+
+2. 文字起こしのエラー
+   - エラーメッセージがログに記録される
+   - リトライ処理が実行される
+
+3. Webhookのエラー
+   - エラーメッセージがログに記録される
+   - 適切なエラーレスポンスが返される
+
+### 5. トラブルシューティング
+
+#### 5.1 よくある問題と解決方法
+1. EventGridトリガーが発火しない
+   - ストレージアカウントの設定確認
+   - EventGridサブスクリプションの確認
+
+2. WebMからWAVへの変換が失敗する
+   - ffmpegがインストールされているか確認
+   - 一時ディレクトリの書き込み権限を確認
+   - 入力ファイルの形式を確認
+   - 変換ログを確認
+
+3. 文字起こしジョブが失敗する
+   - 音声ファイルの形式確認
+   - Speech Servicesの設定確認
+
+4. Webhookが受信されない
+   - コールバックURLの設定確認
+   - ネットワーク設定の確認
+
+#### 5.2 ログの確認方法
+1. ローカル環境
+   - Azure Functions Core Toolsのログ
+   - Azuriteのログ
+
+2. 本番環境
+   - Application Insights
+   - Azure Functionsのログ
+   - Azure Storageのログ
+
+### 6. テスト完了条件
+
+1. 基本機能テスト
+   - すべてのテスト項目が成功
+   - エラー処理が適切に動作
+
+2. パフォーマンステスト
+   - 同時処理が正常に動作
+   - レスポンス時間が許容範囲内
+
+3. エラー処理
+   - すべてのエラーパターンで適切に処理
+   - エラーメッセージが明確
+
+4. ドキュメント
+   - テスト結果の記録
+   - トラブルシューティング手順の更新
+
