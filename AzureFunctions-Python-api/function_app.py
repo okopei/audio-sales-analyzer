@@ -3,27 +3,165 @@ Audio Sales Analyzer API
 Azure Functions アプリケーションのエントリーポイント
 """
 
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+
 import azure.functions as func
 import logging
 import json
-from typing import Optional
-from datetime import datetime
+from typing import Optional, Dict, List, Any
+from datetime import datetime, UTC
 from azure.functions import AuthLevel, FunctionApp
+import traceback
+import pyodbc
+from azure.identity import DefaultAzureCredential, ClientSecretCredential
+import struct
+from src.models.user import User
+
+# ロガーの設定
+logger = logging.getLogger(__name__)
 
 # モジュール構造からのインポート
 from src.auth import login, register, get_user_by_id
 from src.meetings import get_meetings, get_members_meetings, save_basic_info, get_basic_info
-# 削除する関数のインポートをコメントアウト: save_meeting, update_recording_from_blob
 
 # Azure Functions アプリケーションの初期化
 app = FunctionApp(http_auth_level=AuthLevel.ANONYMOUS)
+
+def get_db_connection():
+    """
+    Microsoft Entra ID認証を使用してデータベース接続を確立します。
+    毎回新しいアクセストークンを取得して使用します。
+    """
+    try:
+        # 利用可能なODBCドライバ一覧をログ出力
+        logger.info(f"利用可能なODBCドライバ: {pyodbc.drivers()}")
+        
+        # ローカル開発環境の場合
+        if not os.environ.get('WEBSITE_SITE_NAME'):  # ローカル環境ではこの環境変数が存在しない
+            # 環境変数から認証情報を取得
+            tenant_id = os.environ.get('TENANT_ID')
+            client_id = os.environ.get('CLIENT_ID')
+            client_secret = os.environ.get('CLIENT_SECRET')
+            
+            if all([tenant_id, client_id, client_secret]):
+                credential = ClientSecretCredential(
+                    tenant_id=tenant_id,
+                    client_id=client_id,
+                    client_secret=client_secret
+                )
+            else:
+                credential = DefaultAzureCredential()
+        else:
+            # 本番環境の場合
+            credential = DefaultAzureCredential()
+
+        # 毎回新しいアクセストークンを取得
+        token = credential.get_token("https://database.windows.net/.default")
+        logger.info(f"新しいアクセストークンを取得しました。有効期限 (UTC): {token.expires_on}")
+        
+        # アクセストークンを適切な形式に変換
+        token_bytes = bytes(token.token, 'utf-8')
+        exptoken = b''.join(bytes((b, 0)) for b in token_bytes)
+        access_token = struct.pack('=i', len(exptoken)) + exptoken
+        
+        logger.info(f"アクセストークンの長さ: {len(access_token)} バイト")
+        
+        conn_str = (
+            f"Driver={{ODBC Driver 17 for SQL Server}};"
+            f"Server=tcp:w-paas-salesanalyzer-sqlserver.database.windows.net,1433;"
+            f"Database=w-paas-salesanalyzer-sql;"
+            f"Encrypt=yes;"
+            f"TrustServerCertificate=no;"
+            f"Connection Timeout=30;"
+        )
+        
+        logger.info("データベース接続を試行します...")
+        logger.info(f"接続文字列: {conn_str}")
+        
+        conn = pyodbc.connect(conn_str, attrs_before={1256: access_token})
+        logger.info("データベース接続が確立されました")
+        return conn
+    except Exception as e:
+        logger.error(f"Database connection error: {str(e)}")
+        logger.error(f"Connection string: {conn_str}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        raise
+
+def execute_query(query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """
+    SQLクエリを実行し、結果を返します。
+    
+    Args:
+        query (str): 実行するSQLクエリ
+        params (Optional[Dict[str, Any]]): クエリパラメータ
+        
+    Returns:
+        List[Dict[str, Any]]: クエリ結果のリスト
+    """
+    try:
+        with get_db_connection() as conn:
+            logger.info(f"クエリを実行: {query}")
+            if params:
+                logger.info(f"パラメータ: {params}")
+            
+            cursor = conn.cursor()
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            
+            if query.strip().upper().startswith("SELECT"):
+                columns = [column[0] for column in cursor.description]
+                rows = cursor.fetchall()
+                results = [dict(zip(columns, row)) for row in rows]
+
+                # datetime → 文字列化
+                for row in results:
+                    for key, value in row.items():
+                        if hasattr(value, 'isoformat'):
+                            row[key] = value.isoformat()
+
+                return results
+            else:
+                conn.commit()
+                return []
+                
+    except Exception as e:
+        logger.error(f"クエリ実行エラー: {str(e)}")
+        raise
+
+def test_db_connection() -> bool:
+    """
+    データベース接続をテストします。
+    
+    Returns:
+        bool: 接続テストの結果
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT @@VERSION")
+            version = cursor.fetchone()[0]
+            logger.info(f"SQL Server バージョン: {version}")
+            return True
+    except Exception as e:
+        logger.error(f"接続テストエラー: {str(e)}")
+        return False
+
+def get_current_time():
+    """
+    現在時刻をUTCで取得し、SQLサーバー互換の形式で返す
+    """
+    return datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
 
 # ヘルスチェックエンドポイント
 @app.function_name(name="HealthCheck")
 @app.route(route="health", methods=["GET", "OPTIONS"])
 def health_check(req: func.HttpRequest) -> func.HttpResponse:
     """APIサーバーの稼働状態を確認するためのヘルスチェックエンドポイント"""
-    logging.info("Health check endpoint called")
+    logger.info("Health check endpoint called")
     
     if req.method == "OPTIONS":
         # CORS プリフライトリクエスト処理
@@ -42,162 +180,450 @@ def health_check(req: func.HttpRequest) -> func.HttpResponse:
         headers=headers
     )
 
-#
-# 認証関連のエンドポイント
-#
+# データベース接続テストエンドポイント
+@app.function_name(name="TestDbConnection")
+@app.route(route="test/db-connection", methods=["GET", "OPTIONS"])
+def test_db_connection_func(req: func.HttpRequest) -> func.HttpResponse:
+    """データベース接続をテストするエンドポイント"""
+    try:
+        if req.method == "OPTIONS":
+            headers = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            }
+            return func.HttpResponse(status_code=204, headers=headers)
 
-# テスト用ユーザー登録エンドポイント
+        # 接続テストを実行
+        success = test_db_connection()
+        
+        if success:
+            response = {
+                "success": True,
+                "message": "データベース接続テストが成功しました"
+            }
+            status_code = 200
+        else:
+            response = {
+                "success": False,
+                "message": "データベース接続テストが失敗しました"
+            }
+            status_code = 500
+
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps(response, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=status_code,
+            headers=headers
+        )
+
+    except Exception as e:
+        logger.error(f"Database connection test error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps({
+                "success": False,
+                "message": f"データベース接続テスト中にエラーが発生しました: {str(e)}"
+            }, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500,
+            headers=headers
+        )
+
+# 認証関連のエンドポイント
 @app.function_name(name="RegisterTest")
 @app.route(route="register/test", methods=["GET", "POST", "OPTIONS"])
-@app.generic_output_binding(
-    arg_name="users",
-    type="sql",
-    CommandText="[dbo].[Users]",
-    ConnectionStringSetting="SqlConnectionString"
-)
-def register_test(req: func.HttpRequest, users: func.Out[func.SqlRow]) -> func.HttpResponse:
-    return register(req, users)
+def register_test(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        if req.method == "OPTIONS":
+            headers = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            }
+            return func.HttpResponse(status_code=204, headers=headers)
+
+        data = req.get_json()
+        return register(req, data)
+
+    except Exception as e:
+        logger.error(f"Register test error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500,
+            headers=headers
+        )
 
 # ログインエンドポイント
 @app.function_name(name="Login")
 @app.route(route="users/login", methods=["POST", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="usersQuery", 
-    type="sql",
-    CommandText="SELECT * FROM dbo.Users",
-    ConnectionStringSetting="SqlConnectionString"
-)
-def login_func(req: func.HttpRequest, usersQuery: func.SqlRowList) -> func.HttpResponse:
-    return login(req, usersQuery)
+def login_func(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        if req.method == "OPTIONS":
+            headers = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            }
+            return func.HttpResponse(status_code=204, headers=headers)
+
+        data = req.get_json()
+        email = data.get('email')
+        password = data.get('password')
+
+        if not email or not password:
+            return func.HttpResponse(
+                json.dumps({"error": "Email and password are required"}, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=400
+            )
+
+        # データベースからユーザー情報を取得
+        query = "SELECT * FROM dbo.Users WHERE email = ?"
+        users = execute_query(query, (email,))
+
+        if not users:
+            return func.HttpResponse(
+                json.dumps({"error": "Invalid email or password"}, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=401
+            )
+
+        user = User.from_dict(users[0])
+        if not user.verify_password(password):
+            return func.HttpResponse(
+                json.dumps({"error": "Invalid email or password"}, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=401
+            )
+
+        response = {
+            "user_id": user.user_id,
+            "user_name": user.user_name,
+            "email": user.email,
+            "is_manager": user.is_manager,
+            "manager_name": user.manager_name,
+            "is_active": user.is_active,
+            "account_status": user.account_status
+        }
+
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps(response, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=200,
+            headers=headers
+        )
+
+    except Exception as e:
+        logger.error(f"Login error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500,
+            headers=headers
+        )
 
 # ユーザー情報取得エンドポイント
 @app.function_name(name="GetUserById")
 @app.route(route="users/{user_id}", methods=["GET", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="usersQuery", 
-    type="sql",
-    CommandText="SELECT user_id, user_name, email, is_manager, manager_name, is_active, account_status FROM dbo.Users",
-    ConnectionStringSetting="SqlConnectionString"
-)
-def get_user_by_id_func(req: func.HttpRequest, usersQuery: func.SqlRowList) -> func.HttpResponse:
-    return get_user_by_id(req, usersQuery)
+def get_user_by_id_func(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        if req.method == "OPTIONS":
+            headers = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            }
+            return func.HttpResponse(status_code=204, headers=headers)
 
-#
+        user_id = req.route_params.get('user_id')
+        if not user_id:
+            return func.HttpResponse(
+                json.dumps({"error": "User ID is required"}, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=400
+            )
+
+        # データベースからユーザー情報を取得
+        query = """
+            SELECT user_id, user_name, email, is_manager, manager_name, is_active, account_status 
+            FROM dbo.Users 
+            WHERE user_id = ?
+        """
+        users = execute_query(query, (user_id,))
+
+        if not users:
+            return func.HttpResponse(
+                json.dumps({"error": "User not found"}, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=404
+            )
+
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps(users[0], ensure_ascii=False),
+            mimetype="application/json",
+            status_code=200,
+            headers=headers
+        )
+
+    except Exception as e:
+        logger.error(f"Get user error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500,
+            headers=headers
+        )
+
 # 会議関連のエンドポイント
-#
-
-# save_meeting_funcエンドポイントを削除（Meetingsテーブルへの挿入機能）
-
-# 基本情報保存エンドポイント
 @app.function_name(name="SaveBasicInfo")
 @app.route(route="basicinfo", methods=["POST", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="lastBasicInfo", 
-    type="sql", 
-    CommandText="SELECT TOP 1 meeting_id FROM dbo.BasicInfo ORDER BY meeting_id DESC", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-@app.generic_output_binding(
-    arg_name="basicInfo", 
-    type="sql", 
-    CommandText="dbo.BasicInfo", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def save_basic_info_func(req: func.HttpRequest, basicInfo: func.Out[func.SqlRow], lastBasicInfo: func.SqlRowList) -> func.HttpResponse:
-    return save_basic_info(req, basicInfo, lastBasicInfo)
+def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        if req.method == "OPTIONS":
+            headers = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            }
+            return func.HttpResponse(status_code=204, headers=headers)
+
+        data = req.get_json()
+        return save_basic_info(req, data)
+
+    except Exception as e:
+        logger.error(f"Save basic info error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500,
+            headers=headers
+        )
 
 # 会議一覧取得エンドポイント
 @app.function_name(name="GetMeetings")
 @app.route(route="meetings", methods=["GET", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="meetingsQuery", 
-    type="sql", 
-    CommandText="SELECT meeting_id, user_id, client_contact_name, client_company_name, meeting_datetime, duration_seconds, status, transcript_text, file_name, file_size, error_message FROM dbo.Meetings", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def get_meetings_func(req: func.HttpRequest, meetingsQuery: func.SqlRowList) -> func.HttpResponse:
-    return get_meetings(req, meetingsQuery)
+def get_meetings_func(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        if req.method == "OPTIONS":
+            headers = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            }
+            return func.HttpResponse(status_code=204, headers=headers)
 
-# 録音情報更新エンドポイント
-@app.function_name(name="UpdateRecording")
-@app.route(route="meetings/update-recording", methods=["POST", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="meetingQuery", 
-    type="sql", 
-    CommandText="SELECT meeting_id, user_id, client_contact_name, client_company_name, meeting_datetime, duration_seconds, status, transcript_text, file_name, file_size, error_message FROM dbo.Meetings", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-@app.generic_output_binding(
-    arg_name="meetingOut", 
-    type="sql", 
-    CommandText="dbo.Meetings", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def update_recording_func(req: func.HttpRequest, meetingOut: func.Out[func.SqlRow], meetingQuery: func.SqlRowList) -> func.HttpResponse:
-    from src.meetings.meeting_handlers import update_recording
-    return update_recording(req, meetingOut, meetingQuery)
+        query = """
+            SELECT meeting_id, user_id, client_contact_name, client_company_name, 
+                   meeting_datetime, duration_seconds, status, transcript_text, 
+                   file_name, file_size, error_message 
+            FROM dbo.Meetings
+        """
+        meetings = execute_query(query)
+
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps(meetings, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=200,
+            headers=headers
+        )
+
+    except Exception as e:
+        logger.error(f"Get meetings error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500,
+            headers=headers
+        )
 
 # メンバー会議一覧取得エンドポイント
 @app.function_name(name="GetMembersMeetings")
 @app.route(route="members-meetings", methods=["GET", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="usersQuery", 
-    type="sql", 
-    CommandText="SELECT user_id, user_name, manager_name, account_status FROM dbo.Users", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-@app.generic_input_binding(
-    arg_name="meetingsQuery", 
-    type="sql", 
-    CommandText="SELECT m.meeting_id, m.user_id, m.client_contact_name, m.client_company_name, m.meeting_datetime, m.duration_seconds, m.status, m.transcript_text, m.file_name, m.file_size, m.error_message, u.user_name FROM dbo.Meetings m JOIN dbo.Users u ON m.user_id = u.user_id", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def get_members_meetings_func(req: func.HttpRequest, usersQuery: func.SqlRowList, meetingsQuery: func.SqlRowList) -> func.HttpResponse:
-    return get_members_meetings(req, usersQuery, meetingsQuery)
+def get_members_meetings_func(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        if req.method == "OPTIONS":
+            headers = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            }
+            return func.HttpResponse(status_code=204, headers=headers)
 
-# update_meeting_with_recording_funcエンドポイントを削除（録音情報更新機能）
+        query = """
+            SELECT m.meeting_id, m.user_id, m.client_contact_name, m.client_company_name, 
+                   m.meeting_datetime, m.duration_seconds, m.status, m.transcript_text, 
+                   m.file_name, m.file_size, m.error_message, u.user_name 
+            FROM dbo.Meetings m 
+            JOIN dbo.Users u ON m.user_id = u.user_id
+        """
+        meetings = execute_query(query)
 
-# 基本情報取得エンドポイント
-@app.function_name(name="GetBasicInfo")
-@app.route(route="basicinfo/{meeting_id}", methods=["GET", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="basicInfoQuery", 
-    type="sql", 
-    CommandText="SELECT * FROM dbo.BasicInfo", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def get_basic_info_func(req: func.HttpRequest, basicInfoQuery: func.SqlRowList) -> func.HttpResponse:
-    return get_basic_info(req, basicInfoQuery)
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps(meetings, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=200,
+            headers=headers
+        )
+
+    except Exception as e:
+        logger.error(f"Get members meetings error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500,
+            headers=headers
+        )
 
 # 基本情報検索エンドポイント
 @app.function_name(name="SearchBasicInfo")
 @app.route(route="basicinfo/search", methods=["GET", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="basicInfoQuery", 
-    type="sql", 
-    CommandText="SELECT * FROM dbo.BasicInfo", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def search_basic_info_func(req: func.HttpRequest, basicInfoQuery: func.SqlRowList) -> func.HttpResponse:
-    return get_basic_info(req, basicInfoQuery, search_mode=True)
-
-#
-# フィードバック関連のエンドポイント（AzureFunctions-Python-Feedbackから移行）
-#
-
-# 会話セグメント取得API
-@app.function_name(name="GetConversationSegments")
-@app.route(route="api/conversation/segments/{meeting_id}", methods=["GET", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="segmentsQuery", 
-    type="sql", 
-    CommandText="SELECT s.segment_id, s.user_id, s.speaker_id, s.meeting_id, s.content, s.file_name, s.file_path, s.file_size, s.duration_seconds, s.status, s.inserted_datetime, s.updated_datetime, s.start_time, s.end_time, sp.speaker_name, sp.speaker_role FROM dbo.ConversationSegments s LEFT JOIN dbo.Speakers sp ON s.speaker_id = sp.speaker_id WHERE s.deleted_datetime IS NULL", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def get_conversation_segments(req: func.HttpRequest, segmentsQuery: func.SqlRowList) -> func.HttpResponse:
+def search_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
-            # CORS プリフライトリクエスト処理
+            headers = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            }
+            return func.HttpResponse(status_code=204, headers=headers)
+
+        query = "SELECT * FROM dbo.BasicInfo"
+        basic_info = execute_query(query)
+
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps(basic_info, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=200,
+            headers=headers
+        )
+
+    except Exception as e:
+        logger.error(f"Search basic info error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500,
+            headers=headers
+        )
+
+# フィードバック一覧取得エンドポイント
+@app.function_name(name="GetFeedback")
+@app.route(route="feedback", methods=["GET", "OPTIONS"])
+def get_feedback_func(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        if req.method == "OPTIONS":
+            headers = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            }
+            return func.HttpResponse(status_code=204, headers=headers)
+
+        query = """
+            SELECT f.feedback_id, f.meeting_id, f.user_id, f.feedback_text, 
+                   f.inserted_datetime, f.updated_datetime, u.user_name 
+            FROM dbo.Feedback f 
+            JOIN dbo.Users u ON f.user_id = u.user_id
+        """
+        feedback_list = execute_query(query)
+
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps(feedback_list, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=200,
+            headers=headers
+        )
+
+    except Exception as e:
+        logger.error(f"Get feedback error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500,
+            headers=headers
+        )
+
+# 会議IDによるフィードバック取得エンドポイント
+@app.function_name(name="GetFeedbackByMeetingId")
+@app.route(route="feedback/{meeting_id}", methods=["GET", "OPTIONS"])
+def get_feedback_by_meeting_id_func(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        if req.method == "OPTIONS":
+            headers = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            }
+            return func.HttpResponse(status_code=204, headers=headers)
+
+        meeting_id = req.route_params.get('meeting_id')
+        if not meeting_id:
+            return func.HttpResponse(
+                json.dumps({"error": "Meeting ID is required"}, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=400
+            )
+
+        query = """
+            SELECT f.feedback_id, f.meeting_id, f.user_id, f.feedback_text, 
+                   f.inserted_datetime, f.updated_datetime, u.user_name 
+            FROM dbo.Feedback f 
+            JOIN dbo.Users u ON f.user_id = u.user_id 
+            WHERE f.meeting_id = ?
+        """
+        feedback_list = execute_query(query, (meeting_id,))
+
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps(feedback_list, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=200,
+            headers=headers
+        )
+
+    except Exception as e:
+        logger.error(f"Get feedback by meeting ID error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500,
+            headers=headers
+        )
+
+# 会話セグメント取得エンドポイント
+@app.function_name(name="GetConversationSegments")
+@app.route(route="api/conversation/segments/{meeting_id}", methods=["GET", "OPTIONS"])
+def get_conversation_segments(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        if req.method == "OPTIONS":
             headers = {
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET, OPTIONS",
@@ -207,43 +633,28 @@ def get_conversation_segments(req: func.HttpRequest, segmentsQuery: func.SqlRowL
             
         meeting_id = req.route_params.get('meeting_id')
         
-        # データベースから会話セグメントを取得
-        segments = []
-        for row in segmentsQuery:
-            if int(row['meeting_id']) == int(meeting_id):
+        query = """
+            SELECT s.segment_id, s.user_id, s.speaker_id, s.meeting_id, s.content, 
+                   s.file_name, s.file_path, s.file_size, s.duration_seconds, s.status, 
+                   s.inserted_datetime, s.updated_datetime, s.start_time, s.end_time, 
+                   sp.speaker_name, sp.speaker_role 
+            FROM dbo.ConversationSegments s 
+            LEFT JOIN dbo.Speakers sp ON s.speaker_id = sp.speaker_id 
+            WHERE s.deleted_datetime IS NULL AND s.meeting_id = ?
+        """
+        segments = execute_query(query, (meeting_id,))
+        
                 # 日付時刻の適切な変換
-                inserted_datetime = row['inserted_datetime']
-                updated_datetime = row['updated_datetime']
-                
-                # datetime型の場合のみisoformat()を適用
-                if hasattr(inserted_datetime, 'isoformat'):
-                    inserted_datetime = inserted_datetime.isoformat()
-                elif inserted_datetime is not None and not isinstance(inserted_datetime, str):
-                    inserted_datetime = str(inserted_datetime)
-                
-                if hasattr(updated_datetime, 'isoformat'):
-                    updated_datetime = updated_datetime.isoformat()
-                elif updated_datetime is not None and not isinstance(updated_datetime, str):
-                    updated_datetime = str(updated_datetime)
-                
-                segments.append({
-                    "segment_id": row['segment_id'],
-                    "user_id": row['user_id'],
-                    "speaker_id": row['speaker_id'],
-                    "meeting_id": row['meeting_id'],
-                    "content": row['content'],
-                    "file_name": row['file_name'],
-                    "file_path": row['file_path'],
-                    "file_size": row['file_size'],
-                    "duration_seconds": row['duration_seconds'],
-                    "status": row['status'],
-                    "inserted_datetime": inserted_datetime,
-                    "updated_datetime": updated_datetime,
-                    "start_time": row['start_time'],
-                    "end_time": row['end_time'],
-                    "speaker_name": row['speaker_name'],
-                    "speaker_role": row['speaker_role']
-                })
+        for segment in segments:
+            if hasattr(segment['inserted_datetime'], 'isoformat'):
+                segment['inserted_datetime'] = segment['inserted_datetime'].isoformat()
+            elif segment['inserted_datetime'] is not None and not isinstance(segment['inserted_datetime'], str):
+                segment['inserted_datetime'] = str(segment['inserted_datetime'])
+            
+            if hasattr(segment['updated_datetime'], 'isoformat'):
+                segment['updated_datetime'] = segment['updated_datetime'].isoformat()
+            elif segment['updated_datetime'] is not None and not isinstance(segment['updated_datetime'], str):
+                segment['updated_datetime'] = str(segment['updated_datetime'])
         
         response = {
             "success": True,
@@ -259,28 +670,22 @@ def get_conversation_segments(req: func.HttpRequest, segmentsQuery: func.SqlRowL
             headers=headers
         )
     except Exception as e:
-        logging.error(f"セグメント取得中にエラーが発生しました: {str(e)}")
+        logger.error(f"Get conversation segments error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
         headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
-            json.dumps({"success": False, "message": f"エラー: {str(e)}"}, ensure_ascii=False),
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
             headers=headers
         )
 
-# コメント取得API
+# コメント取得エンドポイント
 @app.function_name(name="GetComments")
 @app.route(route="api/comments/{segment_id}", methods=["GET", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="commentsQuery", 
-    type="sql", 
-    CommandText="SELECT c.comment_id, c.segment_id, c.meeting_id, c.user_id, c.content, c.inserted_datetime, c.updated_datetime, u.user_name FROM dbo.Comments c JOIN dbo.Users u ON c.user_id = u.user_id WHERE c.deleted_datetime IS NULL", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def get_segment_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) -> func.HttpResponse:
+def get_segment_comments(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
-            # CORS プリフライトリクエスト処理
             headers = {
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET, OPTIONS",
@@ -290,39 +695,29 @@ def get_segment_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) 
             
         segment_id = req.route_params.get('segment_id')
         
-        # データベースからコメントを取得
-        comments = []
-        for row in commentsQuery:
-            if int(row['segment_id']) == int(segment_id):
-                # 既読情報（一時的に空配列を返す）
-                readers = []
+        query = """
+            SELECT c.comment_id, c.segment_id, c.meeting_id, c.user_id, c.content, 
+                   c.inserted_datetime, c.updated_datetime, u.user_name 
+            FROM dbo.Comments c 
+            JOIN dbo.Users u ON c.user_id = u.user_id 
+            WHERE c.deleted_datetime IS NULL AND c.segment_id = ?
+        """
+        comments = execute_query(query, (segment_id,))
                 
                 # 日付時刻の適切な変換
-                inserted_datetime = row['inserted_datetime']
-                updated_datetime = row['updated_datetime']
-                
-                # datetime型の場合のみisoformat()を適用
-                if hasattr(inserted_datetime, 'isoformat'):
-                    inserted_datetime = inserted_datetime.isoformat()
-                elif inserted_datetime is not None and not isinstance(inserted_datetime, str):
-                    inserted_datetime = str(inserted_datetime)
-                
-                if hasattr(updated_datetime, 'isoformat'):
-                    updated_datetime = updated_datetime.isoformat()
-                elif updated_datetime is not None and not isinstance(updated_datetime, str):
-                    updated_datetime = str(updated_datetime)
-                
-                comments.append({
-                    "comment_id": row['comment_id'],
-                    "segment_id": row['segment_id'],
-                    "meeting_id": row['meeting_id'],
-                    "user_id": row['user_id'],
-                    "user_name": row['user_name'],
-                    "content": row['content'],
-                    "inserted_datetime": inserted_datetime,
-                    "updated_datetime": updated_datetime,
-                    "readers": readers
-                })
+        for comment in comments:
+            if hasattr(comment['inserted_datetime'], 'isoformat'):
+                comment['inserted_datetime'] = comment['inserted_datetime'].isoformat()
+            elif comment['inserted_datetime'] is not None and not isinstance(comment['inserted_datetime'], str):
+                comment['inserted_datetime'] = str(comment['inserted_datetime'])
+            
+            if hasattr(comment['updated_datetime'], 'isoformat'):
+                comment['updated_datetime'] = comment['updated_datetime'].isoformat()
+            elif comment['updated_datetime'] is not None and not isinstance(comment['updated_datetime'], str):
+                comment['updated_datetime'] = str(comment['updated_datetime'])
+            
+            # 既読情報（一時的に空配列を返す）
+            comment['readers'] = []
         
         response = {
             "success": True,
@@ -338,34 +733,22 @@ def get_segment_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) 
             headers=headers
         )
     except Exception as e:
-        logging.error(f"コメント取得中にエラーが発生しました: {str(e)}")
+        logger.error(f"Get comments error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
         headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
-            json.dumps({"success": False, "message": f"エラー: {str(e)}"}, ensure_ascii=False),
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
             headers=headers
         )
 
-# コメント追加API
+# コメント追加エンドポイント
 @app.function_name(name="AddComment")
 @app.route(route="api/comments", methods=["POST", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="lastCommentId", 
-    type="sql", 
-    CommandText="SELECT TOP 1 comment_id FROM dbo.Comments ORDER BY comment_id DESC", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-@app.generic_output_binding(
-    arg_name="commentOut", 
-    type="sql", 
-    CommandText="dbo.Comments", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def create_comment(req: func.HttpRequest, commentOut: func.Out[func.SqlRow], lastCommentId: func.SqlRowList) -> func.HttpResponse:
+def create_comment(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
-            # CORS プリフライトリクエスト処理
             headers = {
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -391,25 +774,29 @@ def create_comment(req: func.HttpRequest, commentOut: func.Out[func.SqlRow], las
             )
         
         # 新しいコメントIDを生成
+        query = "SELECT TOP 1 comment_id FROM dbo.Comments ORDER BY comment_id DESC"
+        last_comment = execute_query(query)
         new_comment_id = 1
-        for row in lastCommentId:
-            new_comment_id = int(row['comment_id']) + 1
-            break
+        if last_comment:
+            new_comment_id = last_comment[0]['comment_id'] + 1
         
         # 現在の日時をSQL Serverに適した形式で文字列化
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
         
         # コメントをデータベースに挿入
-        comment_row = func.SqlRow()
-        comment_row["comment_id"] = new_comment_id
-        comment_row["segment_id"] = segment_id
-        comment_row["meeting_id"] = meeting_id
-        comment_row["user_id"] = user_id
-        comment_row["content"] = content
-        comment_row["inserted_datetime"] = now
-        comment_row["updated_datetime"] = now
-        
-        commentOut.set(comment_row)
+        insert_query = """
+            INSERT INTO dbo.Comments (comment_id, segment_id, meeting_id, user_id, content, inserted_datetime, updated_datetime)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """
+        execute_query(insert_query, {
+            'comment_id': new_comment_id,
+            'segment_id': segment_id,
+            'meeting_id': meeting_id,
+            'user_id': user_id,
+            'content': content,
+            'inserted_datetime': now,
+            'updated_datetime': now
+        })
         
         response = {
             "success": True,
@@ -424,23 +811,24 @@ def create_comment(req: func.HttpRequest, commentOut: func.Out[func.SqlRow], las
             status_code=201,
             headers=headers
         )
+
     except Exception as e:
-        logging.error(f"コメント追加中にエラーが発生しました: {str(e)}")
+        logger.error(f"Add comment error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
         headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
-            json.dumps({"success": False, "message": f"エラー: {str(e)}"}, ensure_ascii=False),
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
             headers=headers
         )
 
-# コメント既読状態更新API - 一時的に空レスポンスを返すように修正
+# コメント既読状態更新エンドポイント
 @app.function_name(name="MarkCommentAsRead")
 @app.route(route="api/comments/read", methods=["POST", "OPTIONS"])
 def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
-            # CORS プリフライトリクエスト処理
             headers = {
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -461,29 +849,24 @@ def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
             status_code=200,
             headers=headers
         )
+
     except Exception as e:
-        logging.error(f"コメント既読更新中にエラーが発生しました: {str(e)}")
+        logger.error(f"Mark comment as read error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
         headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
-            json.dumps({"success": False, "message": f"エラー: {str(e)}"}, ensure_ascii=False),
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
             headers=headers
         )
 
-# 最新コメント取得API
+# 最新コメント取得エンドポイント
 @app.function_name(name="GetLatestComments")
 @app.route(route="api/comments-latest", methods=["GET", "OPTIONS"])
-@app.generic_input_binding(
-    arg_name="commentsQuery", 
-    type="sql", 
-    CommandText="SELECT TOP 20 c.comment_id, c.segment_id, c.meeting_id, c.user_id, c.content, c.inserted_datetime, c.updated_datetime, u.user_name, m.client_company_name, m.client_contact_name FROM dbo.Comments c JOIN dbo.Users u ON c.user_id = u.user_id JOIN dbo.Meetings m ON c.meeting_id = m.meeting_id WHERE c.deleted_datetime IS NULL ORDER BY c.inserted_datetime DESC", 
-    ConnectionStringSetting="SqlConnectionString"
-)
-def get_latest_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) -> func.HttpResponse:
+def get_latest_comments(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
-            # CORS プリフライトリクエスト処理
             headers = {
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET, OPTIONS",
@@ -499,7 +882,7 @@ def get_latest_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) -
             # userId パラメータのチェック
             if 'userId' in req.params:
                 user_id_str = req.params.get('userId')
-                logging.info(f"受信したuserIdパラメータ: {user_id_str}")
+                logger.info(f"受信したuserIdパラメータ: {user_id_str}")
                 # 数値であることを確認
                 if user_id_str and user_id_str.isdigit():
                     user_id = int(user_id_str)
@@ -510,53 +893,39 @@ def get_latest_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) -
                 if limit_str and limit_str.isdigit():
                     limit = int(limit_str)
             
-            logging.info(f"処理するパラメータ: userId={user_id}, limit={limit}")
+            logger.info(f"処理するパラメータ: userId={user_id}, limit={limit}")
         
         except Exception as e:
-            logging.warning(f"パラメータ処理中にエラーが発生しました: {e}")
-            logging.warning(f"受信したパラメータ: userId={req.params.get('userId')}, limit={req.params.get('limit')}")
-            logging.warning("デフォルト値を使用します: userId=1, limit=5")
+            logger.warning(f"パラメータ処理中にエラーが発生しました: {e}")
+            logger.warning(f"受信したパラメータ: userId={req.params.get('userId')}, limit={req.params.get('limit')}")
+            logger.warning("デフォルト値を使用します: userId=1, limit=5")
         
-        # データベースから最新コメントを取得
-        comments = []
-        count = 0
-        
-        for row in commentsQuery:
-            if count >= limit:
-                break
-                
-            # 既読情報（一時的にすべて既読とする）
-            is_read = True
+        query = """
+            SELECT TOP ? c.comment_id, c.segment_id, c.meeting_id, c.user_id, c.content, 
+                   c.inserted_datetime, c.updated_datetime, u.user_name, 
+                   m.client_company_name, m.client_contact_name 
+            FROM dbo.Comments c 
+            JOIN dbo.Users u ON c.user_id = u.user_id 
+            JOIN dbo.Meetings m ON c.meeting_id = m.meeting_id 
+            WHERE c.deleted_datetime IS NULL 
+            ORDER BY c.inserted_datetime DESC
+        """
+        comments = execute_query(query, (limit,))
             
             # 日付時刻の適切な変換
-            inserted_datetime = row['inserted_datetime']
-            updated_datetime = row['updated_datetime']
+        for comment in comments:
+            if hasattr(comment['inserted_datetime'], 'isoformat'):
+                comment['inserted_datetime'] = comment['inserted_datetime'].isoformat()
+            elif comment['inserted_datetime'] is not None and not isinstance(comment['inserted_datetime'], str):
+                comment['inserted_datetime'] = str(comment['inserted_datetime'])
             
-            # datetime型の場合のみisoformat()を適用
-            if hasattr(inserted_datetime, 'isoformat'):
-                inserted_datetime = inserted_datetime.isoformat()
-            elif inserted_datetime is not None and not isinstance(inserted_datetime, str):
-                inserted_datetime = str(inserted_datetime)
+            if hasattr(comment['updated_datetime'], 'isoformat'):
+                comment['updated_datetime'] = comment['updated_datetime'].isoformat()
+            elif comment['updated_datetime'] is not None and not isinstance(comment['updated_datetime'], str):
+                comment['updated_datetime'] = str(comment['updated_datetime'])
             
-            if hasattr(updated_datetime, 'isoformat'):
-                updated_datetime = updated_datetime.isoformat()
-            elif updated_datetime is not None and not isinstance(updated_datetime, str):
-                updated_datetime = str(updated_datetime)
-            
-            comments.append({
-                "comment_id": row['comment_id'],
-                "segment_id": row['segment_id'],
-                "meeting_id": row['meeting_id'],
-                "user_id": row['user_id'],
-                "user_name": row['user_name'],
-                "content": row['content'],
-                "inserted_datetime": inserted_datetime,
-                "updated_datetime": updated_datetime,
-                "client_company_name": row['client_company_name'],
-                "client_contact_name": row['client_contact_name'],
-                "isRead": is_read
-            })
-            count += 1
+            # 既読情報（一時的にすべて既読とする）
+            comment['isRead'] = True
         
         response = {
             "success": True,
@@ -572,10 +941,11 @@ def get_latest_comments(req: func.HttpRequest, commentsQuery: func.SqlRowList) -
             headers=headers
         )
     except Exception as e:
-        logging.error(f"最新コメント取得中にエラーが発生しました: {str(e)}")
+        logger.error(f"Get latest comments error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
         headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
-            json.dumps({"success": False, "message": f"エラー: {str(e)}"}, ensure_ascii=False),
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
             headers=headers

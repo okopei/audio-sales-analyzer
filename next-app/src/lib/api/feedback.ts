@@ -2,10 +2,12 @@
  * フィードバック関連のAPI通信を行うモジュール
  */
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:7071/api'
+
 // 会話セグメント取得API
 export const getConversationSegments = async (meetingId: string | number) => {
   try {
-    const response = await fetch(`http://localhost:7071/api/api/conversation/segments/${meetingId}`)
+    const response = await fetch(`${API_BASE_URL}/conversation/segments/${meetingId}`)
     
     // レスポンスがエラーの場合は空配列を返す
     if (!response.ok) {
@@ -37,7 +39,7 @@ export const getConversationSegments = async (meetingId: string | number) => {
 // コメント取得API
 export const getComments = async (segmentId: string | number) => {
   try {
-    const response = await fetch(`http://localhost:7071/api/api/comments/${segmentId}`)
+    const response = await fetch(`${API_BASE_URL}/comments/${segmentId}`)
     const data = await response.json()
     if (!data.success) {
       throw new Error(data.message || 'コメント取得に失敗しました')
@@ -54,9 +56,10 @@ export const getLatestComments = async (userId?: number, limit: number = 5) => {
   try {
     // userIdがundefinedの場合は不要なパラメータを送信しない
     const url = userId !== undefined 
-      ? `http://localhost:7071/api/api/comments-latest?userId=${userId}&limit=${limit}`
-      : `http://localhost:7071/api/api/comments-latest?limit=${limit}`;
+      ? `${API_BASE_URL}/comments-latest?userId=${userId}&limit=${limit}`
+      : `${API_BASE_URL}/comments-latest?limit=${limit}`;
       
+    console.log('APIリクエストURL:', url) // デバッグ用ログ
     const response = await fetch(url)
     const data = await response.json()
     if (!data.success) {
@@ -77,7 +80,7 @@ export const addComment = async (
   userId?: number // デフォルト値ではなくオプショナルパラメータとする
 ) => {
   try {
-    const response = await fetch('http://localhost:7071/api/api/comments', {
+    const response = await fetch(`${API_BASE_URL}/comments`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -105,7 +108,7 @@ export const addComment = async (
 /*
 export const markAsRead = async (commentId: number, userId: number = 1) => {
   try {
-    const response = await fetch('http://localhost:7071/api/api/comments/read', {
+    const response = await fetch(`${API_BASE_URL}/comments/read`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
