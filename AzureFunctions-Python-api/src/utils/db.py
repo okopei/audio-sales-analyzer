@@ -1,104 +1,95 @@
-import os
-import pyodbc
 import logging
+import pyodbc
+from typing import List, Dict, Any, Optional
 from datetime import datetime, UTC
+from azure.identity import DefaultAzureCredential, ClientSecretCredential
+import os
+import struct
+
+logger = logging.getLogger(__name__)
 
 def get_db_connection():
-    """
-    データベース接続文字列を環境変数から取得し、接続を返す
-    """
+    """データベース接続を確立する"""
     try:
-        connection_string = os.environ.get('SqlConnectionString')
-        if not connection_string:
-            raise ValueError("SqlConnectionString environment variable is not set")
+        # 利用可能なODBCドライバ一覧をログ出力
+        logger.info(f"利用可能なODBCドライバ: {pyodbc.drivers()}")
         
-        # 接続文字列からドライバー情報を確認
-        if "Driver=" not in connection_string and "driver=" not in connection_string:
-            # ドライバーが指定されていない場合、適切なドライバーを追加
-            if "windows" in os.name.lower():
-                # Windows環境用のドライバー
-                connection_string += ";Driver={ODBC Driver 17 for SQL Server}"
+        # ローカル開発環境の場合
+        if not os.environ.get('WEBSITE_SITE_NAME'):  # ローカル環境ではこの環境変数が存在しない
+            # 環境変数から認証情報を取得
+            tenant_id = os.environ.get('TENANT_ID')
+            client_id = os.environ.get('CLIENT_ID')
+            client_secret = os.environ.get('CLIENT_SECRET')
+            
+            if all([tenant_id, client_id, client_secret]):
+                credential = ClientSecretCredential(
+                    tenant_id=tenant_id,
+                    client_id=client_id,
+                    client_secret=client_secret
+                )
             else:
-                # Linux/Mac環境用のドライバー
-                connection_string += ";Driver={ODBC Driver 18 for SQL Server}"
+                credential = DefaultAzureCredential()
+        else:
+            # 本番環境の場合
+            credential = DefaultAzureCredential()
+
+        token = credential.get_token("https://database.windows.net/.default")
+        # アクセストークンの有効期限をログ出力
+        logger.info(f"アクセストークンの有効期限 (UTC): {token.expires_on}")
         
-        # 接続前にログに出力（パスワードを除く）
-        safe_conn_string = mask_password(connection_string)
-        logging.info(f"Attempting to connect with: {safe_conn_string}")
+        access_token = token.token.encode("utf-16le")
         
-        # 接続を試行
-        conn = pyodbc.connect(connection_string)
-        logging.info("Database connection established successfully")
+        # 接続文字列をf-stringで明示的に構築
+        conn_str = (
+            f"Driver={{ODBC Driver 17 for SQL Server}};"
+            f"Server=tcp:w-paas-salesanalyzer-sqlserver.database.windows.net,1433;"
+            f"Database=w-paas-salesanalyzer-sql;"
+            f"Encrypt=yes;"
+            f"TrustServerCertificate=no;"
+            f"Connection Timeout=30;"
+            f"Authentication=ActiveDirectoryAccessToken;"
+        )
+        
+        logger.info("データベース接続を試行します...")
+        logger.info(f"接続文字列: {conn_str}")  # デバッグ用に接続文字列を出力
+        conn = pyodbc.connect(conn_str, attrs_before={1256: access_token})
+        logger.info("データベース接続が確立されました")
         return conn
-    except pyodbc.Error as e:
-        # pyODBCエラーの詳細を記録
-        error_details = str(e).split('\n')
-        state = error_details[0] if len(error_details) > 0 else "Unknown state"
-        message = error_details[1] if len(error_details) > 1 else str(e)
-        
-        logging.error(f"Database connection error: {state} - {message}")
-        logging.error(f"Connection string (masked): {safe_conn_string}")
-        
-        # 利用可能なドライバーを表示
-        try:
-            available_drivers = pyodbc.drivers()
-            logging.info(f"Available ODBC drivers: {available_drivers}")
-        except:
-            logging.error("Failed to retrieve available ODBC drivers")
-        
-        # エラーを再スロー
-        raise
     except Exception as e:
-        logging.error(f"Unexpected error establishing database connection: {str(e)}")
+        logger.error(f"Database connection error: {str(e)}")
+        logger.error(f"Connection string: {conn_str}")
         raise
 
-def mask_password(connection_string):
-    """
-    接続文字列内のパスワードをマスクする
-    """
-    import re
-    # Password=xxx または pwd=xxx パターンをマスク
-    masked = re.sub(r'(Password|pwd)=([^;]*)', r'\1=***', connection_string, flags=re.IGNORECASE)
-    return masked
-
-def execute_query(query, params=None):
-    """
-    SQLクエリを実行し、結果を返す汎用関数
-    """
-    conn = None
+def execute_query(query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """SQLクエリを実行し、結果を返す"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        
         if params:
             cursor.execute(query, params)
         else:
             cursor.execute(query)
-        
-        # SELECT文の場合は結果を返す
-        if query.strip().upper().startswith('SELECT'):
+            
+        if cursor.description:
             columns = [column[0] for column in cursor.description]
             results = []
             for row in cursor.fetchall():
                 results.append(dict(zip(columns, row)))
             return results
-        
-        # INSERT/UPDATE/DELETEの場合はコミットして影響を受けた行数を返す
-        conn.commit()
-        return cursor.rowcount
+        else:
+            conn.commit()
+            return []
+            
     except Exception as e:
-        logging.error(f"Database query error: {str(e)}")
-        logging.error(f"Query: {query}")
-        if params:
-            logging.error(f"Parameters: {params}")
-        if conn:
-            conn.rollback()
+        logger.error(f"Query execution error: {str(e)}")
         raise
     finally:
-        if conn:
+        if 'cursor' in locals():
+            cursor.close()
+        if 'conn' in locals():
             conn.close()
 
 def get_current_time():
-    """
-    現在時刻をUTCで取得し、SQLサーバー互換の形式で返す
-    """
-    return datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S') 
+    """現在のUTC時刻を取得"""
+    return datetime.now(UTC) 

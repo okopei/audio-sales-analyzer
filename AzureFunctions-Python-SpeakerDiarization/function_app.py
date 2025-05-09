@@ -5,7 +5,7 @@ import tempfile
 import uuid
 import time
 import re
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 from azure.cognitiveservices.speech import (
     SpeechConfig,
     AudioConfig,
@@ -14,13 +14,17 @@ from azure.cognitiveservices.speech import (
     PropertyId
 )
 from azure.data.tables import TableClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import DefaultAzureCredential, ClientSecretCredential
 import traceback
-from azure.storage.blob import BlobServiceClient, BlobClient
+from azure.storage.blob import BlobServiceClient, BlobClient, BlobSasPermissions, generate_blob_sas
 import subprocess
 import shutil
 import wave
 import requests
+import pyodbc
+from typing import Optional, Dict, List, Any
+import sys
+import struct
 
 # デバッグログの設定
 logging.basicConfig(
@@ -176,10 +180,9 @@ def convert_webm_to_wav(webm_path: str) -> str:
 @app.function_name(name="TriggerTranscriptionJob")
 @app.event_grid_trigger(arg_name="event")
 def trigger_transcription_job(event: func.EventGridEvent):
-    """
-    Blob アップロード完了時に発火し、Speech-to-Text 非同期ジョブを REST API で作成する
-    """
+    """Blobアップロード完了時に発火し、Speech-to-Text非同期ジョブを作成する関数"""
     try:
+        logger.info("=== Transcription Job Trigger Start ===")
         blob_url = event.get_json().get("url")
         logger.info(f"Received blob URL: {blob_url}")
 
@@ -210,20 +213,74 @@ def trigger_transcription_job(event: func.EventGridEvent):
         with open(temp_wav_path, "rb") as wav_file:
             wav_blob_client.upload_blob(wav_file, overwrite=True)
         
-        # WAVファイルのURLを取得
-        wav_blob_url = wav_blob_client.url
+        # SASトークンの生成
+        connection_string = os.environ["AzureWebJobsStorage"]
+        
+        # より安全な方法でaccount_keyを抽出
+        account_key = None
+        for part in connection_string.split(';'):
+            if part.startswith('AccountKey='):
+                account_key = part.replace('AccountKey=', '')
+                break
+        
+        if not account_key:
+            raise ValueError("AccountKey not found in connection string")
+            
+        # Base64の検証
+        try:
+            import base64
+            base64.b64decode(account_key)
+            logger.info("✅ Base64として正しい形式です")
+            logger.info(f"account_key: {account_key}")  # デバッグ用に出力
+        except Exception as e:
+            logger.error(f"❌ Base64エラー: {e}")
+            logger.error(f"account_key: {account_key}")
+            raise
+        
+        # account_nameの抽出も同様に安全に
+        account_name = None
+        for part in connection_string.split(';'):
+            if part.startswith('AccountName='):
+                account_name = part.replace('AccountName=', '')
+                break
+                
+        if not account_name:
+            raise ValueError("AccountName not found in connection string")
+            
+        logger.info(f"Generating SAS token for account: {account_name}")
+        
+        sas_token = generate_blob_sas(
+            account_name=account_name,
+            container_name=container_name,
+            blob_name=wav_blob_name,
+            account_key=account_key,
+            permission=BlobSasPermissions(read=True),
+            expiry=datetime.utcnow() + timedelta(hours=1)
+        )
+        
+        # SASトークン付きのURLを生成
+        wav_blob_url = f"https://{account_name}.blob.core.windows.net/{container_name}/{wav_blob_name}?{sas_token}"
+        logger.info(f"WAV file uploaded successfully with SAS token: {wav_blob_url}")
         
         # 一時ファイルの削除
         os.remove(temp_webm_path)
         os.remove(temp_wav_path)
+        logger.info("Temporary files cleaned up")
 
+        # Speech-to-Text APIの設定
         speech_key = os.environ["SPEECH_KEY"]
         region = os.environ["SPEECH_REGION"]
         endpoint = f"https://{region}.api.cognitive.microsoft.com/speechtotext/v3.0/transcriptions"
+        callback_url = os.environ.get("TRANSCRIPTION_CALLBACK_URL")
+        
+        if not callback_url:
+            error_message = "TRANSCRIPTION_CALLBACK_URL is not set in environment variables"
+            logger.error(error_message)
+            return func.HttpResponse(error_message, status_code=500)
+            
+        logger.info(f"Using callback URL: {callback_url}")
 
-        # Webhook 用の Function URL
-        callback_url = os.environ["TRANSCRIPTION_CALLBACK_URL"]
-
+        # リクエストペイロードの作成
         payload = {
             "contentUrls": [wav_blob_url],
             "locale": "ja-JP",
@@ -242,14 +299,38 @@ def trigger_transcription_job(event: func.EventGridEvent):
             "Content-Type": "application/json"
         }
 
+        logger.info("Sending request to Speech-to-Text API")
+        logger.info(f"Request payload: {payload}")
         response = requests.post(endpoint, headers=headers, json=payload)
         response.raise_for_status()
-        logger.info("Transcription job successfully created")
-        return func.HttpResponse("Transcription job created", status_code=200)
+        
+        # レスポンスの解析
+        response_data = response.json()
+        job_id = response_data.get("self", "").split("/")[-1]
+        logger.info(f"Transcription job created successfully. Job ID: {job_id}")
+        logger.info(f"Job details: {response_data}")
+        
+        return func.HttpResponse(
+            f"Transcription job created successfully. Job ID: {job_id}",
+            status_code=200
+        )
 
+    except requests.exceptions.RequestException as e:
+        error_message = f"Failed to create transcription job: {str(e)}"
+        logger.error(error_message)
+        if hasattr(e.response, 'text'):
+            logger.error(f"Response text: {e.response.text}")
+        return func.HttpResponse(error_message, status_code=500)
+        
     except Exception as e:
-        logger.error(f"Error in trigger_transcription_job: {str(e)}")
-        return func.HttpResponse(f"Error: {str(e)}", status_code=500)
+        error_message = f"Error in trigger_transcription_job: {str(e)}"
+        logger.error(error_message)
+        logger.error(f"Error type: {type(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        return func.HttpResponse(error_message, status_code=500)
+        
+    finally:
+        logger.info("=== Transcription Job Trigger End ===")
 
 @app.function_name(name="TranscriptionCallback")
 @app.route(route="transcription-callback", methods=["POST"])
@@ -259,19 +340,16 @@ def trigger_transcription_job(event: func.EventGridEvent):
     CommandText="dbo.Meetings",
     ConnectionStringSetting="SqlConnectionString"
 )
-@app.generic_input_binding(
-    arg_name="basicInfoQuery",
-    type="sql",
-    CommandText="SELECT client_company_name, client_contact_name FROM dbo.BasicInfo WHERE meeting_id = @meeting_id",
-    ConnectionStringSetting="SqlConnectionString"
-)
-def transcription_callback(req: func.HttpRequest, meetingsTable: func.Out[func.SqlRow], basicInfoQuery: func.SqlRowList) -> func.HttpResponse:
+def transcription_callback(req: func.HttpRequest, meetingsTable: func.Out[func.SqlRow]) -> func.HttpResponse:
     """
     Speech Service から transcription 完了通知を受け取る
     結果 JSON のダウンロード → 話者分離結果を整形 → Meetings テーブルに保存
     """
     try:
+        logger.info("=== Transcription Callback Start ===")
         data = req.get_json()
+        logger.info(f"Received webhook data: {data}")
+        
         transcription_url = data.get("self")
         logger.info(f"Webhook called. Transcription job URL: {transcription_url}")
 
@@ -298,13 +376,8 @@ def transcription_callback(req: func.HttpRequest, meetingsTable: func.Out[func.S
         user_id = int(match.group(2))
         logger.info(f"Extracted meeting_id: {meeting_id}, user_id: {user_id}")
 
-        # BasicInfoからクライアント情報を取得
-        client_info = None
-        for row in basicInfoQuery:
-            if row["meeting_id"] == meeting_id:
-                client_info = row
-                break
-
+        # BasicInfoからクライアント情報を取得（pyodbc方式）
+        client_info = get_client_info(meeting_id)
         if not client_info:
             logger.warning(f"No client info found for meeting_id: {meeting_id}")
             client_company_name = "不明企業"
@@ -319,16 +392,20 @@ def transcription_callback(req: func.HttpRequest, meetingsTable: func.Out[func.S
         }
 
         # transcription status を取得
+        logger.info(f"Fetching transcription status from: {transcription_url}")
         status_resp = requests.get(transcription_url, headers=headers)
         status_resp.raise_for_status()
         status_json = status_resp.json()
+        logger.info(f"Transcription status: {status_json['status']}")
 
         if status_json["status"] != "Succeeded":
             logger.warning(f"Transcription job not succeeded: {status_json['status']}")
             return func.HttpResponse(status_code=202)
 
         results_url = status_json["resultsUrls"]["channel_0"]
+        logger.info(f"Fetching results from: {results_url}")
         result_json = requests.get(results_url, headers=headers).json()
+        logger.info("Successfully retrieved transcription results")
 
         transcript = []
         for phrase in result_json["recognizedPhrases"]:
@@ -337,6 +414,7 @@ def transcription_callback(req: func.HttpRequest, meetingsTable: func.Out[func.S
             transcript.append(f"(Speaker{speaker})[{text}]")
 
         transcript_text = " ".join(transcript)
+        logger.info(f"Generated transcript text: {transcript_text[:100]}...")  # 最初の100文字だけログ出力
 
         # ファイル名から日時を抽出
         datetime_match = re.search(r"(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3})", file_name)
@@ -368,13 +446,52 @@ def transcription_callback(req: func.HttpRequest, meetingsTable: func.Out[func.S
             "updated_datetime": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
         }
 
+        logger.info("Attempting to save meeting data to database")
         meetingsTable.set(func.SqlRow(meeting_data))
-        logger.info("Webhook transcription result saved to DB")
+        logger.info("Successfully saved meeting data to database")
+        
+        logger.info("=== Transcription Callback End ===")
         return func.HttpResponse("Success", status_code=200)
 
     except Exception as e:
         logger.error(f"Error in webhook callback: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
         return func.HttpResponse("Error", status_code=500)
+
+def get_client_info(meeting_id: int) -> Optional[Dict[str, str]]:
+    """
+    クライアント情報を取得する関数
+    
+    Args:
+        meeting_id (int): 会議ID
+        
+    Returns:
+        Optional[Dict[str, str]]: クライアント情報（企業名と担当者名）を含む辞書、またはNone
+    """
+    try:
+        conn_str = os.environ["SqlConnectionString"]
+        query = """
+            SELECT client_company_name, client_contact_name
+            FROM dbo.BasicInfo
+            WHERE meeting_id = ?
+        """
+
+        with pyodbc.connect(conn_str) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (meeting_id,))
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        "client_company_name": row.client_company_name,
+                        "client_contact_name": row.client_contact_name
+                    }
+                return None
+    except Exception as e:
+        logger.error(f"Failed to fetch client info: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        return None
 
 @app.function_name(name="TestProcessAudio")
 @app.route(route="test-process-audio", methods=["POST"])
@@ -392,7 +509,7 @@ def transcription_callback(req: func.HttpRequest, meetingsTable: func.Out[func.S
 )
 def test_process_audio(req: func.HttpRequest, meetingsTable: func.Out[func.SqlRow], basicInfoQuery: func.SqlRowList) -> func.HttpResponse:
     """
-    HTTPトリガーを使用してEventGridイベントをシミュレートする関数
+    HTTPトリガーを使用してEventGridイベントをシミュレートする関数!!!
     """
     try:
         # リクエストボディからURLを取得
@@ -412,7 +529,7 @@ def test_process_audio(req: func.HttpRequest, meetingsTable: func.Out[func.SqlRo
             }
         )
         
-        # trigger_transcription_jobを呼び出し
+        # trigger_transcription_jobを呼び出し!
         return trigger_transcription_job(event)
         
     except Exception as e:
@@ -456,3 +573,66 @@ def format_transcript_with_speakers(transcription_results):
         text = result['text']
         formatted_text.append(f"({speaker})[{text}]")
     return " ".join(formatted_text)
+
+def get_db_connection():
+    try:
+        credential = DefaultAzureCredential()
+        token = credential.get_token("https://database.windows.net/.default")
+        
+        conn_str = os.environ["SqlConnectionString"]
+        conn = pyodbc.connect(conn_str, attrs_before={
+            1256: token.token
+        })
+        return conn
+    except Exception as e:
+        logger.error(f"Database connection error: {str(e)}")
+        raise
+
+def execute_query(query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """
+    SQLクエリを実行し、結果を返します。
+    
+    Args:
+        query (str): 実行するSQLクエリ
+        params (Optional[Dict[str, Any]]): クエリパラメータ
+        
+    Returns:
+        List[Dict[str, Any]]: クエリ結果のリスト
+    """
+    try:
+        with get_db_connection() as conn:
+            logger.info(f"クエリを実行: {query}")
+            if params:
+                logger.info(f"パラメータ: {params}")
+            
+            cursor = conn.cursor()
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            
+            if query.strip().upper().startswith("SELECT"):
+                columns = [column[0] for column in cursor.description]
+                rows = cursor.fetchall()
+                results = [dict(zip(columns, row)) for row in rows]
+
+                # datetime → 文字列化
+                for row in results:
+                    for key, value in row.items():
+                        if hasattr(value, 'isoformat'):
+                            row[key] = value.isoformat()
+
+                return results
+            else:
+                conn.commit()
+                return []
+                
+    except Exception as e:
+        logger.error(f"クエリ実行エラー: {str(e)}")
+        raise
+
+def get_current_time():
+    """
+    現在時刻をUTCで取得し、SQLサーバー互換の形式で返す
+    """
+    return datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')

@@ -8,14 +8,14 @@ import azure.functions as func
 from datetime import datetime, UTC, timedelta
 
 from ..utils.http import get_cors_headers, handle_options_request, create_json_response, create_error_response, parse_json_request, log_request
-from ..utils.db import get_db_connection, execute_query, get_current_time
 from ..models.user import User
+from ..utils.db import execute_query, get_current_time
 
 # JWT設定
 JWT_SECRET = os.environ.get("JWT_SECRET", "your-local-test-secret-key")  # 本番環境では環境変数から取得
 JWT_EXPIRATION = 24 * 60 * 60  # 24時間（秒）
 
-def login(req: func.HttpRequest, users_query: func.SqlRowList) -> func.HttpResponse:
+def login(req: func.HttpRequest) -> func.HttpResponse:
     """
     ユーザーログイン処理
     """
@@ -37,59 +37,64 @@ def login(req: func.HttpRequest, users_query: func.SqlRowList) -> func.HttpRespo
         logging.warning("Missing email or password")
         return create_error_response("Email and password are required", 400)
     
-    # ユーザー検索
-    user = None
-    for row in users_query:
-        if row["email"] == email:
-            user = row
-            break
-    
-    if not user:
-        logging.warning(f"User not found for email: {email}")
-        return create_error_response("Invalid email or password", 401)
-    
-    # パスワード検証
     try:
-        # bcryptを使用してパスワードを検証
-        stored_hash = user["password_hash"].encode('utf-8')
-        password_bytes = password.encode('utf-8')
+        # ユーザー検索
+        query = "SELECT * FROM dbo.Users WHERE email = ?"
+        users = execute_query(query, [email])
         
-        password_valid = bcrypt.checkpw(password_bytes, stored_hash)
-        
-        if not password_valid:
-            logging.warning(f"Invalid password for user: {email}")
+        if not users:
+            logging.warning(f"User not found for email: {email}")
             return create_error_response("Invalid email or password", 401)
-    except Exception as e:
-        logging.error(f"Password verification error: {str(e)}")
-        return create_error_response("Authentication error", 500)
-    
-    # JWTトークン生成
-    payload = {
-        "user_id": user["user_id"],
-        "email": user["email"],
-        "user_name": user["user_name"],
-        "role": "manager" if user["is_manager"] else "member",
-        "exp": datetime.now(UTC) + timedelta(seconds=JWT_EXPIRATION)
-    }
-    
-    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
-    
-    # レスポンス
-    response_data = {
-        "token": token,
-        "user": {
+        
+        user = users[0]
+        
+        # パスワード検証
+        try:
+            # bcryptを使用してパスワードを検証
+            stored_hash = user["password_hash"].encode('utf-8')
+            password_bytes = password.encode('utf-8')
+            
+            password_valid = bcrypt.checkpw(password_bytes, stored_hash)
+            
+            if not password_valid:
+                logging.warning(f"Invalid password for user: {email}")
+                return create_error_response("Invalid email or password", 401)
+        except Exception as e:
+            logging.error(f"Password verification error: {str(e)}")
+            return create_error_response("Authentication error", 500)
+        
+        # JWTトークン生成
+        payload = {
             "user_id": user["user_id"],
             "email": user["email"],
             "user_name": user["user_name"],
-            "role": "manager" if user["is_manager"] else "member"
+            "role": "manager" if user["is_manager"] else "member",
+            "exp": datetime.now(UTC) + timedelta(seconds=JWT_EXPIRATION)
         }
-    }
-    
-    logging.info(f"User {email} logged in successfully")
-    
-    return create_json_response(response_data, 200)
+        
+        token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+        
+        # レスポンス
+        response_data = {
+            "token": token,
+            "user": {
+                "user_id": user["user_id"],
+                "email": user["email"],
+                "user_name": user["user_name"],
+                "role": "manager" if user["is_manager"] else "member"
+            }
+        }
+        
+        logging.info(f"User {email} logged in successfully")
+        
+        return create_json_response(response_data, 200)
+        
+    except Exception as e:
+        logging.error(f"Login error: {str(e)}")
+        logging.error(f"Error details: {traceback.format_exc()}")
+        return create_error_response(f"Internal server error: {str(e)}", 500)
 
-def register(req: func.HttpRequest, users: func.Out[func.SqlRow]) -> func.HttpResponse:
+def register(req: func.HttpRequest) -> func.HttpResponse:
     """
     ユーザー登録処理
     """
@@ -155,14 +160,42 @@ def register(req: func.HttpRequest, users: func.Out[func.SqlRow]) -> func.HttpRe
             # メンバー用パラメータを設定
             user.manager_name = manager_name
         
-        # SQLクエリにパラメータを渡す
-        users.set(func.SqlRow(user.to_sql_row()))
+        # 新しいユーザーIDを生成
+        query = "SELECT TOP 1 user_id FROM dbo.Users ORDER BY user_id DESC"
+        last_user = execute_query(query)
+        new_user_id = 1
+        if last_user:
+            new_user_id = int(last_user[0]['user_id']) + 1
+        
+        # ユーザーをデータベースに挿入
+        insert_query = """
+            INSERT INTO dbo.Users (
+                user_id, user_name, email, password_hash, salt, role, 
+                manager_name, is_active, account_status, 
+                inserted_datetime, updated_datetime, login_attempt_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        execute_query(insert_query, {
+            'user_id': new_user_id,
+            'user_name': user.user_name,
+            'email': user.email,
+            'password_hash': user.password_hash,
+            'salt': user.salt,
+            'role': user.role,
+            'manager_name': user.manager_name,
+            'is_active': user.is_active,
+            'account_status': user.account_status,
+            'inserted_datetime': user.inserted_datetime,
+            'updated_datetime': user.updated_datetime,
+            'login_attempt_count': user.login_attempt_count
+        })
         
         logging.info(f"User {req_body['email']} registered successfully")
         
         return create_json_response({
             "message": "ユーザー登録が完了しました",
             "user": {
+                "user_id": new_user_id,
                 "user_name": user.user_name,
                 "email": user.email,
                 "role": user.role
@@ -187,7 +220,7 @@ def check_manager(manager_name: str) -> bool:
         logging.error(f"Error checking manager: {str(e)}")
         return False
 
-def get_user_by_id(req: func.HttpRequest, users_query: func.SqlRowList) -> func.HttpResponse:
+def get_user_by_id(req: func.HttpRequest) -> func.HttpResponse:
     """
     ユーザーIDに基づいて単一ユーザー情報を取得する
     """
@@ -206,15 +239,13 @@ def get_user_by_id(req: func.HttpRequest, users_query: func.SqlRowList) -> func.
         logging.info(f"Looking for user with ID: {user_id}")
         
         # ユーザーIDに基づいてユーザーを検索
-        user_data = None
-        for row in users_query:
-            row_user_id = str(row.get("user_id"))
-            if row_user_id == str(user_id):
-                user_data = dict(row)
-                break
+        query = "SELECT * FROM dbo.Users WHERE user_id = ?"
+        users = execute_query(query, [user_id])
         
-        if not user_data:
+        if not users:
             return create_error_response("User not found", 404)
+        
+        user_data = users[0]
         
         # User モデルを使用してデータを整形
         user = User(

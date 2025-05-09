@@ -16,7 +16,7 @@
 - 補助動詞を用いた説明的な変数名を使用する（例：isLoading、hasError）
 - ファイル構造：エクスポートされたコンポーネント、サブコンポーネント、ヘルパー、静的コンテンツ、型
 
-### コマンド提案 コマンドを提案する場合は、以下のように提案すること
+### コマンド提案
 - 「&&」を使用しないこと
 - npmコマンドではなくpnpmコマンドを提案すること
 
@@ -32,7 +32,6 @@
 - 純粋な関数には「function」キーワードを使用し、Server Componentsにはアロー関数を使用する
 - セミコロンは省略する
 - Optional ChainingとNullish Coalescingを活用する
-
 
 ### コンポーネント設計
 - Props型は必ず定義する
@@ -61,7 +60,10 @@
 - パフォーマンスとコストを考慮したクエリ最適化
 - トランザクション管理とデータ整合性の確保
 - 適切なバックアップと復旧戦略の実装
-- ローカル環境でのSQL接続には、pyodbcではなく他の方法（例：SQLAlchemy、asyncpg）を使用すること
+- **Azure Functions から SQL Database に接続する際は、 `SqlConnectionString` を使用せず、Microsoft Entra ID による `Active Directory Default` 認証を使用する**
+- **接続には `Microsoft.Data.SqlClient` を使用し、接続文字列に明示的なユーザー名やパスワードは含めない**
+- **MSI（Managed Identity）ベースでのアクセス制御と権限付与を徹底し、アプリ側にはシークレットを一切持たせない**
+- 例：Server=tcp:<your-server>.database.windows.net,1433; Initial Catalog=<your-db>; Encrypt=True; TrustServerCertificate=False; Connection Timeout=30; Authentication="Active Directory Default";
 
 ### Azure関連
 - Azure Speech Servicesの利用
@@ -81,7 +83,7 @@
 
 - Azure Functions
   - 適切なトリガーの選択
-  - バインディングの効率的な使用
+  - **インプットバインディングの代わりにコード内でのDB接続（pyodbc等）を推奨**
   - コールドスタート対策の実装
 
 ### Azure開発のベストプラクティス
@@ -97,136 +99,4 @@
 - コンテキスト、解決策を含めて記録する
 
 ### プロジェクトのディレクトリ構成
-```
-audio-sales-analyzer/
-├── next-app/                      # フロントエンド（Next.js）
-│   ├── .next/                    # ビルド出力（git管理外）
-│   ├── node_modules/             # 依存パッケージ（git管理外）
-│   ├── public/                   # 静的ファイル
-│   ├── src/                      # ソースコード
-│   │   ├── app/                 # Appルーター
-│   │   │   ├── api/             # APIルート
-│   │   │   │   ├── data/       # データ関連API
-│   │   │   │   ├── test/       # テスト用API
-│   │   │   │   └── transcribe/ # 文字起こし関連API
-│   │   │   ├── dashboard/       # ダッシュボード
-│   │   │   ├── feedback/        # フィードバック画面
-│   │   │   ├── manager-dashboard/ # 管理者用ダッシュボード
-│   │   │   ├── newmeeting/      # 新規会議作成
-│   │   │   ├── old-recording/   # 旧録音機能
-│   │   │   ├── recording/       # 録音機能
-│   │   │   ├── register/        # 新規登録
-│   │   │   ├── search/          # 検索機能
-│   │   │   ├── favicon.ico      # サイトアイコン
-│   │   │   ├── globals.css      # グローバルスタイル
-│   │   │   ├── layout.tsx       # ルートレイアウト
-│   │   │   └── page.tsx         # ログインページ
-│   │   ├── components/          # 共通コンポーネント
-│   │   │   ├── auth/           # 認証関連コンポーネント
-│   │   │   ├── ui/             # UIコンポーネント
-│   │   │   └── ...             # その他のコンポーネント
-│   │   ├── hooks/               # カスタムフック
-│   │   └── lib/                 # ユーティリティ関数
-│   │       ├── api/            # API関連ユーティリティ
-│   │       ├── auth/           # 認証関連ユーティリティ
-│   │       ├── db/             # データベース関連ユーティリティ
-│   │       └── utils/          # 一般ユーティリティ
-│   │
-│   ├── .env.local               # ローカル環境変数（git管理外）
-│   ├── .gitignore               # Git除外設定
-│   ├── eslint.config.mjs        # ESLint設定
-│   ├── next-env.d.ts            # Next.js型定義
-│   ├── next.config.js           # Next.js設定
-│   ├── next.config.ts           # TypeScript版Next.js設定
-│   ├── package.json             # プロジェクト設定
-│   ├── pnpm-lock.yaml           # 依存関係ロック
-│   ├── postcss.config.mjs       # PostCSS設定
-│   ├── tailwind.config.ts       # Tailwind CSS設定
-│   ├── tsconfig.json            # TypeScript設定
-│   ├── vercel.json              # Vercelデプロイ設定
-│   └── README.md                # Next.jsプロジェクト説明
-│
-├── AzureFunctions-Python-api/    # バックエンドAPI（Azure Functions）
-│   ├── __blobstorage__/         # Azuriteのローカルストレージ
-│   ├── __queuestorage__/        # Azuriteのキューストレージ
-│   ├── __pycache__/             # Pythonキャッシュ（git管理外）
-│   ├── .venv/                   # Python仮想環境（git管理外）
-│   ├── .python_packages/        # Pythonパッケージ
-│   ├── src/                     # ソースコード
-│   │   ├── models/             # データモデル定義
-│   │   ├── meetings/           # 会議関連の機能
-│   │   ├── utils/              # ユーティリティ関数
-│   │   ├── auth/               # 認証関連の機能
-│   │   └── __init__.py         # Pythonパッケージ初期化
-│   ├── __azurite_db_blob__.json        # Azuriteの設定
-│   ├── __azurite_db_blob_extent__.json # Azuriteの設定
-│   ├── __azurite_db_queue__.json       # Azuriteの設定
-│   ├── __azurite_db_queue_extent__.json # Azuriteの設定
-│   ├── __azurite_db_table__.json       # Azuriteの設定
-│   ├── function_app.py          # 関数アプリケーション
-│   ├── host.json                # ホスト設定
-│   ├── local.settings.json      # ローカル設定
-│   └── requirements.txt         # Python依存パッケージ
-│
-├── AzureFunctions-Python-SpeakerDiarization/ # 話者分離機能（Azure Functions）
-│   ├── __blobstorage__/         # Azuriteのローカルストレージ
-│   ├── __queuestorage__/        # Azuriteのキューストレージ
-│   ├── __pycache__/             # Pythonキャッシュ（git管理外）
-│   ├── .venv/                   # Python仮想環境（git管理外）
-│   ├── __azurite_db_blob__.json        # Azuriteの設定
-│   ├── __azurite_db_blob_extent__.json # Azuriteの設定
-│   ├── __azurite_db_queue__.json       # Azuriteの設定
-│   ├── __azurite_db_queue_extent__.json # Azuriteの設定
-│   ├── __azurite_db_table__.json       # Azuriteの設定
-│   ├── function_app.py          # 関数アプリケーション（音声認識・話者分離）
-│   ├── host.json                # ホスト設定
-│   ├── local.settings.json      # ローカル設定
-│   └── requirements.txt         # Python依存パッケージ
-│
-├── back-end/                     # データベース定義
-│   ├── Table/                   # テーブル定義
-│   └── Procedure/               # ストアドプロシージャ
-│
-├── test-data/                    # テスト用データ
-│   └── event-grid-test.json     # EventGridテスト用JSONファイル
-│
-├── __blobstorage__/              # プロジェクトルートのAzuriteストレージ
-├── __queuestorage__/             # プロジェクトルートのAzuriteキュー
-├── __pycache__/                  # Pythonキャッシュ（git管理外）
-│
-├── .vscode/                      # VSCode設定
-├── .cursor/                      # Cursor IDE設定
-├── .cursorrules                  # AIアシスタントの設定
-├── .funcignore                   # Azure Functions用のGit除外設定
-├── .gitignore                    # プロジェクトのGit除外設定
-├── BACKLOG.md                    # バックログ
-├── DATABASE.md                   # データベース設計
-├── KNOWLEDGE.md                  # 技術的知見
-├── REQUIREMENTS.md               # 要件定義
-└── README.md                     # プロジェクト説明
-```
-
-注意: 
-1. `__pycache__`や`node_modules`、`.venv`はGit管理外であり、各開発者の環境で自動生成されます
-2. 代わりに`requirements.txt`や`package.json`を共有することで、必要なパッケージを各環境で再現できます
-3. `.gitignore`に以下のパターンを追加して、これらのファイルをGit管理から除外します：
-   ```
-   __pycache__/
-   *.pyc
-   venv/
-   .venv/
-   node_modules/
-   .next/
-   ```
-
-現在のプロジェクト構造では、以下のディレクトリが主要な役割を担っています：
-
-1. `next-app/` - 主要なフロントエンドアプリケーション（Next.js）
-2. `AzureFunctions-Python-api/` - バックエンドAPI（Azure Functions）
-3. `AzureFunctions-Python-SpeakerDiarization/` - 話者分離機能（Azure Functions）
-4. `back-end/` - データベース定義（テーブルとストアドプロシージャ）
-5. `test-data/` - テスト用データファイル
-
-私（AIアシスタント）は、プロジェクトの進行に応じて必要なディレクトリ構成の変更を提案します。例えば、新機能の追加やコードの再構成が必要な場合、最適なディレクトリ構造を提案し、この構成図の更新を行います。 
-
-エラー対応としてエラーが発生したと報告があった場合はKNOWLEDGE.mdのトラブルシューティング一覧表のエラーNo｜システム | 問題 | 発生状況 | 解決方法 | 結果 | 次のステップの結果以外の項目に情報を記入。その後のエラー対応の結果の報告を受け結果項目に記載すること 
+（以下略）
