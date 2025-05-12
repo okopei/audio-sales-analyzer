@@ -514,15 +514,10 @@ Write-Host "Response body: $($response.Content)"
 
 ④ local.settings.json の TRANSCRIPTION_CALLBACK_URL を更新
 
-json
-コピーする
-編集する
 "TRANSCRIPTION_CALLBACK_URL": "https://<新しい-ngrok>.ngrok-free.app/api/transcription-callback"
 ⑤ PowerShell テストコマンドの -Uri も新しい ngrok URL に変更
 
-powershell
-コピーする
-編集する
+
 Invoke-WebRequest -Uri "https://<新しい-ngrok>.ngrok-free.app/api/transcription-callback" ...
 🧪 Webhook テスト準備
 ⑥ get_transcription_results_url.py を使って最新の transcription の resultsUrls.channel_0 を取得
@@ -550,16 +545,35 @@ Azure Functions のログに TranscriptionCallback 成功ログが出る
 
 ## テストエンドポイント
 
+### TestProcessAudioについて
+TestProcessAudioはローカル開発環境専用のテストエンドポイントです。
+
+#### 目的と役割
+- Event Grid Trigger（TriggerTranscriptionJob）のローカルテスト用代替手段
+- 通常のフロー（Blob Storageへの.webmアップロード→Event Grid Trigger）をローカルで手動実行可能に
+- .webm→.wav変換からtranscription job作成までの一連の処理をテスト可能
+
+#### 使用方法
+```powershell
+# TestProcessAudioの実行
+Invoke-RestMethod -Uri "http://localhost:7072/api/test/process-audio" -Method Post
+```
+
+#### 注意事項
+- 本番環境では不要（ローカル開発環境専用）
+- Event Gridがローカルで自動発火しない問題の回避策
+- テスト目的でのみ使用すること
+
 ### データベース接続テスト
 データベースの接続状態と基本的な操作を確認するためのテストエンドポイントを提供しています。
 
 #### 1. データベース接続確認
 ```powershell
 # データベース接続情報の確認
-Invoke-RestMethod -Uri "http://localhost:7071/api/test/db-info" -Method Get
+Invoke-RestMethod -Uri "http://localhost:7072/api/test/db-info" -Method Get
 
 # データベース接続テスト
-Invoke-RestMethod -Uri "http://localhost:7071/api/test/db-connection" -Method Get
+Invoke-RestMethod -Uri "http://localhost:7072/api/test/db-connection" -Method Get
 ```
 
 #### 2. テストデータ挿入
@@ -572,7 +586,7 @@ Meetingsテーブルへのテストデータ挿入を確認するためのエン
 
 ```powershell
 # テストデータの挿入
-Invoke-RestMethod -Uri "http://localhost:7071/api/test/insert-meeting" -Method Get
+Invoke-RestMethod -Uri "http://localhost:7072/api/test/insert-meeting" -Method Get
 ```
 
 レスポンス例：

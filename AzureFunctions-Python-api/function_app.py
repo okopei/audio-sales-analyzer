@@ -15,7 +15,7 @@ from datetime import datetime, UTC
 from azure.functions import AuthLevel, FunctionApp
 import traceback
 import pyodbc
-from azure.identity import DefaultAzureCredential, ClientSecretCredential
+from azure.identity import DefaultAzureCredential
 import struct
 from src.models.user import User
 
@@ -31,43 +31,20 @@ app = FunctionApp(http_auth_level=AuthLevel.ANONYMOUS)
 
 def get_db_connection():
     """
-    Microsoft Entra ID認証を使用してデータベース接続を確立します。
-    毎回新しいアクセストークンを取得して使用します。
+    Entra ID認証を使用してAzure SQL Databaseに接続する
+    ODBC Driver 17 for SQL Serverを使用
     """
     try:
-        # 利用可能なODBCドライバ一覧をログ出力
-        logger.info(f"利用可能なODBCドライバ: {pyodbc.drivers()}")
-        
-        # ローカル開発環境の場合
-        if not os.environ.get('WEBSITE_SITE_NAME'):  # ローカル環境ではこの環境変数が存在しない
-            # 環境変数から認証情報を取得
-            tenant_id = os.environ.get('TENANT_ID')
-            client_id = os.environ.get('CLIENT_ID')
-            client_secret = os.environ.get('CLIENT_SECRET')
-            
-            if all([tenant_id, client_id, client_secret]):
-                credential = ClientSecretCredential(
-                    tenant_id=tenant_id,
-                    client_id=client_id,
-                    client_secret=client_secret
-                )
-            else:
-                credential = DefaultAzureCredential()
-        else:
-            # 本番環境の場合
-            credential = DefaultAzureCredential()
-
-        # 毎回新しいアクセストークンを取得
+        # Microsoft Entra ID認証のトークンを取得
+        credential = DefaultAzureCredential()
         token = credential.get_token("https://database.windows.net/.default")
-        logger.info(f"新しいアクセストークンを取得しました。有効期限 (UTC): {token.expires_on}")
         
-        # アクセストークンを適切な形式に変換
+        # トークンをバイナリ形式に変換
         token_bytes = bytes(token.token, 'utf-8')
         exptoken = b''.join(bytes((b, 0)) for b in token_bytes)
         access_token = struct.pack('=i', len(exptoken)) + exptoken
         
-        logger.info(f"アクセストークンの長さ: {len(access_token)} バイト")
-        
+        # 接続文字列の構築
         conn_str = (
             f"Driver={{ODBC Driver 17 for SQL Server}};"
             f"Server=tcp:w-paas-salesanalyzer-sqlserver.database.windows.net,1433;"
@@ -77,16 +54,12 @@ def get_db_connection():
             f"Connection Timeout=30;"
         )
         
-        logger.info("データベース接続を試行します...")
-        logger.info(f"接続文字列: {conn_str}")
-        
+        logger.info("Connecting to database with ODBC Driver 17 for SQL Server")
         conn = pyodbc.connect(conn_str, attrs_before={1256: access_token})
-        logger.info("データベース接続が確立されました")
         return conn
     except Exception as e:
         logger.error(f"Database connection error: {str(e)}")
-        logger.error(f"Connection string: {conn_str}")
-        logger.error(f"Error details: {traceback.format_exc()}")
+        logger.error(f"Connection string (masked): {conn_str.replace('w-paas-salesanalyzer-sqlserver.database.windows.net', '***').replace('w-paas-salesanalyzer-sql', '***')}")
         raise
 
 def execute_query(query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
@@ -426,13 +399,24 @@ def get_meetings_func(req: func.HttpRequest) -> func.HttpResponse:
             }
             return func.HttpResponse(status_code=204, headers=headers)
 
+        # クエリパラメータからユーザーIDを取得
+        user_id = req.params.get('userId')
+        if not user_id:
+            return func.HttpResponse(
+                json.dumps({"error": "ユーザーIDが必要です"}, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=400
+            )
+
         query = """
             SELECT meeting_id, user_id, client_contact_name, client_company_name, 
                    meeting_datetime, duration_seconds, status, transcript_text, 
                    file_name, file_size, error_message 
             FROM dbo.Meetings
+            WHERE user_id = ?
+            ORDER BY meeting_datetime DESC
         """
-        meetings = execute_query(query)
+        meetings = execute_query(query, (user_id,))
 
         headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
@@ -620,7 +604,7 @@ def get_feedback_by_meeting_id_func(req: func.HttpRequest) -> func.HttpResponse:
 
 # 会話セグメント取得エンドポイント
 @app.function_name(name="GetConversationSegments")
-@app.route(route="api/conversation/segments/{meeting_id}", methods=["GET", "OPTIONS"])
+@app.route(route="conversation/segments/{meeting_id}", methods=["GET", "OPTIONS"])
 def get_conversation_segments(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
@@ -863,7 +847,7 @@ def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
 
 # 最新コメント取得エンドポイント
 @app.function_name(name="GetLatestComments")
-@app.route(route="api/comments-latest", methods=["GET", "OPTIONS"])
+@app.route(route="comments-latest", methods=["GET", "OPTIONS"])
 def get_latest_comments(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
@@ -879,29 +863,22 @@ def get_latest_comments(req: func.HttpRequest) -> func.HttpResponse:
         limit = 5    # デフォルト値
         
         try:
-            # userId パラメータのチェック
             if 'userId' in req.params:
                 user_id_str = req.params.get('userId')
                 logger.info(f"受信したuserIdパラメータ: {user_id_str}")
-                # 数値であることを確認
                 if user_id_str and user_id_str.isdigit():
                     user_id = int(user_id_str)
-            
-            # limit パラメータのチェック
             if 'limit' in req.params:
                 limit_str = req.params.get('limit')
                 if limit_str and limit_str.isdigit():
                     limit = int(limit_str)
-            
             logger.info(f"処理するパラメータ: userId={user_id}, limit={limit}")
-        
         except Exception as e:
             logger.warning(f"パラメータ処理中にエラーが発生しました: {e}")
-            logger.warning(f"受信したパラメータ: userId={req.params.get('userId')}, limit={req.params.get('limit')}")
             logger.warning("デフォルト値を使用します: userId=1, limit=5")
         
         query = """
-            SELECT TOP ? c.comment_id, c.segment_id, c.meeting_id, c.user_id, c.content, 
+            SELECT TOP (?) c.comment_id, c.segment_id, c.meeting_id, c.user_id, c.content, 
                    c.inserted_datetime, c.updated_datetime, u.user_name, 
                    m.client_company_name, m.client_contact_name 
             FROM dbo.Comments c 
@@ -911,20 +888,12 @@ def get_latest_comments(req: func.HttpRequest) -> func.HttpResponse:
             ORDER BY c.inserted_datetime DESC
         """
         comments = execute_query(query, (limit,))
-            
-            # 日付時刻の適切な変換
+        
         for comment in comments:
             if hasattr(comment['inserted_datetime'], 'isoformat'):
                 comment['inserted_datetime'] = comment['inserted_datetime'].isoformat()
-            elif comment['inserted_datetime'] is not None and not isinstance(comment['inserted_datetime'], str):
-                comment['inserted_datetime'] = str(comment['inserted_datetime'])
-            
             if hasattr(comment['updated_datetime'], 'isoformat'):
                 comment['updated_datetime'] = comment['updated_datetime'].isoformat()
-            elif comment['updated_datetime'] is not None and not isinstance(comment['updated_datetime'], str):
-                comment['updated_datetime'] = str(comment['updated_datetime'])
-            
-            # 既読情報（一時的にすべて既読とする）
             comment['isRead'] = True
         
         response = {
@@ -932,16 +901,78 @@ def get_latest_comments(req: func.HttpRequest) -> func.HttpResponse:
             "message": f"最新コメントを取得しました（userId: {user_id}, limit: {limit}）",
             "comments": comments
         }
-        
+
         headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
-            json.dumps(response, ensure_ascii=False), 
+            json.dumps(response, ensure_ascii=False),
             mimetype="application/json",
             status_code=200,
             headers=headers
         )
     except Exception as e:
         logger.error(f"Get latest comments error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500,
+            headers=headers
+        )
+
+# 会議IDによる基本情報取得エンドポイント
+@app.function_name(name="GetBasicInfoByMeetingId")
+@app.route(route="basicinfo/{meeting_id}", methods=["GET", "OPTIONS"])
+def get_basic_info_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        if req.method == "OPTIONS":
+            headers = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            }
+            return func.HttpResponse(status_code=204, headers=headers)
+
+        meeting_id = req.route_params.get('meeting_id')
+        if not meeting_id:
+            return func.HttpResponse(
+                json.dumps({"error": "会議IDが必要です"}, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=400
+            )
+
+        query = """
+            SELECT meeting_id, user_id, client_contact_name, client_company_name,
+                   meeting_datetime, duration_seconds, status, transcript_text,
+                   file_name, file_size, error_message
+            FROM dbo.Meetings
+            WHERE meeting_id = ?
+        """
+        meetings = execute_query(query, (meeting_id,))
+
+        if not meetings:
+            return func.HttpResponse(
+                json.dumps({"error": "会議が見つかりません"}, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=404
+            )
+
+        response = {
+            "success": True,
+            "message": f"会議の基本情報を取得しました（meeting_id: {meeting_id}）",
+            "basicInfo": meetings[0]
+        }
+
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps(response, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=200,
+            headers=headers
+        )
+
+    except Exception as e:
+        logger.error(f"Get basic info by meeting ID error: {str(e)}")
         logger.error(f"Error details: {traceback.format_exc()}")
         headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
