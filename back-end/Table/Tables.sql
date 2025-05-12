@@ -20,7 +20,9 @@ CREATE TABLE Users (
     -- アカウント管理
     password_reset_token VARCHAR(100) NULL,
     password_reset_expires DATETIME NULL,
-    login_attempt_count INT DEFAULT 0
+    login_attempt_count INT DEFAULT 0,
+    is_manager BIT NULL,
+    manager_id NVARCHAR NULL
 )
 
 -- 基本情報テーブル

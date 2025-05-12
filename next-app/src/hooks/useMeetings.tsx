@@ -31,7 +31,7 @@ export function useMeetings() {
       setError(null)
 
       const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7071/api'
-      const response = await fetch(`${baseUrl}/meetings?user_id=${user.user_id}`)
+      const response = await fetch(`${baseUrl}/meetings?userId=${user.user_id}`)
       
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`)
