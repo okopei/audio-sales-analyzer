@@ -430,3 +430,163 @@ Azure Blob Storageへのファイルアップロードには2つの方法があ�
   1. ファイル名が正しい形式か確認
   2. 日本語や特殊文字が含まれていないか確認
   3. ファイルが正しくアップロードされているか確認
+
+## EventGridトリガーのテスト方法
+
+### PowerShellでのテスト実行
+
+Azure FunctionsのEventGridトリガー（`TriggerTranscriptionJob`）をテストするには、以下のPowerShellコードを使用します：
+
+```powershell
+# EventGridイベントの構築
+$event = @(
+    @{
+        id = [guid]::NewGuid().ToString()
+        subject = "/blobServices/default/containers/moc-audio/blobs/meeting_71_user_27_2025-04-30T02-11-30-801.webm"
+        eventType = "Microsoft.Storage.BlobCreated"
+        eventTime = (Get-Date).ToUniversalTime().ToString("o")
+        dataVersion = "1.0"
+        data = @{
+            api = "PutBlob"
+            clientRequestId = [guid]::NewGuid().ToString()
+            requestId = [guid]::NewGuid().ToString()
+            eTag = "0x8DBB9715E8F04AF"
+            contentType = "video/webm"
+            contentLength = 123456
+            blobType = "BlockBlob"
+            url = "https://audiosalesanalyzeraudio.blob.core.windows.net/moc-audio/meeting_71_user_27_2025-04-30T02-11-30-801.webm"
+            sequencer = "000000000000000000000000000000000000000000000000"
+            storageDiagnostics = @{
+                batchId = [guid]::NewGuid().ToString()
+            }
+        }
+    }
+) | ConvertTo-Json -Depth 10
+
+# デバッグ用にイベントの内容を確認
+Write-Host "Sending event:"
+Write-Host $event
+
+# EventGridトリガーを呼び出し
+$response = Invoke-WebRequest `
+    -Uri "http://localhost:7072/runtime/webhooks/eventgrid?functionName=TriggerTranscriptionJob" `
+    -Method POST `
+    -Headers @{
+        "Content-Type" = "application/json"
+        "aeg-event-type" = "Notification"  # このヘッダーが重要
+    } `
+    -Body $event `
+    -ErrorAction Stop
+
+Write-Host "Response status: $($response.StatusCode)"
+Write-Host "Response body: $($response.Content)"
+```
+
+### 注意事項
+
+1. 実行前に確認すること
+   - Azure Functionsが実行中であること
+   - ポート7072が正しいこと
+   - 関数名`TriggerTranscriptionJob`が正しいこと
+
+2. イベントの形式
+   - `aeg-event-type: Notification`ヘッダーが必須
+   - `dataVersion`は"1.0"を指定
+   - `eventTime`はUTC形式で指定
+   - `url`は実際のBlobストレージのURLに合わせて変更
+
+3. デバッグ
+   - Azure Functionsのログを確認
+   - レスポンスのステータスコードと内容を確認
+
+   Azure Speech Webhook テストの一連フロー
+🔁 事前リセット（2回目以降の再テスト時）
+① 古い .wav ファイルを削除する
+
+※ .webm ファイルはそのままでOK（再利用可能）
+
+② Event Grid Trigger を再発火
+
+.webm → .wav 変換 → .wav アップロード → transcription job 作成までが実行される
+
+🔄 コールバック環境の再構築
+③ ngrok を再起動し、最新の HTTPS Forwarding URL を取得
+
+④ local.settings.json の TRANSCRIPTION_CALLBACK_URL を更新
+
+json
+コピーする
+編集する
+"TRANSCRIPTION_CALLBACK_URL": "https://<新しい-ngrok>.ngrok-free.app/api/transcription-callback"
+⑤ PowerShell テストコマンドの -Uri も新しい ngrok URL に変更
+
+powershell
+コピーする
+編集する
+Invoke-WebRequest -Uri "https://<新しい-ngrok>.ngrok-free.app/api/transcription-callback" ...
+🧪 Webhook テスト準備
+⑥ get_transcription_results_url.py を使って最新の transcription の resultsUrls.channel_0 を取得
+
+⑦ sample-webhook.json を以下のように更新
+
+self → 最新の job ID URL に
+
+resultsUrls.channel_0 → 上記で取得した .json ダウンロードURLに差し替え
+
+✅ テスト実行！
+⑧ PowerShell の Invoke-WebRequest を実行して Webhook を模擬送信
+
+powershell
+コピーする
+編集する
+Invoke-WebRequest -Uri "https://<新しい-ngrok>.ngrok-free.app/api/transcription-callback" `
+                  -Method Post `
+                  -Headers @{ "Content-Type" = "application/json" } `
+                  -Body (Get-Content -Raw -Path "sample-webhook.json")
+🔍 成功判定の目安
+Azure Functions のログに TranscriptionCallback 成功ログが出る
+
+.json 結果を正しく取得し、SQLへの書き込みまで完了
+
+## テストエンドポイント
+
+### データベース接続テスト
+データベースの接続状態と基本的な操作を確認するためのテストエンドポイントを提供しています。
+
+#### 1. データベース接続確認
+```powershell
+# データベース接続情報の確認
+Invoke-RestMethod -Uri "http://localhost:7071/api/test/db-info" -Method Get
+
+# データベース接続テスト
+Invoke-RestMethod -Uri "http://localhost:7071/api/test/db-connection" -Method Get
+```
+
+#### 2. テストデータ挿入
+Meetingsテーブルへのテストデータ挿入を確認するためのエンドポイントです。このエンドポイントは以下の目的で使用できます：
+
+- データベースのINSERT操作が正常に機能するか確認
+- ストアドプロシージャ（sp_ExtractSpeakersAndSegmentsFromTranscript）の動作確認
+- トリガー（trg_AfterInsertMeeting）の動作確認
+- 日本語文字化けの確認
+
+```powershell
+# テストデータの挿入
+Invoke-RestMethod -Uri "http://localhost:7071/api/test/insert-meeting" -Method Get
+```
+
+レスポンス例：
+```json
+{
+    "status": "success",
+    "message": "テスト会議レコードの挿入に成功しました",
+    "endpoint": "GET /api/test/insert-meeting",
+    "timestamp": "2024-03-21 10:30:45"
+}
+```
+
+注意事項：
+- このエンドポイントは開発・テスト環境でのみ使用してください
+- 本番環境では無効化することを推奨します
+- テストデータは毎回新しいmeeting_idで挿入されます
+- エラーが発生した場合は、詳細なエラーメッセージが返されます
