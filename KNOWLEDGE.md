@@ -1344,3 +1344,47 @@ BLOBストレージ（moc-audio） → トリガー検知 → 音声処理 → �
 - ユーザーフィードバックの収集
 - 機械学習モデルの改善
 - 品質指標の追跡
+
+## エラーハンドリング改善：TranscriptionCallback
+
+### 問題
+TranscriptionCallback関数で、meeting_idがNoneの場合にTriggerLogへのINSERTが失敗する可能性がありました。
+
+### 対策
+1. meeting_idのNoneチェックを追加
+2. TriggerLogへのINSERT前に必ずmeeting_idの存在確認
+3. エラーメッセージの詳細化
+
+### 実装例
+```python
+# meeting_id抽出後、TriggerLog INSERT前にチェックを追加
+if meeting_id is None:
+    logger.warning("⚠ meeting_id is None – TriggerLog insert skipped.")
+else:
+    execute_query(
+        """
+        INSERT INTO dbo.TriggerLog (
+            event_type, table_name, record_id, event_time, additional_info
+        ) VALUES (?, ?, ?, GETDATE(), ?)
+        """,
+        ("ERROR", "Meetings", meeting_id, "エラーメッセージ")
+    )
+```
+
+### 改善点
+1. 安全性の向上
+   - meeting_idの存在確認によるエラー防止
+   - ログ出力の安定化
+
+2. デバッグ性の向上
+   - 詳細なエラーメッセージ
+   - ログレベルに応じた出力
+
+3. 運用性の向上
+   - エラー発生時の追跡が容易に
+   - システム状態の可視化
+
+### 注意事項
+- meeting_idの抽出に失敗した場合は、必ずログに記録
+- TriggerLogへのINSERTは、meeting_idが有効な場合のみ実行
+- エラーメッセージは具体的な内容を含める
