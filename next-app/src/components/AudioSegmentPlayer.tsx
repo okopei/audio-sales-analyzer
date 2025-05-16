@@ -145,14 +145,6 @@ export const AudioSegmentPlayer: React.FC<AudioSegmentPlayerProps> = ({
     const audio = e.currentTarget
     setDuration(audio.duration)
     
-    if (process.env.NODE_ENV === 'development') {
-      console.log('handleLoadedMetadata:', {
-        startTime,
-        duration: audio.duration,
-        readyState: audio.readyState
-      })
-    }
-    
     try {
       // startTimeが未定義の場合は0を設定
       const validTime = startTime === undefined ? 0 : validateStartTime(startTime)

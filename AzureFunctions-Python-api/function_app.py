@@ -666,7 +666,7 @@ def get_conversation_segments(req: func.HttpRequest) -> func.HttpResponse:
 
 # コメント取得エンドポイント
 @app.function_name(name="GetComments")
-@app.route(route="api/comments/{segment_id}", methods=["GET", "OPTIONS"])
+@app.route(route="comments/{segment_id}", methods=["GET", "OPTIONS"])
 def get_segment_comments(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
@@ -729,7 +729,7 @@ def get_segment_comments(req: func.HttpRequest) -> func.HttpResponse:
 
 # コメント追加エンドポイント
 @app.function_name(name="AddComment")
-@app.route(route="api/comments", methods=["POST", "OPTIONS"])
+@app.route(route="comments", methods=["POST", "OPTIONS"])
 def create_comment(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
@@ -757,30 +757,27 @@ def create_comment(req: func.HttpRequest) -> func.HttpResponse:
                 headers=headers
             )
         
-        # 新しいコメントIDを生成
-        query = "SELECT TOP 1 comment_id FROM dbo.Comments ORDER BY comment_id DESC"
-        last_comment = execute_query(query)
-        new_comment_id = 1
-        if last_comment:
-            new_comment_id = last_comment[0]['comment_id'] + 1
-        
         # 現在の日時をSQL Serverに適した形式で文字列化
         now = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
         
         # コメントをデータベースに挿入
         insert_query = """
-            INSERT INTO dbo.Comments (comment_id, segment_id, meeting_id, user_id, content, inserted_datetime, updated_datetime)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO dbo.Comments (segment_id, meeting_id, user_id, content, inserted_datetime, updated_datetime)
+            VALUES (?, ?, ?, ?, ?, ?)
         """
-        execute_query(insert_query, {
-            'comment_id': new_comment_id,
-            'segment_id': segment_id,
-            'meeting_id': meeting_id,
-            'user_id': user_id,
-            'content': content,
-            'inserted_datetime': now,
-            'updated_datetime': now
-        })
+        execute_query(insert_query, (
+            segment_id,
+            meeting_id,
+            user_id,
+            content,
+            now,
+            now
+        ))
+        
+        # 新しく追加されたコメントのIDを取得
+        query = "SELECT TOP 1 comment_id FROM dbo.Comments ORDER BY comment_id DESC"
+        last_comment = execute_query(query)
+        new_comment_id = last_comment[0]['comment_id'] if last_comment else None
         
         response = {
             "success": True,
@@ -809,7 +806,7 @@ def create_comment(req: func.HttpRequest) -> func.HttpResponse:
 
 # コメント既読状態更新エンドポイント
 @app.function_name(name="MarkCommentAsRead")
-@app.route(route="api/comments/read", methods=["POST", "OPTIONS"])
+@app.route(route="comments/read", methods=["POST", "OPTIONS"])
 def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
