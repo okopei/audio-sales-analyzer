@@ -22,7 +22,7 @@ import shutil
 import wave
 import requests
 import pyodbc
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Union, Tuple
 import sys
 import struct
 import json
@@ -51,6 +51,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# FunctionAppインスタンスの生成（1回のみ）
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 # 環境変数の確認
@@ -195,6 +196,7 @@ def convert_webm_to_wav(webm_path: str) -> str:
         logger.error(error_message)
         raise RuntimeError(error_message)
 
+# 本番用エンドポイント
 @app.function_name(name="TriggerTranscriptionJob")
 @app.event_grid_trigger(arg_name="event")
 def trigger_transcription_job(event: func.EventGridEvent):
@@ -395,36 +397,291 @@ def trigger_transcription_job(event: func.EventGridEvent):
 # 定数の定義
 MAX_LOG_LENGTH = 1000
 
-def insert_trigger_log(meeting_id: int, event_type: str, additional_info: str) -> None:
+def insert_trigger_log(meeting_id: Optional[int], event_type: str, additional_info: str) -> None:
     """
     TriggerLogテーブルに安全にログを挿入する
     
     Args:
-        meeting_id (int): 会議ID
+        meeting_id (Optional[int]): 会議ID（record_idとして使用）
         event_type (str): イベントタイプ（'ERROR', 'INFO', 'SKIP'など）
         additional_info (str): 追加情報（エラーメッセージなど）
     """
-    if meeting_id is None:
-        logger.warning("⚠ meeting_id is None – TriggerLog insert skipped.")
+    # meeting_idの厳密なチェック
+    if meeting_id is None or not isinstance(meeting_id, int) or meeting_id <= 0:
+        logger.warning(f"meeting_idが不正なためログをスキップします: {meeting_id}")
+        return
+    
+    # パラメータの型チェック
+    if not isinstance(event_type, str):
+        logger.warning(f"event_typeが文字列でないためTriggerLogへの挿入をスキップします")
+        return
+        
+    if additional_info is not None and not isinstance(additional_info, str):
+        logger.warning(f"additional_infoが文字列でないためTriggerLogへの挿入をスキップします")
         return
         
     try:
+        # 再帰エラー記録を防止
+        if additional_info and (
+            "TriggerLog" in additional_info and (
+                "INSERT fails" in additional_info or
+                "書き込み失敗" in additional_info or
+                "IntegrityError" in additional_info
+            )
+        ):
+            logger.warning("再帰的なTriggerLogエントリをスキップします")
+            return
+            
         # エラーメッセージを最大長で切り詰め
-        truncated_info = additional_info[:MAX_LOG_LENGTH] if additional_info else ""
+        truncated_info = additional_info[:MAX_LOG_LENGTH] if additional_info else None
         
+        # record_idとして使用するmeeting_idを明示的にint型に変換
+        record_id = int(meeting_id)
+        
+        # SQLクエリのパラメータ順序を明示的に指定
         execute_query(
             """
             INSERT INTO dbo.TriggerLog (
-                event_type, table_name, record_id, event_time, additional_info
+                event_type, 
+                table_name, 
+                record_id,
+                event_time, 
+                additional_info
             ) VALUES (?, ?, ?, GETDATE(), ?)
             """,
-            (event_type, "Meetings", meeting_id, truncated_info)
+            (event_type, "Meetings", record_id, truncated_info)
         )
-        logger.info(f"✅ TriggerLog inserted successfully for meeting_id: {meeting_id}")
+        logger.info(f"TriggerLogに正常に記録しました。record_id: {record_id}")
+    except Exception as log_error:
+        error_summary = str(log_error).split('\n')[0]
+        logger.warning(f"TriggerLog書き込み失敗: {error_summary}")
+        logger.warning(f"エラーの種類: {type(log_error)}")
+
+def get_db_connection():
+    """
+    Entra ID認証を使用してAzure SQL Databaseに接続する
+    
+    Returns:
+        pyodbc.Connection: データベース接続オブジェクト
+        
+    Raises:
+        Exception: 接続に失敗した場合
+    """
+    try:
+        credential = DefaultAzureCredential()
+        token = credential.get_token("https://database.windows.net/.default")
+        token_bytes = bytes(token.token, 'utf-8')
+        exptoken = b''.join(bytes((b, 0)) for b in token_bytes)
+        access_token = struct.pack('=i', len(exptoken)) + exptoken
+
+        conn_str = (
+            f"Driver={{ODBC Driver 17 for SQL Server}};"
+            f"Server=tcp:w-paas-salesanalyzer-sqlserver.database.windows.net,1433;"
+            f"Database=w-paas-salesanalyzer-sql;"
+            f"Encrypt=yes;"
+            f"TrustServerCertificate=no;"
+            f"Connection Timeout=30;"
+        )
+
+        logger.info("Connecting to database with ODBC Driver 17 for SQL Server")
+        return pyodbc.connect(conn_str, attrs_before={1256: access_token})
     except Exception as e:
-        logger.error(f"❌ Failed to insert TriggerLog: {str(e)}")
+        logger.error(f"❌ DB接続失敗: {str(e)}")
+        logger.error(f"Connection string (masked): {conn_str.replace('w-paas-salesanalyzer-sqlserver.database.windows.net', '***').replace('w-paas-salesanalyzer-sql', '***')}")
+        raise
+
+def get_client_info(meeting_id: int) -> Dict[str, Optional[str]]:
+    """
+    クライアント情報を取得する関数
+    
+    Args:
+        meeting_id (int): 会議ID
+        
+    Returns:
+        Dict[str, Optional[str]]: クライアント情報（企業名と担当者名）を含む辞書
+        エラー時やデータが存在しない場合は、Noneを含む辞書を返す
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT client_company_name, client_contact_name FROM dbo.BasicInfo WHERE meeting_id = ?",
+            (meeting_id,)
+        )
+        row = cursor.fetchone()
+        
+        if row and row[0] is not None and row[1] is not None:
+            return {
+                "client_company_name": str(row[0]).strip(),
+                "client_contact_name": str(row[1]).strip()
+            }
+        else:
+            logger.warning(f"⚠ No client info found for meeting_id: {meeting_id}")
+            return {
+                "client_company_name": None,
+                "client_contact_name": None
+            }
+    except Exception as e:
+        logger.warning(f"⚠ Failed to retrieve client info: {str(e)}")
+        logger.warning(f"Error type: {type(e)}")
+        logger.warning(f"Error details: {traceback.format_exc()}")
+        return {
+            "client_company_name": None,
+            "client_contact_name": None
+        }
+    finally:
+        if conn:
+            try:
+                conn.close()
+                logger.debug("Database connection closed in get_client_info")
+            except Exception as e:
+                logger.warning(f"⚠ Failed to close database connection in get_client_info: {str(e)}")
+
+def execute_query(query: str, params: Optional[Union[Dict[str, Any], Tuple[Any, ...]]] = None, skip_trigger_log: bool = False) -> List[Dict[str, Any]]:
+    """
+    SQLクエリを実行し、結果を返します
+    
+    Args:
+        query (str): 実行するSQLクエリ
+        params (Optional[Union[Dict[str, Any], Tuple[Any, ...]]]): 
+            クエリパラメータ。辞書型（名前付きパラメータ）または
+            タプル型（位置パラメータ）で指定可能
+        skip_trigger_log (bool): TriggerLogへの自動ログ記録をスキップするかどうか
+        
+    Returns:
+        List[Dict[str, Any]]: クエリ結果のリスト（SELECTまたはOUTPUT句を含むクエリの場合）
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        logger.info(f"クエリを実行: {query[:100]}...")  # クエリの最初の100文字のみ表示
+        
+        cursor = conn.cursor()
+        
+        # クエリの実行前に、TriggerLogへの挿入を制御
+        if skip_trigger_log:
+            logger.debug("TriggerLogへの自動ログ記録をスキップします")
+            cursor.execute("""
+                BEGIN TRY
+                    ALTER TABLE dbo.TriggerLog DISABLE TRIGGER ALL;
+                END TRY
+                BEGIN CATCH
+                    IF ERROR_NUMBER() <> 3701
+                        THROW;
+                END CATCH
+            """)
+        
+        try:
+            if params:
+                if isinstance(params, dict):
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            
+            # 結果セットの取得（SELECTまたはOUTPUT句を含むクエリの場合）
+            if cursor.description:
+                columns = [column[0] for column in cursor.description]
+                rows = cursor.fetchall()
+                results = [dict(zip(columns, row)) for row in rows]
+
+                # datetime → 文字列化
+                for row in results:
+                    for key, value in row.items():
+                        if hasattr(value, 'isoformat'):
+                            row[key] = value.isoformat()
+
+                conn.commit()
+                return results
+            else:
+                conn.commit()
+                logger.info("コミット完了")
+                return []
+                
+        finally:
+            # TriggerLogテーブルを再度有効化
+            if skip_trigger_log:
+                cursor.execute("""
+                    BEGIN TRY
+                        ALTER TABLE dbo.TriggerLog ENABLE TRIGGER ALL;
+                    END TRY
+                    BEGIN CATCH
+                        IF ERROR_NUMBER() <> 3701
+                            THROW;
+                    END CATCH
+                """)
+    
+    except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+                logger.warning("ロールバックを実行しました")
+            except Exception as rollback_error:
+                logger.warning(f"ロールバックに失敗: {str(rollback_error)}")
+        
+        logger.error(f"クエリ実行エラー: {str(e)}")
+        logger.error(f"エラーの種類: {type(e)}")
+        raise
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception as e:
+                logger.warning(f"データベース接続のクローズに失敗: {str(e)}")
+
+def get_current_time():
+    """現在時刻をUTCで取得し、SQLサーバー互換の形式で返す"""
+    return datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
+
+def get_audio_duration(file_path: str) -> float:
+    """
+    WAVファイルの長さ（秒数）を取得する関数
+    
+    Args:
+        file_path (str): WAVファイルのパス
+        
+    Returns:
+        float: 音声の長さ（秒）。小数点以下3桁まで丸める
+        
+    Raises:
+        FileNotFoundError: ファイルが存在しない場合
+        wave.Error: WAVファイルの形式が不正な場合
+        Exception: その他のエラー
+    """
+    try:
+        logger.info(f"音声ファイルの長さを取得: {file_path}")
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"音声ファイルが見つかりません: {file_path}")
+            
+        with wave.open(file_path, 'rb') as wav_file:
+            frames = wav_file.getnframes()
+            rate = wav_file.getframerate()
+            duration = frames / float(rate)
+            
+            # 音声ファイルの詳細情報をログ出力
+            logger.info(f"音声ファイルの詳細:")
+            logger.info(f"- チャンネル数: {wav_file.getnchannels()}")
+            logger.info(f"- サンプル幅: {wav_file.getsampwidth()} bytes")
+            logger.info(f"- フレームレート: {rate} Hz")
+            logger.info(f"- フレーム数: {frames}")
+            logger.info(f"- 長さ: {duration:.3f} 秒")
+            
+            return round(duration, 3)
+            
+    except wave.Error as e:
+        error_message = f"WAVファイルの形式が不正です: {str(e)}"
+        logger.error(error_message)
         logger.error(f"Error type: {type(e)}")
         logger.error(f"Error details: {traceback.format_exc()}")
+        raise
+    except Exception as e:
+        error_message = f"音声ファイルの長さ取得に失敗: {str(e)}"
+        logger.error(error_message)
+        logger.error(f"Error type: {type(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        raise
 
 @app.function_name(name="TranscriptionCallback")
 @app.route(route="transcription-callback", methods=["POST"])
@@ -436,6 +693,8 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
     meeting_id = None  # 関数の先頭で初期化
     user_id = None     # user_idも初期化
     temp_wav_path = None  # 一時ファイルパスを初期化
+    loggable_meeting_id = None  # ログ記録用のmeeting_idを初期化
+    
     try:
         logger.info("=== Transcription Callback Start ===")
         
@@ -446,7 +705,7 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
         except ValueError as e:
             error_message = f"Invalid JSON in request body: {str(e)}"
             logger.error(error_message)
-            insert_trigger_log(meeting_id, "ERROR", error_message)
+            # meeting_idが未取得のため、TriggerLogへの記録は行わない
             return func.HttpResponse(error_message, status_code=400)
             
         # 必須フィールドの検証
@@ -455,7 +714,7 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
         if missing_fields:
             error_message = f"Missing required fields: {', '.join(missing_fields)}"
             logger.error(error_message)
-            insert_trigger_log(meeting_id, "ERROR", error_message)
+            # meeting_idが未取得のため、TriggerLogへの記録は行わない
             return func.HttpResponse(error_message, status_code=400)
             
         transcription_url = data["self"]
@@ -465,7 +724,7 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
         if not results_url:
             error_message = "Missing channel_0 in resultsUrls"
             logger.error(error_message)
-            insert_trigger_log(meeting_id, "ERROR", error_message)
+            # meeting_idが未取得のため、TriggerLogへの記録は行わない
             return func.HttpResponse(error_message, status_code=400)
             
         logger.info(f"Webhook called. Transcription job URL: {transcription_url}")
@@ -480,237 +739,401 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
         if not match:
             error_message = f"Invalid file name format: {file_name}"
             logger.error(error_message)
-            insert_trigger_log(meeting_id, "ERROR", error_message)
+            # meeting_idが未取得のため、TriggerLogへの記録は行わない
             return func.HttpResponse(error_message, status_code=400)
             
-        meeting_id = int(match.group(1))
-        user_id = int(match.group(2))
+        # meeting_idとuser_idの取得と検証（強化）
+        try:
+            meeting_id = int(match.group(1))
+            user_id = int(match.group(2))
+            loggable_meeting_id = meeting_id  # TriggerLog用のIDとして確保
+            logger.info(f"[DEBUG] 抽出されたmeeting_id: {meeting_id} (type: {type(meeting_id)})")
+            logger.info(f"[DEBUG] 抽出されたuser_id: {user_id} (type: {type(user_id)})")
+            logger.info(f"[DEBUG] 設定されたloggable_meeting_id: {loggable_meeting_id} (type: {type(loggable_meeting_id)})")
+            
+            # meeting_idの有効性チェック
+            if not meeting_id or meeting_id <= 0:
+                error_message = f"Invalid meeting_id: {meeting_id}"
+                logger.error(error_message)
+                return func.HttpResponse(error_message, status_code=400)
+                
+            # user_idの有効性チェック
+            if not user_id or user_id <= 0:
+                error_message = f"Invalid user_id: {user_id}"
+                logger.error(error_message)
+                return func.HttpResponse(error_message, status_code=400)
+                
+        except ValueError as e:
+            error_message = f"Failed to parse meeting_id or user_id: {str(e)}"
+            logger.error(error_message)
+            return func.HttpResponse(error_message, status_code=400)
+            
         logger.info(f"Extracted meeting_id: {meeting_id}, user_id: {user_id}")
 
-        # BasicInfoからクライアント情報を取得（pyodbc方式）
-        client_info = get_client_info(meeting_id)
-        if not client_info:
-            logger.warning(f"No client info found for meeting_id: {meeting_id}")
-            client_company_name = "不明企業"
-            client_contact_name = "不明担当者"
-        else:
-            client_company_name = client_info["client_company_name"]
-            client_contact_name = client_info["client_contact_name"]
+        # ここから先はmeeting_idが取得済みのため、TriggerLogへの記録が可能
+        try:
+            # BasicInfoからクライアント情報を取得（安全なアクセス）
+            client_info = get_client_info(meeting_id)
+            client_company_name = client_info.get("client_company_name") or "不明企業"
+            client_contact_name = client_info.get("client_contact_name") or "不明担当者"
+            
             logger.info(f"Found client info - Company: {client_company_name}, Contact: {client_contact_name}")
 
-        headers = {
-            "Ocp-Apim-Subscription-Key": os.environ["SPEECH_KEY"]
-        }
+            headers = {
+                "Ocp-Apim-Subscription-Key": os.environ["SPEECH_KEY"]
+            }
 
-        # transcription status を取得
-        logger.info(f"Fetching transcription status from: {transcription_url}")
-        status_resp = requests.get(transcription_url, headers=headers)
-        status_resp.raise_for_status()
-        status_json = status_resp.json()
-        logger.info(f"Transcription status: {status_json['status']}")
+            # transcription status を取得
+            logger.info(f"Fetching transcription status from: {transcription_url}")
+            status_resp = requests.get(transcription_url, headers=headers)
+            status_resp.raise_for_status()
+            status_json = status_resp.json()
+            logger.info(f"Transcription status: {status_json['status']}")
 
-        if status_json["status"] != "Succeeded":
-            logger.warning(f"Transcription job not succeeded: {status_json['status']}")
-            return func.HttpResponse(status_code=202)
+            if status_json["status"] != "Succeeded":
+                logger.warning(f"Transcription job not succeeded: {status_json['status']}")
+                insert_trigger_log(loggable_meeting_id, "WARNING", f"Transcription job status: {status_json['status']}")
+                return func.HttpResponse(status_code=202)
 
-        # 文字起こし結果の取得と検証
-        logger.info(f"Fetching transcription results from: {results_url}")
-        response = requests.get(results_url, headers=headers)
-        response.raise_for_status()  # HTTPエラーのチェック
-        
-        if not response.content.strip():
-            logger.error("❌ Speech-to-Text 結果のレスポンスが空です")
-            logger.error(f"Response status code: {response.status_code}")
-            logger.error(f"Response headers: {response.headers}")
-            return func.HttpResponse("Empty transcription result", status_code=502)
+            # 文字起こし結果の取得と検証
+            logger.info(f"Fetching transcription results from: {results_url}")
+            response = requests.get(results_url, headers=headers)
+            response.raise_for_status()  # HTTPエラーのチェック
             
-        try:
-            result_json = response.json()
-            logger.info("Successfully retrieved and parsed transcription results")
-        except json.JSONDecodeError as e:
-            logger.error(f"❌ Failed to parse transcription results as JSON: {str(e)}")
-            logger.error(f"Response content: {response.content[:1000]}...")  # 最初の1000文字だけログ出力
-            return func.HttpResponse("Invalid JSON in transcription result", status_code=502)
+            if not response.content.strip():
+                error_message = "❌ Speech-to-Text 結果のレスポンスが空です"
+                logger.error(error_message)
+                logger.error(f"Response status code: {response.status_code}")
+                logger.error(f"Response headers: {response.headers}")
+                insert_trigger_log(loggable_meeting_id, "ERROR", error_message)
+                return func.HttpResponse("Empty transcription result", status_code=502)
+                
+            try:
+                result_json = response.json()
+                logger.info("Successfully retrieved and parsed transcription results")
+            except json.JSONDecodeError as e:
+                error_message = f"❌ Failed to parse transcription results as JSON: {str(e)}"
+                logger.error(error_message)
+                logger.error(f"Response content: {response.content[:1000]}...")  # 最初の1000文字だけログ出力
+                insert_trigger_log(loggable_meeting_id, "ERROR", error_message)
+                return func.HttpResponse("Invalid JSON in transcription result", status_code=502)
 
-        transcript = []
-        for phrase in result_json["recognizedPhrases"]:
-            speaker = phrase.get("speaker", "Unknown")
-            text = phrase["nBest"][0]["display"]
-            transcript.append(f"(Speaker{speaker})[{text}]")
+            transcript = []
+            for phrase in result_json["recognizedPhrases"]:
+                speaker = phrase.get("speaker", "Unknown")
+                text = phrase["nBest"][0]["display"]
+                transcript.append(f"(Speaker{speaker})[{text}]")
 
-        transcript_text = " ".join(transcript)
-        logger.info(f"Generated transcript text: {transcript_text[:100]}...")  # 最初の100文字だけログ出力
+            transcript_text = " ".join(transcript)
+            logger.info(f"Generated transcript text: {transcript_text[:100]}...")  # 最初の100文字だけログ出力
 
-        # ファイル名から日時を抽出
-        datetime_match = re.search(r"(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3})", file_name)
-        meeting_datetime = datetime.strptime(datetime_match.group(1), "%Y-%m-%dT%H-%M-%S-%f") if datetime_match else datetime.now(UTC)
-
-        # Blob Storageからファイル情報を取得
-        blob_service_client = BlobServiceClient.from_connection_string(os.environ["AzureWebJobsStorage"])
-        container_name = file_path.split('/')[0]
-        blob_client = blob_service_client.get_blob_client(container=container_name, blob=file_name)
-        blob_properties = blob_client.get_blob_properties()
-
-        meeting_data = {
-            "meeting_id": meeting_id,
-            "user_id": user_id,
-            "title": f"会議 {meeting_datetime.strftime('%Y-%m-%d %H:%M')}",
-            "file_name": file_name,
-            "file_path": file_path,
-            "file_size": blob_properties.size,
-            "duration_seconds": 0,  # TODO: 音声ファイルの長さを取得
-            "status": "completed",
-            "transcript_text": transcript_text,
-            "error_message": None,
-            "client_company_name": client_company_name,
-            "client_contact_name": client_contact_name,
-            "meeting_datetime": meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),
-            "start_datetime": meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),
-            "end_datetime": meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),
-            "inserted_datetime": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S'),
-            "updated_datetime": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
-        }
-
-        # 文字起こしテキストの更新とストアドプロシージャの実行
-        try:
-            # 2. transcript_text の更新（MERGE）- meeting_idとuser_idを使用
-            logger.info(f"Updating transcript_text for meeting_id: {meeting_id}, user_id: {user_id}")
-            
-            # ファイル名から日時を抽出してタイトルを生成
+            # ファイル名から日時を抽出
             datetime_match = re.search(r"(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3})", file_name)
             meeting_datetime = datetime.strptime(datetime_match.group(1), "%Y-%m-%dT%H-%M-%S-%f") if datetime_match else datetime.now(UTC)
-            title = f"会議 {meeting_datetime.strftime('%Y-%m-%d %H:%M')}"
-            
-            # WAVファイルを一時的にダウンロードして長さを取得
-            logger.info(f"WAVファイルの長さを取得するため、一時的にダウンロードします: {file_path}")
-            temp_wav_path = os.path.join(tempfile.gettempdir(), file_name)
-            
-            # Blob Storageからファイルをダウンロード
+
+            # Blob Storageからファイル情報を取得
             blob_service_client = BlobServiceClient.from_connection_string(os.environ["AzureWebJobsStorage"])
             container_name = file_path.split('/')[0]
             blob_client = blob_service_client.get_blob_client(container=container_name, blob=file_name)
-            
-            with open(temp_wav_path, "wb") as temp_file:
-                blob_data = blob_client.download_blob()
-                blob_data.readinto(temp_file)
-            
-            # 音声ファイルの長さを取得
-            duration_seconds = get_audio_duration(temp_wav_path)
-            logger.info(f"音声ファイルの長さ: {duration_seconds}秒")
-            
-            merge_sql = """
-            MERGE INTO dbo.Meetings AS target
-            USING (
-                SELECT 
-                    ? AS meeting_id, 
-                    ? AS user_id, 
-                    ? AS transcript_text, 
-                    ? AS title,
-                    ? AS file_name,
-                    ? AS file_path,
-                    ? AS file_size,
-                    ? AS duration_seconds,
-                    ? AS status,
-                    ? AS client_company_name,
-                    ? AS client_contact_name,
-                    ? AS meeting_datetime,
-                    ? AS start_datetime
-                ) AS source
-            ON (target.meeting_id = source.meeting_id AND target.user_id = source.user_id)
-            WHEN MATCHED THEN
-                UPDATE SET 
-                    transcript_text = source.transcript_text,
-                    updated_datetime = GETDATE()
-            WHEN NOT MATCHED THEN
-                INSERT (
+            blob_properties = blob_client.get_blob_properties()
+
+            meeting_data = {
+                "meeting_id": meeting_id,
+                "user_id": user_id,
+                "title": f"会議 {meeting_datetime.strftime('%Y-%m-%d %H:%M')}",
+                "file_name": file_name,
+                "file_path": file_path,
+                "file_size": blob_properties.size,
+                "duration_seconds": 0,  # TODO: 音声ファイルの長さを取得
+                "status": "completed",
+                "transcript_text": transcript_text,
+                "error_message": None,
+                "client_company_name": client_company_name,  # 安全に取得した値を使用
+                "client_contact_name": client_contact_name,  # 安全に取得した値を使用
+                "meeting_datetime": meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),
+                "start_datetime": meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),
+                "end_datetime": meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),
+                "inserted_datetime": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S'),
+                "updated_datetime": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
+            }
+
+            # 文字起こしテキストの更新とストアドプロシージャの実行
+            try:
+                # 2. transcript_text の更新（MERGE）- meeting_idとuser_idを使用
+                logger.info(f"Updating transcript_text for meeting_id: {meeting_id}, user_id: {user_id}")
+                
+                # ファイル名から日時を抽出してタイトルを生成
+                datetime_match = re.search(r"(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3})", file_name)
+                meeting_datetime = datetime.strptime(datetime_match.group(1), "%Y-%m-%dT%H-%M-%S-%f") if datetime_match else datetime.now(UTC)
+                title = f"会議 {meeting_datetime.strftime('%Y-%m-%d %H:%M')}"
+                
+                # WAVファイルを一時的にダウンロードして長さを取得
+                logger.info(f"WAVファイルの長さを取得するため、一時的にダウンロードします: {file_path}")
+                temp_wav_path = os.path.join(tempfile.gettempdir(), file_name)
+                
+                try:
+                    # Blob Storageからファイルをダウンロード
+                    blob_service_client = BlobServiceClient.from_connection_string(os.environ["AzureWebJobsStorage"])
+                    container_name = file_path.split('/')[0]
+                    blob_client = blob_service_client.get_blob_client(container=container_name, blob=file_name)
+                    
+                    with open(temp_wav_path, "wb") as temp_file:
+                        blob_data = blob_client.download_blob()
+                        blob_data.readinto(temp_file)
+                    
+                    # 音声ファイルの長さを取得
+                    duration_seconds = get_audio_duration(temp_wav_path)
+                    logger.info(f"音声ファイルの長さ: {duration_seconds}秒")
+                    
+                except Exception as e:
+                    # エラーメッセージを簡潔に保持
+                    error_summary = str(e).split('\n')[0]  # 最初の行のみを使用
+                    logger.error(f"音声ファイルの長さ取得に失敗: {error_summary}")
+                    logger.error(f"Error type: {type(e)}")
+                    # スタックトレースは詳細ログのみに記録
+                    logger.debug(f"Error details: {traceback.format_exc()}")
+                    
+                    duration_seconds = 0  # エラー時は0秒として処理を継続
+                    # エラーメッセージを簡潔に保持してTriggerLogに記録
+                    insert_trigger_log(
+                        loggable_meeting_id,
+                        "WARNING",
+                        f"音声ファイルの長さ取得に失敗: {error_summary}"
+                    )
+
+                merge_sql = """
+                MERGE INTO dbo.Meetings AS target
+                USING (
+                    SELECT 
+                        ? AS meeting_id, 
+                        ? AS user_id, 
+                        ? AS transcript_text, 
+                        ? AS title,
+                        ? AS file_name,
+                        ? AS file_path,
+                        ? AS file_size,
+                        ? AS duration_seconds,
+                        ? AS status,
+                        ? AS client_company_name,
+                        ? AS client_contact_name,
+                        ? AS meeting_datetime,
+                        ? AS start_datetime,
+                        GETDATE() AS inserted_datetime
+                    ) AS source
+                ON (target.meeting_id = source.meeting_id AND target.user_id = source.user_id)
+                WHEN MATCHED THEN
+                    UPDATE SET 
+                        transcript_text = source.transcript_text,
+                        updated_datetime = GETDATE()
+                WHEN NOT MATCHED THEN
+                    INSERT (
+                        meeting_id, 
+                        user_id, 
+                        transcript_text, 
+                        title, 
+                        file_name,
+                        file_path,
+                        file_size,
+                        duration_seconds,
+                        status,
+                        client_company_name,
+                        client_contact_name,
+                        meeting_datetime,
+                        start_datetime,
+                        inserted_datetime
+                    ) VALUES (
+                        source.meeting_id, 
+                        source.user_id, 
+                        source.transcript_text, 
+                        source.title,
+                        source.file_name,
+                        source.file_path,
+                        source.file_size,
+                        source.duration_seconds,
+                        source.status,
+                        source.client_company_name,
+                        source.client_contact_name,
+                        source.meeting_datetime,
+                        source.start_datetime,
+                        source.inserted_datetime
+                    );
+                """
+                
+                # Blob Storageからファイル情報を取得
+                blob_properties = blob_client.get_blob_properties()
+                
+                # パラメータを13個に調整（inserted_datetimeはGETDATE()で設定されるため除外）
+                merge_params = (
                     meeting_id, 
                     user_id, 
                     transcript_text, 
-                    title, 
+                    title,
                     file_name,
                     file_path,
-                    file_size,
-                    duration_seconds,
-                    status,
+                    blob_properties.size,  # file_size
+                    duration_seconds,  # 取得した音声ファイルの長さを設定
+                    'completed',  # status
                     client_company_name,
                     client_contact_name,
-                    meeting_datetime,
-                    start_datetime,
-                    inserted_datetime
-                ) VALUES (
-                    source.meeting_id, 
-                    source.user_id, 
-                    source.transcript_text, 
-                    source.title,
-                    source.file_name,
-                    source.file_path,
-                    source.file_size,
-                    source.duration_seconds,
-                    source.status,
-                    source.client_company_name,
-                    source.client_contact_name,
-                    source.meeting_datetime,
-                    source.start_datetime,
-                    GETDATE()
-                );
-            """
-            
-            # Blob Storageからファイル情報を取得
-            blob_properties = blob_client.get_blob_properties()
-            
-            merge_params = (
-                meeting_id, 
-                user_id, 
-                transcript_text, 
-                title,
-                file_name,
-                file_path,
-                blob_properties.size,  # file_size
-                duration_seconds,  # 取得した音声ファイルの長さを設定
-                'completed',  # status
-                client_company_name,
-                client_contact_name,
-                meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),  # meeting_datetime
-                meeting_datetime.strftime('%Y-%m-%d %H:%M:%S')   # start_datetime
-            )
-            
-            execute_query(merge_sql, merge_params)
-            logger.info(f"✅ Successfully updated transcript_text for meeting_id: {meeting_id}, user_id: {user_id}, title: {title}, file: {file_name}, duration: {duration_seconds}秒")
-            
-            # 3. ストアドプロシージャの実行
-            logger.info(f"Executing sp_ExtractSpeakersAndSegmentsFromTranscript for meeting_id: {meeting_id}")
-            execute_query(
-                "EXEC dbo.sp_ExtractSpeakersAndSegmentsFromTranscript ?", 
-                (meeting_id,)
-            )
-            logger.info(f"✅ Successfully executed sp_ExtractSpeakersAndSegmentsFromTranscript for meeting_id: {meeting_id}")
-            
-            # 成功ログの記録
-            insert_trigger_log(
-                meeting_id,
-                "INFO",
-                f"文字起こしテキストの更新と話者・セグメント抽出が完了しました。文字数: {len(transcript_text)}"
-            )
-            
-        except Exception as db_error:
-            error_message = f"Database operation failed: {str(db_error)}"
+                    meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),  # meeting_datetime
+                    meeting_datetime.strftime('%Y-%m-%d %H:%M:%S')   # start_datetime
+                )
+                
+                # デバッグログの追加
+                logger.debug(f"[DEBUG] MERGE INTO実行 - meeting_id: {meeting_id}, user_id: {user_id}")
+                logger.debug(f"[DEBUG] パラメータ数: {len(merge_params)} (inserted_datetimeはGETDATE()で設定)")
+                
+                # merge_sql実行時にTriggerLogへの自動ログ記録をスキップ
+                execute_query(merge_sql, merge_params, skip_trigger_log=True)
+                logger.info(f"✅ Successfully updated transcript_text for meeting_id: {meeting_id}, user_id: {user_id}, title: {title}, file: {file_name}, duration: {duration_seconds}秒")
+                
+                # 既存のセグメントを削除（重複防止）
+                logger.info(f"Deleting existing segments for meeting_id: {meeting_id}")
+                execute_query(
+                    "DELETE FROM dbo.ConversationSegments WHERE meeting_id = ?",
+                    (meeting_id,)
+                )
+                
+                # 話者情報の一意性を確保するためのマップ
+                speaker_map = {}
+                
+                # 文字起こし結果からセグメントを抽出して直接INSERT
+                logger.info(f"Processing conversation segments for meeting_id: {meeting_id}")
+                
+                # まず、すべての話者を収集して一意なspeaker_idを確保
+                for phrase in result_json["recognizedPhrases"]:
+                    speaker_number = phrase.get("speaker", "Unknown")
+                    speaker_name = f"Speaker{speaker_number}"
+                    
+                    if speaker_name not in speaker_map:
+                        # 既存の話者情報を確認
+                        select_query = """
+                            SELECT speaker_id 
+                            FROM dbo.Speakers 
+                            WHERE meeting_id = ? 
+                            AND speaker_name = ? 
+                            AND deleted_datetime IS NULL
+                        """
+                        result = execute_query(select_query, (meeting_id, speaker_name))
+                        
+                        if result:
+                            # 既存のspeaker_idを使用
+                            speaker_id = result[0]["speaker_id"]
+                            logger.info(f"既存の話者情報を使用: {speaker_name} (speaker_id: {speaker_id})")
+                        else:
+                            # 新規話者として登録
+                            insert_query = """
+                                INSERT INTO dbo.Speakers (
+                                    speaker_name, user_id, meeting_id, 
+                                    inserted_datetime, updated_datetime
+                                )
+                                OUTPUT INSERTED.speaker_id
+                                VALUES (?, ?, ?, GETDATE(), GETDATE())
+                            """
+                            try:
+                                insert_result = execute_query(insert_query, (speaker_name, user_id, meeting_id))
+                                
+                                if not insert_result:
+                                    error_message = f"Speaker INSERT failed: No OUTPUT returned for speaker_name={speaker_name}, meeting_id={meeting_id}"
+                                    logger.error(error_message)
+                                    raise Exception(error_message)
+                                    
+                                speaker_id = insert_result[0]["speaker_id"]
+                                logger.info(f"新規話者を登録: {speaker_name} (speaker_id: {speaker_id})")
+                                
+                            except Exception as e:
+                                error_message = f"Speaker INSERT failed for speaker_name={speaker_name}, meeting_id={meeting_id}: {str(e)}"
+                                logger.error(error_message)
+                                logger.error(f"Error type: {type(e)}")
+                                logger.error(f"Error details: {traceback.format_exc()}")
+                                raise Exception(error_message)
+                        
+                        speaker_map[speaker_name] = speaker_id
+                
+                # 話者情報の登録が完了したら、セグメントを登録
+                logger.info(f"Inserting conversation segments with unique speaker_ids for meeting_id: {meeting_id}")
+                for phrase in result_json["recognizedPhrases"]:
+                    speaker_number = phrase.get("speaker", "Unknown")
+                    speaker_name = f"Speaker{speaker_number}"
+                    speaker_id = speaker_map[speaker_name]  # 一意なspeaker_idを取得
+                    text = phrase["nBest"][0]["display"]
+                    
+                    # 時間情報の変換（ナノ秒から秒へ）
+                    offset = phrase.get("offsetInTicks", 0) / 10000000  # 開始時間（秒）
+                    duration = phrase.get("durationInTicks", 0) / 10000000  # 継続時間（秒）
+                    end_time = offset + duration  # 終了時間（秒）
+                    
+                    # ConversationSegmentsテーブルにINSERT
+                    insert_sql = """
+                        INSERT INTO dbo.ConversationSegments (
+                            user_id, speaker_id, meeting_id, content,
+                            file_name, file_path, file_size, duration_seconds,
+                            status, inserted_datetime, updated_datetime,
+                            start_time, end_time
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE(), ?, ?)
+                    """
+                    
+                    insert_params = (
+                        user_id,
+                        speaker_id,  # 一意なspeaker_idを使用
+                        meeting_id,
+                        text,
+                        file_name,
+                        file_path,
+                        blob_properties.size,
+                        round(duration, 3),
+                        "completed",
+                        round(offset, 3),
+                        round(end_time, 3)
+                    )
+                    
+                    execute_query(insert_sql, insert_params)
+                
+                logger.info(f"✅ Successfully inserted conversation segments with unique speaker_ids for meeting_id: {meeting_id}")
+                
+                # 成功ログを手動で記録（record_idを明示的に指定）
+                if loggable_meeting_id:
+                    insert_trigger_log(
+                        loggable_meeting_id,  # 明示的にrecord_idとして使用
+                        "INFO",
+                        f"文字起こしテキストの更新と会話セグメントの登録が完了しました。文字数: {len(transcript_text)}"
+                    )
+                
+            except Exception as db_error:
+                error_message = f"Database operation failed: {str(db_error)}"
+                logger.error(error_message)
+                logger.error(f"Error type: {type(db_error)}")
+                logger.error(f"Error details: {traceback.format_exc()}")
+                
+                # loggable_meeting_idの状態を確認してからログを記録
+                logger.debug(f"[DEBUG] loggable_meeting_id: {loggable_meeting_id} (type: {type(loggable_meeting_id)})")
+                if loggable_meeting_id:
+                    insert_trigger_log(loggable_meeting_id, "ERROR", f"データベース操作エラー: {error_message}")
+                else:
+                    logger.warning("meeting_idが未取得のため、TriggerLogへの記録をスキップします")
+                
+                return func.HttpResponse(
+                    "Error updating transcript or extracting speakers",
+                    status_code=500
+                )
+
+            return func.HttpResponse("Success", status_code=200)
+
+        except Exception as e:
+            error_message = f"Error in webhook callback: {str(e)}"
             logger.error(error_message)
-            logger.error(f"Error type: {type(db_error)}")
+            logger.error(f"Error type: {type(e)}")
             logger.error(f"Error details: {traceback.format_exc()}")
             
-            # エラーログの記録
-            insert_trigger_log(
-                meeting_id,
-                "ERROR",
-                f"データベース操作エラー: {error_message}"
-            )
+            # loggable_meeting_idの状態を確認してからログを記録
+            logger.debug(f"[DEBUG] loggable_meeting_id: {loggable_meeting_id} (type: {type(loggable_meeting_id)})")
+            if loggable_meeting_id:
+                insert_trigger_log(loggable_meeting_id, "ERROR", error_message)
+            else:
+                logger.warning("meeting_idが未取得のため、TriggerLogへの記録をスキップします")
             
-            return func.HttpResponse(
-                "Error updating transcript or extracting speakers",
-                status_code=500
-            )
-
-        return func.HttpResponse("Success", status_code=200)
+            return func.HttpResponse("Error", status_code=500)
 
     except Exception as e:
         error_message = f"Error in webhook callback: {str(e)}"
@@ -718,7 +1141,13 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
         logger.error(f"Error type: {type(e)}")
         logger.error(f"Error details: {traceback.format_exc()}")
         
-        insert_trigger_log(meeting_id, "ERROR", error_message)
+        # loggable_meeting_idの状態を確認してからログを記録
+        logger.debug(f"[DEBUG] loggable_meeting_id: {loggable_meeting_id} (type: {type(loggable_meeting_id)})")
+        if loggable_meeting_id:
+            insert_trigger_log(loggable_meeting_id, "ERROR", error_message)
+        else:
+            logger.warning("meeting_idが未取得のため、TriggerLogへの記録をスキップします")
+        
         return func.HttpResponse("Error", status_code=500)
 
     finally:
@@ -729,457 +1158,9 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                 logger.info(f"一時WAVファイルを削除しました: {temp_wav_path}")
             except Exception as e:
                 logger.warning(f"一時WAVファイルの削除に失敗: {str(e)}")
-
-def get_client_info(meeting_id: int) -> Optional[Dict[str, str]]:
-    """
-    クライアント情報を取得する関数
-    
-    Args:
-        meeting_id (int): 会議ID
-        
-    Returns:
-        Optional[Dict[str, str]]: クライアント情報（企業名と担当者名）を含む辞書、またはNone
-    """
-    try:
-        # Microsoft Entra ID認証のトークンを取得
-        credential = DefaultAzureCredential()
-        token = credential.get_token("https://database.windows.net/.default")
-        
-        # トークンをバイナリ形式に変換
-        token_bytes = bytes(token.token, 'utf-8')
-        exptoken = b''.join(bytes((b, 0)) for b in token_bytes)
-        access_token = struct.pack('=i', len(exptoken)) + exptoken
-        
-        # 接続文字列の構築
-        conn_str = (
-            f"Driver={{ODBC Driver 17 for SQL Server}};"
-            f"Server=tcp:w-paas-salesanalyzer-sqlserver.database.windows.net,1433;"
-            f"Database=w-paas-salesanalyzer-sql;"
-            f"Encrypt=yes;"
-            f"TrustServerCertificate=no;"
-            f"Connection Timeout=30;"
-        )
-        
-        query = """
-            SELECT client_company_name, client_contact_name
-            FROM dbo.BasicInfo
-            WHERE meeting_id = ?
-        """
-
-        with pyodbc.connect(conn_str, attrs_before={1256: access_token}) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(query, (meeting_id,))
-                row = cursor.fetchone()
-                if row:
-                    return {
-                        "client_company_name": row.client_company_name,
-                        "client_contact_name": row.client_contact_name
-                    }
-                return None
-    except Exception as e:
-        logger.error(f"Failed to fetch client info: {str(e)}")
-        logger.error(f"Error type: {type(e)}")
-        logger.error(f"Error details: {traceback.format_exc()}")
-        return None
-
-@app.function_name(name="TestProcessAudio")
-@app.route(route="test-process-audio", methods=["POST"])
-def test_process_audio(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        logger.info("=== Test Process Audio Start ===")
-        
-        # リクエストボディからパラメータを取得
-        req_body = req.get_json()
-        blob_name = req_body.get('blob_name')
-        container_name = req_body.get('container_name')
-        
-        if not blob_name or not container_name:
-            return func.HttpResponse(
-                "Please provide both blob_name and container_name in the request body",
-                status_code=400
-            )
-            
-        # BlobServiceClientの作成
-        blob_service_client = BlobServiceClient.from_connection_string(os.environ["AzureWebJobsStorage"])
-        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
-        
-        # BlobのURLを取得
-        blob_url = blob_client.url
-        
-        # 一時ファイルの作成
-        temp_webm_path = os.path.join(tempfile.gettempdir(), blob_name)
-        with open(temp_webm_path, "wb") as temp_file:
-            blob_data = blob_client.download_blob()
-            blob_data.readinto(temp_file)
-        
-        # WebMからWAVに変換
-        temp_wav_path = convert_webm_to_wav(temp_webm_path)
-        
-        # Speech Serviceの設定
-        speech_config = configure_speech_service()
-        
-        # 認識処理は非同期APIに委ねることを記録
-        logger.info("認識処理は非同期ジョブ（Speech-to-Text API v3.0）にて別途実行されます")
-        
-        return func.HttpResponse(
-            json.dumps({
-                "status": "success",
-                "message": "音声ファイルの変換が完了しました。認識処理は非同期ジョブで実行されます。"
-            }, ensure_ascii=False),
-            status_code=200,
-            mimetype="application/json"
-        )
-            
-    except Exception as e:
-        logger.error(f"テスト処理中にエラーが発生: {str(e)}")
-        logger.error(f"エラーの詳細: {traceback.format_exc()}")
-        return func.HttpResponse(
-            json.dumps({
-                "status": "error",
-                "message": f"エラーが発生しました: {str(e)}"
-            }, ensure_ascii=False),
-            status_code=500,
-            mimetype="application/json"
-        )
-    finally:
-        # 一時ファイルの削除
-        try:
-            if os.path.exists(temp_webm_path):
-                try:
-                    os.remove(temp_webm_path)
-                    logger.info(f"一時WebMファイルを削除しました: {temp_webm_path}")
-                except Exception as e:
-                    logger.warning(f"一時WebMファイルの削除に失敗: {str(e)}")
-            
-            if os.path.exists(temp_wav_path):
-                try:
-                    os.remove(temp_wav_path)
-                    logger.info(f"一時WAVファイルを削除しました: {temp_wav_path}")
-                except Exception as e:
-                    logger.warning(f"一時WAVファイルの削除に失敗: {str(e)}")
-        except Exception as e:
-            logger.error(f"一時ファイルの削除中にエラーが発生: {str(e)}")
-
-def get_audio_duration(audio_path: str) -> int:
-    """音声ファイルの長さを秒単位で取得"""
-    try:
-        # ファイル形式の検証
-        with open(audio_path, 'rb') as f:
-            header = f.read(4)
-            if header != b'RIFF':
-                error_message = f"Invalid audio file format in get_audio_duration. Expected WAV file (RIFF header), but got: {header}"
-                logging.error(error_message)
-                return 0
-
-        import wave
-        with wave.open(audio_path, 'rb') as wav_file:
-            frames = wav_file.getnframes()
-            rate = wav_file.getframerate()
-            duration = frames / float(rate)
-            return int(duration)
-    except Exception as e:
-        logger.error(f"音声ファイル長の取得に失敗: {str(e)}")
-        return 0
-
-def format_transcript(transcript_text, speaker_name="Speaker1"):
-    """文字起こし結果を整形する"""
-    return f"({speaker_name})[{transcript_text}]"
-
-def format_transcript_with_speakers(transcription_results):
-    """話者分離を含む文字起こし結果のフォーマット"""
-    formatted_text = []
-    for result in transcription_results:
-        speaker = f"Speaker{result['speaker_id']}"
-        text = result['text']
-        formatted_text.append(f"({speaker})[{text}]")
-    return " ".join(formatted_text)
-
-def get_db_connection():
-    """
-    Entra ID認証を使用してAzure SQL Databaseに接続する
-    ODBC Driver 17 for SQL Serverを使用
-    """
-    try:
-        # Microsoft Entra ID認証のトークンを取得
-        credential = DefaultAzureCredential()
-        token = credential.get_token("https://database.windows.net/.default")
-        
-        # トークンをバイナリ形式に変換
-        token_bytes = bytes(token.token, 'utf-8')
-        exptoken = b''.join(bytes((b, 0)) for b in token_bytes)
-        access_token = struct.pack('=i', len(exptoken)) + exptoken
-        
-        # 接続文字列の構築
-        conn_str = (
-            f"Driver={{ODBC Driver 17 for SQL Server}};"
-            f"Server=tcp:w-paas-salesanalyzer-sqlserver.database.windows.net,1433;"
-            f"Database=w-paas-salesanalyzer-sql;"
-            f"Encrypt=yes;"
-            f"TrustServerCertificate=no;"
-            f"Connection Timeout=30;"
-        )
-        
-        logger.info("Connecting to database with ODBC Driver 17 for SQL Server")
-        conn = pyodbc.connect(conn_str, attrs_before={1256: access_token})
-        return conn
-    except Exception as e:
-        logger.error(f"Database connection error: {str(e)}")
-        logger.error(f"Connection string (masked): {conn_str.replace('w-paas-salesanalyzer-sqlserver.database.windows.net', '***').replace('w-paas-salesanalyzer-sql', '***')}")
-        raise
-
-def execute_query(query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    """
-    SQLクエリを実行し、結果を返します。
-    
-    Args:
-        query (str): 実行するSQLクエリ
-        params (Optional[Dict[str, Any]]): クエリパラメータ
-        
-    Returns:
-        List[Dict[str, Any]]: クエリ結果のリスト
-    """
-    try:
-        with get_db_connection() as conn:
-            logger.info(f"クエリを実行: {query}")
-            if params:
-                logger.info(f"paramsの型: {type(params)}")
-                logger.info(f"パラメータ: {params}")
-            
-            cursor = conn.cursor()
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
-            
-            if query.strip().upper().startswith("SELECT"):
-                columns = [column[0] for column in cursor.description]
-                rows = cursor.fetchall()
-                results = [dict(zip(columns, row)) for row in rows]
-
-                # datetime → 文字列化
-                for row in results:
-                    for key, value in row.items():
-                        if hasattr(value, 'isoformat'):
-                            row[key] = value.isoformat()
-
-                return results
-            else:
-                conn.commit()
-                logger.info("✅ コミット完了（execute_query）")
-                return []
-                
-    except Exception as e:
-        logger.error(f"クエリ実行エラー: {str(e)}")
-        raise
-
-def get_current_time():
-    """
-    現在時刻をUTCで取得し、SQLサーバー互換の形式で返す
-    """
-    return datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
-
-def test_insert_meeting() -> None:
-    """
-    dbo.Meetingsテーブルへのテスト用INSERTを実行する関数
-    テストデータを挿入し、SELECTで確認する
-    """
-    try:
-        logger.info("=== Meetingsテーブル INSERTテスト開始 ===")
-        
-        # テストデータの準備
-        from datetime import datetime, UTC
-        now = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
-        
-        # INSERTクエリ
-        insert_query = """
-        INSERT INTO dbo.Meetings (
-            meeting_id, user_id, title, file_name, file_path, file_size, duration_seconds,
-            status, transcript_text, error_message, client_company_name, client_contact_name,
-            meeting_datetime, start_datetime, end_datetime, inserted_datetime, updated_datetime
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        
-        # パラメータの設定（既存のmeeting_idとuser_idを使用）
-        params = (
-            65,  # meeting_id（既存）
-            27,  # user_id（既存）
-            'テスト会議 2025-05-12',  # title
-            'test_meeting_65_2025-05-12T12-00-00-000.wav',  # file_name
-            'moc-audio/test_meeting_65_2025-05-12T12-00-00-000.wav',  # file_path
-            123456,  # file_size
-            180,  # duration_seconds (3分)
-            'completed',  # status
-            '(Speaker1)[これはテスト用の文字起こしです。] (Speaker2)[はい、確認できました。]',  # transcript_text
-            None,  # error_message
-            'テスト株式会社',  # client_company_name
-            'テスト 太郎',  # client_contact_name
-            now,  # meeting_datetime
-            now,  # start_datetime
-            now,  # end_datetime
-            now,  # inserted_datetime
-            now   # updated_datetime
-        )
-        
-        # パラメータの型をログ出力
-        logger.info(f"INSERTパラメータの型: {type(params)}")
-        logger.info(f"INSERTパラメータの内容: {params}")
-        
-        # INSERT実行
-        logger.info("INSERTクエリを実行します")
-        execute_query(insert_query, params)
-        logger.info("✅ INSERT成功")
-        
-        # 確認用SELECTクエリ
-        select_query = """
-        SELECT 
-            meeting_id, user_id, title, file_name, status,
-            client_company_name, client_contact_name,
-            meeting_datetime, inserted_datetime
-        FROM dbo.Meetings
-        WHERE meeting_id = ? AND user_id = ?
-        """
-        
-        # SELECTパラメータも既存の値を使用
-        select_params = (65, 27)
-        logger.info(f"SELECTパラメータの型: {type(select_params)}")
-        logger.info(f"SELECTパラメータの内容: {select_params}")
-        
-        # SELECT実行
-        logger.info("SELECTクエリを実行して確認します")
-        results = execute_query(select_query, select_params)
-        
-        if results:
-            logger.info("=== 挿入されたデータ ===")
-            for row in results:
-                logger.info(f"meeting_id: {row['meeting_id']}")
-                logger.info(f"user_id: {row['user_id']}")
-                logger.info(f"title: {row['title']}")
-                logger.info(f"file_name: {row['file_name']}")
-                logger.info(f"status: {row['status']}")
-                logger.info(f"client_company_name: {row['client_company_name']}")
-                logger.info(f"client_contact_name: {row['client_contact_name']}")
-                logger.info(f"meeting_datetime: {row['meeting_datetime']}")
-                logger.info(f"inserted_datetime: {row['inserted_datetime']}")
-        else:
-            logger.warning("❌ データが見つかりませんでした")
-
-        # INSERT成功後に、sp_ExtractSpeakersAndSegmentsFromTranscriptを呼び出す
-        meeting_id = params[0]
-        execute_query("EXEC dbo.sp_ExtractSpeakersAndSegmentsFromTranscript ?", (meeting_id,))
-        logger.info(f"✅ sp_ExtractSpeakersAndSegmentsFromTranscript 実行完了: meeting_id = {meeting_id}")
-            
-    except Exception as e:
-        logger.error(f"❌ テスト実行中にエラーが発生: {str(e)}")
-        logger.error(f"エラーの詳細: {traceback.format_exc()}")
-    finally:
-        logger.info("=== Meetingsテーブル INSERTテスト終了 ===")
-
-@app.function_name(name="TestInsertMeeting")
-@app.route(route="test/insert-meeting", methods=["GET"])
-def test_insert_meeting_func(req: func.HttpRequest) -> func.HttpResponse:
-    """
-    Meetingsテーブルへのテスト用INSERTを実行する簡易HTTPエンドポイント
-    GETメソッドでブラウザから直接アクセス可能
-    """
-    try:
-        logger.info("=== テストエンドポイント /test/insert-meeting が呼び出されました ===")
-        test_insert_meeting()
-        
-        # レスポンスヘッダーにContent-Typeとcharsetを明示的に指定
-        headers = {
-            "Content-Type": "application/json; charset=utf-8"
-        }
-        
-        response_data = {
-            "status": "success",
-            "message": "テスト会議レコードの挿入に成功しました",
-            "endpoint": "GET /api/test/insert-meeting",
-            "timestamp": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
-        }
-        
-        return func.HttpResponse(
-            json.dumps(response_data, ensure_ascii=False),
-            status_code=200,
-            headers=headers
-        )
-    except Exception as e:
-        error_message = f"エラーが発生しました: {str(e)}"
-        logger.error(error_message)
-        logger.error(f"エラーの詳細: {traceback.format_exc()}")
-        
-        # エラーレスポンスも同様にヘッダーを設定
-        headers = {
-            "Content-Type": "application/json; charset=utf-8"
-        }
-        
-        response_data = {
-            "status": "error",
-            "message": error_message,
-            "endpoint": "GET /api/test/insert-meeting",
-            "timestamp": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
-        }
-        
-        return func.HttpResponse(
-            json.dumps(response_data, ensure_ascii=False),
-            status_code=500,
-            headers=headers
-        )
-
-@app.function_name(name="DbInfo")
-@app.route(route="test/db-info", methods=["GET"])
-def get_db_info(req: func.HttpRequest) -> func.HttpResponse:
-    """
-    現在接続しているSQL Serverとデータベース名を取得するエンドポイント
-    """
-    try:
-        logger.info("=== データベース接続情報確認エンドポイント /test/db-info が呼び出されました ===")
-        
-        # データベース情報を取得
-        result = execute_query("SELECT DB_NAME() AS db_name, @@SERVERNAME AS server_name")
-        
-        if not result:
-            raise ValueError("データベース情報の取得に失敗しました")
-            
-        # レスポンスヘッダーの設定
-        headers = {
-            "Content-Type": "application/json; charset=utf-8"
-        }
-        
-        response_data = {
-            "status": "success",
-            "result": result[0],  # 単一レコードなので最初の要素を取得
-            "endpoint": "GET /api/test/db-info",
-            "timestamp": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
-        }
-        
-        logger.info(f"データベース接続情報: {response_data}")
-        
-        return func.HttpResponse(
-            json.dumps(response_data, ensure_ascii=False),
-            status_code=200,
-            headers=headers
-        )
-        
-    except Exception as e:
-        error_message = f"データベース接続情報の取得中にエラーが発生: {str(e)}"
-        logger.error(error_message)
-        logger.error(f"エラーの詳細: {traceback.format_exc()}")
-        
-        headers = {
-            "Content-Type": "application/json; charset=utf-8"
-        }
-        
-        response_data = {
-            "status": "error",
-            "message": error_message,
-            "endpoint": "GET /api/test/db-info",
-            "timestamp": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
-        }
-        
-        return func.HttpResponse(
-            json.dumps(response_data, ensure_ascii=False),
-            status_code=500,
-            headers=headers
-        )
-    finally:
-        logger.info("=== データベース接続情報確認エンドポイント終了 ===")
+                # loggable_meeting_idの状態を確認してからログを記録
+                logger.debug(f"[DEBUG] loggable_meeting_id: {loggable_meeting_id} (type: {type(loggable_meeting_id)})")
+                if loggable_meeting_id:
+                    insert_trigger_log(loggable_meeting_id, "WARNING", f"一時ファイル削除失敗: {str(e)}")
+                else:
+                    logger.warning("meeting_idが未取得のため、TriggerLogへの記録をスキップします")
