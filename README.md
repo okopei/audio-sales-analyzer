@@ -393,6 +393,8 @@ git add -p
 | E020 | Azure Functions | Blobアクセスエラー | • Azuriteが起動していない<br>• コンテナが存在しない | Azuriteが起動しているか、コンテナが存在するか確認 | | |
 | E021 | Azure Functions | SQLエラー | • データベース接続文字列が不正<br>• テーブル構造が一致しない | データベース接続文字列とテーブル構造を確認 | | |
 | E022 | Azure Functions | EventGridトリガーエラー | • イベントデータのフォーマットが不正<br>• 接続文字列の問題 | テストJSONファイルのフォーマットとAzuriteの接続文字列を確認 | | |
+| E023 | Azure Functions | TranscriptionCallback関数が未実装 | 音声ファイルの文字起こし処理が実行できない | 1. Azure Speech Servicesの設定確認<br>2. TranscriptionCallback関数の実装<br>3. 文字起こし結果の保存処理の実装 | | |
+| E024 | Azure Functions | 音声ファイルの文字起こし処理 | 音声ファイルのアップロード後の処理が未実装 | 1. Azure Blob Storageからの音声ファイル取得<br>2. Azure Speech Servicesによる文字起こし<br>3. 文字起こし結果のデータベース保存 | | |
 
 # ファイル名の命名規則
 
@@ -532,8 +534,6 @@ resultsUrls.channel_0 → 上記で取得した .json ダウンロードURLに�
 ⑧ PowerShell の Invoke-WebRequest を実行して Webhook を模擬送信
 
 powershell
-コピーする
-編集する
 Invoke-WebRequest -Uri "https://<新しい-ngrok>.ngrok-free.app/api/transcription-callback" `
                   -Method Post `
                   -Headers @{ "Content-Type" = "application/json" } `
@@ -604,3 +604,99 @@ Invoke-RestMethod -Uri "http://localhost:7072/api/test/insert-meeting" -Method G
 - 本番環境では無効化することを推奨します
 - テストデータは毎回新しいmeeting_idで挿入されます
 - エラーが発生した場合は、詳細なエラーメッセージが返されます
+
+① テストフローまとめ（Markdown形式）
+markdown
+
+# 音声認識・話者分離処理のローカルテストフロー
+
+## STEP 1: `.wav` リセット（任意・再テスト時）
+- 前回処理した `.wav` ファイルを削除（Blob Storage 上）
+- `.webm` ファイルは再利用可
+
+## STEP 2: Event Grid Trigger を手動発火（トランスクリプションジョブ作成）
+1. PowerShell で以下を実行し、`eventgrid-test-payload.json` を生成・保存
+
+```powershell
+$event = @(
+    @{
+        id = [guid]::NewGuid().ToString()
+        subject = "/blobServices/default/containers/moc-audio/blobs/meeting_71_user_27_2025-04-30T02-11-30-801.webm"
+        eventType = "Microsoft.Storage.BlobCreated"
+        eventTime = (Get-Date).ToUniversalTime().ToString("o")
+        dataVersion = "1.0"
+        data = @{
+            api = "PutBlob"
+            clientRequestId = [guid]::NewGuid().ToString()
+            requestId = [guid]::NewGuid().ToString()
+            eTag = "0x8DBB9715E8F04AF"
+            contentType = "video/webm"
+            contentLength = 123456
+            blobType = "BlockBlob"
+            url = "https://audiosalesanalyzeraudio.blob.core.windows.net/moc-audio/meeting_71_user_27_2025-04-30T02-11-30-801.webm"
+            sequencer = "000000000000000000000000000000000000000000000000"
+            storageDiagnostics = @{ batchId = [guid]::NewGuid().ToString() }
+        }
+    }
+) | ConvertTo-Json -Depth 10
+
+$event | Out-File -Encoding UTF8 -FilePath .\eventgrid-test-payload.json
+Invoke-WebRequest で手動発火：
+
+powershell
+
+Invoke-WebRequest `
+  -Uri "http://localhost:7072/runtime/webhooks/eventgrid?functionName=TriggerTranscriptionJob" `
+  -Method POST `
+  -Headers @{ "Content-Type" = "application/json"; "aeg-event-type" = "Notification" } `
+  -Body (Get-Content -Raw -Path ".\eventgrid-test-payload.json")
+STEP 3: Webhook テスト（transcription 結果を模擬POST）
+ngrok http 7072 を実行して HTTPS Forwarding URL を取得
+
+.env または local.settings.json の TRANSCRIPTION_CALLBACK_URL を更新
+
+sample-webhook.json を編集（resultsUrls.channel_0 を最新URLに）
+
+PowerShell で callback 送信：
+
+powershell
+
+Invoke-WebRequest `
+  -Uri "https://<ngrok-url>.ngrok-free.app/api/transcription-callback" `
+  -Method POST `
+  -Headers @{ "Content-Type" = "application/json" } `
+  -Body (Get-Content -Raw -Path "sample-webhook.json")
+✅ テスト結果の確認
+sql
+
+SELECT * FROM dbo.ConversationSegments WHERE meeting_id = 71;
+SELECT * FROM dbo.Speakers WHERE meeting_id = 71;
+start_time, end_time, speaker_id, content が正しく登録されていれば成功
+
+# 🔁 音声ファイル処理のローカルテスト構造
+
+## 🎯 テスト目的
+- .webm → .wav 変換
+- Azure Speech への transcription job 登録
+- transcription 結果（JSON）を受け取って SQL に書き込む
+- 会話セグメントと話者情報を正確に登録できるか確認
+
+---
+
+## ✅ STEP 1: 前回の `.wav` を削除（必要なら）
+
+- Storage に残っている `.wav` を削除
+- `.webm` は再利用OK
+
+---
+
+## ✅ STEP 2: Event Grid Trigger を模擬発火
+
+- `.webm` アップロードを見立てて、TriggerTranscriptionJob を PowerShell で起動
+
+```powershell
+Invoke-WebRequest `
+  -Uri "http://localhost:7072/runtime/webhooks/eventgrid?functionName=TriggerTranscriptionJob" `
+  -Method POST `
+  -Headers @{ "Content-Type" = "application/json"; "aeg-event-type" = "Notification" } `
+  -Body (Get-Content -Raw -Path "eventgrid-test-payload.json")
