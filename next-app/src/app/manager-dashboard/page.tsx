@@ -70,6 +70,12 @@ export default function ManagerDashboard() {
     logout();
   }
 
+  useEffect(() => {
+    console.log('ログイン中のuser_id:', user?.user_id)
+    console.log('Usersテーブル検索結果:', userInfo)
+    console.log('user_name:', userInfo?.user_name ?? user?.user_name)
+  }, [user, userInfo])
+
   return (
     <ProtectedRoute requireManager={true}>
       <div className="min-h-screen bg-zinc-50 p-4 sm:p-6">
@@ -78,7 +84,7 @@ export default function ManagerDashboard() {
           {/* ユーザー名とログアウトボタン */}
           <div className="flex justify-between items-center mb-4">
             <div className="text-xl font-medium">
-              {userInfo ? `${userInfo.user_name} MGR` : (user?.user_name ? `${user.user_name} MGR` : 'MGR')}
+              {userInfo?.user_name ? `${userInfo.user_name}様` : (user?.user_name ? `${user.user_name}様` : 'MGR')}
             </div>
             <Button 
               variant="outline" 

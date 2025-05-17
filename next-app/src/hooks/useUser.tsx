@@ -39,7 +39,15 @@ export function useUser() {
       }
 
       const data = await response.json()
-      setUserInfo(data.user)
+      // userプロパティがなければフラットなdataをそのまま使う
+      const userObj = data.user ?? data
+      if (!userObj || !userObj.user_name) {
+        console.error('Users APIレスポンスが不正です:', data)
+        setError('Users APIレスポンスが不正です')
+        setUserInfo(null)
+        return
+      }
+      setUserInfo(userObj)
     } catch (err) {
       console.error("Error fetching user info:", err)
       setError(`Error fetching user info: ${err instanceof Error ? err.message : String(err)}`)
