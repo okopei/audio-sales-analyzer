@@ -854,45 +854,86 @@ def get_latest_comments(req: func.HttpRequest) -> func.HttpResponse:
                 "Access-Control-Allow-Headers": "Content-Type",
             }
             return func.HttpResponse(status_code=204, headers=headers)
-            
-        # クエリパラメータからユーザーIDを取得
-        user_id = 1  # デフォルト値
-        limit = 5    # デフォルト値
+
+        # クエリパラメータの取得
+        user_id = req.params.get('userId')
+        limit = int(req.params.get('limit', 5))
         
-        try:
-            if 'userId' in req.params:
-                user_id_str = req.params.get('userId')
-                logger.info(f"受信したuserIdパラメータ: {user_id_str}")
-                if user_id_str and user_id_str.isdigit():
-                    user_id = int(user_id_str)
-            if 'limit' in req.params:
-                limit_str = req.params.get('limit')
-                if limit_str and limit_str.isdigit():
-                    limit = int(limit_str)
-            logger.info(f"処理するパラメータ: userId={user_id}, limit={limit}")
-        except Exception as e:
-            logger.warning(f"パラメータ処理中にエラーが発生しました: {e}")
-            logger.warning("デフォルト値を使用します: userId=1, limit=5")
+        logger.info(f"=== GetLatestComments Debug Info ===")
+        logger.info(f"Request parameters - userId: {user_id}, limit: {limit}")
+
+        # user_idが指定されていない場合はエラーを返す
+        if not user_id:
+            logger.warning("userId parameter is required")
+            return func.HttpResponse(
+                json.dumps({
+                    "success": False,
+                    "message": "ユーザーIDが必要です",
+                    "comments": []
+                }, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=400,
+                headers={"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+            )
+
+        # user_idが指定されている場合、そのユーザーに関連するmeeting_idを取得
+        meeting_query = """
+            SELECT DISTINCT meeting_id 
+            FROM dbo.BasicInfo 
+            WHERE user_id = ? AND deleted_datetime IS NULL
+        """
+        meetings = execute_query(meeting_query, (user_id,))
+        meeting_ids = [m['meeting_id'] for m in meetings]
         
+        logger.info(f"Found meetings for user_id {user_id}: {meeting_ids}")
+
+        if not meeting_ids:
+            logger.info(f"No meetings found for user_id {user_id}")
+            return func.HttpResponse(
+                json.dumps({
+                    "success": True,
+                    "message": "関連する会議が見つかりませんでした",
+                    "comments": []
+                }, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=200,
+                headers={"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+            )
+
+        # meeting_idsを使用してコメントを取得
         query = """
             SELECT TOP (?) c.comment_id, c.segment_id, c.meeting_id, c.user_id, c.content, 
                    c.inserted_datetime, c.updated_datetime, u.user_name, 
-                   m.client_company_name, m.client_contact_name 
+                   b.client_company_name, b.client_contact_name,
+                   CASE WHEN cr.reader_id IS NOT NULL THEN 1 ELSE 0 END as is_read
             FROM dbo.Comments c 
             JOIN dbo.Users u ON c.user_id = u.user_id 
-            JOIN dbo.Meetings m ON c.meeting_id = m.meeting_id 
+            JOIN dbo.BasicInfo b ON c.meeting_id = b.meeting_id 
+            LEFT JOIN dbo.CommentReads cr ON c.comment_id = cr.comment_id AND cr.reader_id = ?
             WHERE c.deleted_datetime IS NULL 
+            AND c.meeting_id IN ({})
+            AND b.user_id = ?
             ORDER BY c.inserted_datetime DESC
-        """
-        comments = execute_query(query, (limit,))
+        """.format(','.join(['?'] * len(meeting_ids)))
+
+        params = [limit, user_id] + meeting_ids + [user_id]
+        logger.info(f"Executing comments query with params: {params}")
+        comments = execute_query(query, params)
+        logger.info(f"Found {len(comments)} comments for user_id {user_id}")
         
+        # コメントの詳細をログ出力
+        for comment in comments:
+            logger.info(f"Comment details - id: {comment['comment_id']}, meeting_id: {comment['meeting_id']}, user_id: {comment['user_id']}, user_name: {comment['user_name']}")
+
+        # 日付時刻の変換とisReadの設定
         for comment in comments:
             if hasattr(comment['inserted_datetime'], 'isoformat'):
                 comment['inserted_datetime'] = comment['inserted_datetime'].isoformat()
             if hasattr(comment['updated_datetime'], 'isoformat'):
                 comment['updated_datetime'] = comment['updated_datetime'].isoformat()
-            comment['isRead'] = True
-        
+            comment['isRead'] = bool(comment['is_read'])
+            del comment['is_read']
+
         response = {
             "success": True,
             "message": f"最新コメントを取得しました（userId: {user_id}, limit: {limit}）",
