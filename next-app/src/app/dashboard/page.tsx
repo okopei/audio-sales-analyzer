@@ -45,15 +45,40 @@ export default function Dashboard() {
   useEffect(() => {
     const fetchLatestComments = async () => {
       try {
+        // user_idが存在しない場合は早期リターン
+        if (!user?.user_id) {
+          console.log('ユーザーIDが存在しないため、コメント取得をスキップします')
+          setLatestComments([])
+          setCommentsLoading(false)
+          return
+        }
+
         setCommentsLoading(true)
-        // 一時的にAPI呼び出しを無効化していたコードを削除し、APIコールを復活させる
-        console.log('コメント取得に使用するユーザーID:', user?.user_id)
-        const userId = user?.user_id  // ログインしているユーザーのIDを使用
+        // デバッグログを追加
+        console.log('=== コメント取得デバッグ情報 ===')
+        console.log('ログインユーザー情報:', {
+          user_id: user.user_id,
+          user_name: user.user_name,
+          email: user.email
+        })
+        
+        const userId = user.user_id
+        console.log('API呼び出しに使用するuser_id:', userId)
+        
         const comments = await getLatestComments(userId)
+        console.log('取得したコメント一覧:', comments.map((comment: LatestComment) => ({
+          comment_id: comment.comment_id,
+          meeting_id: comment.meeting_id,
+          user_id: comment.user_id,
+          user_name: comment.user_name,
+          client_company_name: comment.client_company_name,
+          client_contact_name: comment.client_contact_name,
+          isRead: comment.isRead
+        })))
+        
         setLatestComments(comments)
       } catch (error) {
         console.error('最新コメント取得エラー:', error)
-        // エラーが発生した場合は空の配列をセット
         setLatestComments([])
       } finally {
         setCommentsLoading(false)
@@ -61,7 +86,7 @@ export default function Dashboard() {
     }
 
     fetchLatestComments()
-  }, [user])
+  }, [user?.user_id]) // user全体ではなく、user_idのみを依存配列に設定
 
   // 日付をフォーマットする関数
   const formatDateTime = (dateTimeStr: string) => {
