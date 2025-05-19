@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -16,6 +16,19 @@ import ProtectedRoute from "@/components/auth/ProtectedRoute"
 import { uploadToAzureStorage } from "@/lib/utils/azure-storage"
 import { toast } from "react-hot-toast"
 
+// APIレスポンスの型定義
+interface BasicInfoResponse {
+  message: string
+  meeting_id: number
+  search_info?: {
+    meeting_id: number
+    user_id: number
+    client_company_name: string
+    client_contact_name: string
+    meeting_datetime: string
+  }
+}
+
 export default function NewMeetingPage() {
   const router = useRouter()
   const { startRecording } = useRecording()
@@ -30,6 +43,11 @@ export default function NewMeetingPage() {
     url?: string
   } | null>(null)
   const [createdMeetingId, setCreatedMeetingId] = useState<number | null>(null)
+  const submitTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const lastSubmitTimeRef = useRef<number>(0)
+  
+  // デバウンス時間（ミリ秒）
+  const DEBOUNCE_TIME = 2000
 
   useEffect(() => {
     setIsMobile(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent))
@@ -88,6 +106,19 @@ export default function NewMeetingPage() {
 
   // 基本情報を保存する関数
   const handleSubmit = async (type: "save" | "next"): Promise<number | null> => {
+    // デバウンス処理
+    const now = Date.now()
+    if (now - lastSubmitTimeRef.current < DEBOUNCE_TIME) {
+      console.log("送信をスキップ: 前回の送信から2秒以内です")
+      return null
+    }
+    lastSubmitTimeRef.current = now
+
+    if (isSubmitting) {
+      console.log("送信をスキップ: 既に送信中です")
+      return null
+    }
+
     if (!user) {
       toast.error("ログインしてください")
       return null
@@ -107,19 +138,30 @@ export default function NewMeetingPage() {
       setIsSubmitting(true)
       setSubmitError(null)
 
+      // 既存のsubmitTimeoutRefをクリア
+      if (submitTimeoutRef.current) {
+        clearTimeout(submitTimeoutRef.current)
+        submitTimeoutRef.current = null
+      }
+
+      // 新しいタイムアウトを設定
+      submitTimeoutRef.current = setTimeout(() => {
+        setIsSubmitting(false)
+        submitTimeoutRef.current = null
+      }, DEBOUNCE_TIME)
+
       // 会議日時文字列を作成
       const meeting_datetime = `${formData.year}-${formData.month.padStart(2, "0")}-${formData.day.padStart(2, "0")} ${formData.hour.padStart(2, "0")}:00:00`;
       
       // Save basic info
       const basicInfoData = {
-        userId: user.user_id,
+        user_id: user.user_id,
         year: formData.year,
         month: formData.month,
         day: formData.day,
         hour: formData.hour,
-        companyName: formData.companyName,
-        client_company_name: formData.companyNameBiz,
         client_contact_name: formData.companyName,
+        client_company_name: formData.companyNameBiz,
         industry: formData.industry,
         scale: formData.scale,
         meeting_goal: formData.meetingGoal,
@@ -129,56 +171,55 @@ export default function NewMeetingPage() {
       console.log("Submitting form data:", basicInfoData);
       
       // API を呼び出して商談情報を保存（BasicInfoテーブルに保存）
-      const response = await saveBasicInfo(basicInfoData)
+      const response = await saveBasicInfo(basicInfoData) as BasicInfoResponse
       
       console.log("BasicInfo saved successfully:", response)
       
       // 会議IDの取得を確認
-      if (!response.search_info?.meeting_id) {
+      if (!response.meeting_id) {
         throw new Error("会議IDの取得に失敗しました")
       }
       
-      // ☆の情報をローカルストレージに保存（録音画面での検索用）
+      // 基本情報をローカルストレージに保存
       try {
         const basicMeetingInfo = {
-          userId: user.user_id,
+          user_id: user.user_id,
           client_company_name: formData.companyNameBiz,
           client_contact_name: formData.companyName,
           meeting_datetime: meeting_datetime
-        };
+        }
         
-        localStorage.setItem('basicMeetingInfo', JSON.stringify(basicMeetingInfo));
+        localStorage.setItem('basicMeetingInfo', JSON.stringify(basicMeetingInfo))
         
         // responseから検索情報を取得
         if (response.search_info) {
-          console.log("検索情報をローカルストレージに保存:", response.search_info);
+          console.log("検索情報をローカルストレージに保存:", response.search_info)
         }
         
-        console.log("基本情報をローカルストレージに保存:", basicMeetingInfo);
+        console.log("基本情報をローカルストレージに保存:", basicMeetingInfo)
       } catch (storageError) {
-        console.warn("ローカルストレージへの保存に失敗:", storageError);
-        // 処理は続行
+        console.warn("ローカルストレージへの保存に失敗:", storageError)
       }
       
       // 成功時の処理
       if (type === "next") {
-        // 会議IDの取得 - これは録音画面で検索される
-        console.log("BasicInfo保存完了、検索情報:", response.search_info);
+        // 会議IDの取得
+        console.log("BasicInfo保存完了、検索情報:", response.search_info)
         
         // 商談情報の保存完了をトーストで通知
-        toast.success("商談情報を保存しました。録音画面に移動します");
+        toast.success("商談情報を保存しました。録音画面に移動します")
         
         // データベースへの反映を確実にするために少し待機
         setTimeout(() => {
-          console.log("録音画面へ移動します");
+          console.log("録音画面へ移動します")
           // 録音ページへ移動
-          router.push(`/recording`);
-        }, 1000);
+          router.push(`/recording`)
+        }, 1000)
       } else {
         // 保存成功メッセージを表示
-        toast.success(`商談情報を保存しました: ${response.message}`);
+        toast.success(`商談情報を保存しました: ${response.message}`)
         // 会議IDを返す
-        return response.search_info.meeting_id;
+        return response.meeting_id
       }
     } catch (error) {
       console.error("Error saving basic info:", error)
@@ -211,11 +252,24 @@ export default function NewMeetingPage() {
       // モーダルやトーストでエラーを表示
       toast.error(`エラー: ${errorMessage}`);
     } finally {
+      // タイムアウトをクリア
+      if (submitTimeoutRef.current) {
+        clearTimeout(submitTimeoutRef.current)
+      }
       setIsSubmitting(false)
     }
     
-    return null // エラー時はnullを返す
+    return null
   }
+
+  // コンポーネントのアンマウント時にタイムアウトをクリア
+  useEffect(() => {
+    return () => {
+      if (submitTimeoutRef.current) {
+        clearTimeout(submitTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const handleFileUpload = async (file: File) => {
     if (!user) {
@@ -621,7 +675,7 @@ export default function NewMeetingPage() {
                     onClick={() => handleSubmit("next")}
                     disabled={isSubmitting || isUploading}
                   >
-                    録音へ
+                    {isSubmitting ? "処理中..." : "録音へ"}
                   </Button>
                 </div>
               </div>

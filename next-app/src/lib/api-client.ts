@@ -10,14 +10,13 @@ console.log(`API Base URL configured as: ${API_BASE_URL}`);
 
 // BasicInfoデータの型定義
 export interface BasicInfoData {
-  userId: string | number;
+  user_id: string | number;
   year: string;
   month: string;
   day: string;
   hour: string;
-  companyName: string;
-  client_company_name: string;
   client_contact_name: string;
+  client_company_name: string;
   industry?: string;
   scale?: string;
   meeting_goal?: string;
@@ -119,26 +118,47 @@ export async function saveMeeting(meetingData: any): Promise<{ meetingId: number
 /**
  * 基本情報を保存する
  */
-export async function saveBasicInfo(basicInfoData: BasicInfoData): Promise<{ success: boolean, message: string, search_info: any }> {
+export async function saveBasicInfo(basicInfoData: BasicInfoData): Promise<{ meeting_id: number, message: string }> {
   try {
-    console.log('基本情報を保存中:', basicInfoData);
+    // 詳細なログ出力を追加
+    console.log('保存する基本情報の詳細:', {
+      user_id: basicInfoData.user_id,
+      client_contact_name: basicInfoData.client_contact_name,
+      client_company_name: basicInfoData.client_company_name,
+      industry_type: basicInfoData.industry,
+      company_scale: basicInfoData.scale,
+      sales_goal: basicInfoData.meeting_goal,
+      meeting_datetime: basicInfoData.meeting_datetime,
+      year: basicInfoData.year,
+      month: basicInfoData.month,
+      day: basicInfoData.day,
+      hour: basicInfoData.hour
+    });
 
     const response = await fetchAPI('/basicinfo', {
       method: 'POST',
       body: JSON.stringify(basicInfoData),
     });
 
-    if (!response || !response.success) {
+    // レスポンスにmeeting_idが含まれていることを確認
+    if (!response || !response.meeting_id) {
       console.error('基本情報の保存に失敗しました:', response);
       throw new Error('基本情報の保存に失敗しました');
     }
 
-    console.log('基本情報が正常に保存されました。検索情報:', response.search_info);
+    console.log('基本情報が正常に保存されました:', response);
     
     // 基本情報をローカルストレージに保存（録音画面での検索用）
-    if (typeof window !== 'undefined' && response.search_info) {
+    if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem('basicMeetingInfo', JSON.stringify(response.search_info));
+        const searchInfo = {
+          meeting_id: response.meeting_id,
+          client_company_name: basicInfoData.client_company_name,
+          client_contact_name: basicInfoData.client_contact_name,
+          meeting_datetime: basicInfoData.meeting_datetime,
+          user_id: basicInfoData.user_id
+        };
+        localStorage.setItem('basicMeetingInfo', JSON.stringify(searchInfo));
         console.log('基本情報をローカルストレージに保存しました');
       } catch (storageError) {
         console.warn('ローカルストレージへの保存に失敗:', storageError);
