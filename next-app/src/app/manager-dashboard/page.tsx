@@ -11,39 +11,12 @@ import { useUser } from "@/hooks/useUser"
 import { useMembersMeetings } from "@/hooks/useMembersMeetings"
 import React, { useState, useEffect } from "react"
 import ProtectedRoute from "@/components/auth/ProtectedRoute"
+import { CommentsList } from '@/components/comments/CommentsList'
 
 export default function ManagerDashboard() {
-  // useAuthフックを使用してユーザー情報とログアウト関数を取得
-  const { user, logout } = useAuth();
-  const { userInfo, loading: userLoading } = useUser();
-  const { meetings, loading, error } = useMembersMeetings();
-  
-  const comments = [
-    {
-      id: 1,
-      client: "株式会社ABC",
-      comment: "予算について具体的な話し合いができました。次回は見積書を持参します。",
-      commentTime: "02-07 15:30",
-      salesPerson: "田中 一郎",
-      isRead: false,
-    },
-    {
-      id: 2,
-      client: "DEF工業",
-      comment: "技術的な課題について深い議論ができました。開発チームに確認が必要です。",
-      commentTime: "02-07 13:00",
-      salesPerson: "鈴木 花子",
-      isRead: true,
-    },
-    {
-      id: 3,
-      client: "GHIシステムズ",
-      comment: "導入に前向きな反応でした。来週までに提案書を準備します。",
-      commentTime: "02-06 16:30",
-      salesPerson: "佐藤 健一",
-      isRead: false,
-    },
-  ]
+  const { user, logout } = useAuth()
+  const { userInfo, loading: userLoading } = useUser()
+  const { meetings, loading, error } = useMembersMeetings()
 
   // 日付をフォーマットする関数
   const formatDateTime = (dateTimeStr: string) => {
@@ -67,7 +40,7 @@ export default function ManagerDashboard() {
 
   // ログアウト処理
   const handleLogout = () => {
-    logout();
+    logout()
   }
 
   useEffect(() => {
@@ -75,6 +48,14 @@ export default function ManagerDashboard() {
     console.log('Usersテーブル検索結果:', userInfo)
     console.log('user_name:', userInfo?.user_name ?? user?.user_name)
   }, [user, userInfo])
+
+  if (!user) {
+    return (
+      <div className="p-4 text-center">
+        <p className="text-gray-600">ログインしてください</p>
+      </div>
+    )
+  }
 
   return (
     <ProtectedRoute requireManager={true}>
@@ -179,31 +160,38 @@ export default function ManagerDashboard() {
             </ScrollArea>
           </Card>
 
-          {/* 最新のコメント */}
+          {/* コメント一覧 */}
           <Card className="p-4 sm:p-6">
-            <h2 className="text-lg sm:text-xl font-semibold mb-4">最新のコメント</h2>
+            <h2 className="text-lg sm:text-xl font-semibold mb-4">コメント一覧</h2>
             <ScrollArea className="h-[300px] sm:h-[600px]">
-              <div className="space-y-4">
-                {comments.map((comment) => (
-                  <Link
-                    key={comment.id}
-                    href={`/feedback#${comment.id}`}
-                    className="block border-b last:border-0 pb-4 hover:bg-slate-50 rounded-lg transition-colors"
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <div>
-                        <div className="text-sm font-medium">{comment.salesPerson}</div>
-                        <div className="text-sm text-gray-500">{comment.client}</div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {!comment.isRead && <Badge variant="destructive">未読</Badge>}
-                        <span className="text-sm text-gray-500">{comment.commentTime}</span>
+              {meetings.map((meeting) => (
+                <div key={meeting.meeting_id} className="mb-4 last:mb-0">
+                  <Link href={`/feedback/${meeting.meeting_id}`} className="block">
+                    <div className="mb-2 pb-2 border-b hover:bg-slate-50 transition-colors p-2 rounded">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="font-medium text-gray-900">
+                            {meeting.title || '無題の会議'}
+                          </h3>
+                          <p className="text-sm text-gray-600">
+                            {meeting.client_company_name && `${meeting.client_company_name} - `}
+                            {meeting.client_contact_name}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {new Date(meeting.meeting_datetime).toLocaleString('ja-JP')}
+                          </p>
+                        </div>
+                        <div className="text-sm text-blue-600">
+                          {meeting.user_name}
+                        </div>
                       </div>
                     </div>
-                    <p className="text-sm text-gray-600">{comment.comment}</p>
                   </Link>
-                ))}
-              </div>
+                  <div className="pl-2">
+                    <CommentsList meetingId={meeting.meeting_id} />
+                  </div>
+                </div>
+              ))}
             </ScrollArea>
           </Card>
         </div>

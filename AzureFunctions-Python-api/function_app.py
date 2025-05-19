@@ -1037,3 +1037,76 @@ def get_basic_info_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500,
             headers=headers
         )
+
+@app.function_name(name="GetCommentsByMeetingId")
+@app.route(route="comments/by-meeting/{meeting_id}", methods=["GET", "OPTIONS"])
+def get_comments_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
+    """指定されたmeeting_idに紐づくコメントを取得するAPI"""
+    try:
+        if req.method == "OPTIONS":
+            return func.HttpResponse(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type",
+                }
+            )
+
+        meeting_id = req.route_params.get("meeting_id")
+        if not meeting_id:
+            return func.HttpResponse(
+                json.dumps({"error": "Meeting ID is required"}, ensure_ascii=False),
+                status_code=400,
+                mimetype="application/json"
+            )
+
+        # データベース接続
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # コメントを取得
+        query = """
+            SELECT 
+                c.comment_id,
+                c.segment_id,
+                c.meeting_id,
+                c.user_id,
+                c.content,
+                c.inserted_datetime,
+                c.updated_datetime,
+                u.user_name
+            FROM dbo.Comments c
+            JOIN dbo.Users u ON c.user_id = u.user_id
+            WHERE c.meeting_id = ? 
+            AND c.deleted_datetime IS NULL
+            ORDER BY c.inserted_datetime DESC
+        """
+        
+        cursor.execute(query, (meeting_id,))
+        columns = [column[0] for column in cursor.description]
+        comments = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+        # 各コメントにreaders配列を追加
+        for comment in comments:
+            comment["readers"] = []
+
+        return func.HttpResponse(
+            json.dumps(comments, default=str, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=200,
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+
+    except Exception as e:
+        logging.error(f"Error in GetCommentsByMeetingId: {str(e)}")
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500
+        )
+    finally:
+        if 'cursor' in locals():
+            cursor.close()
+        if 'conn' in locals():
+            conn.close()
