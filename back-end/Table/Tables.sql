@@ -22,7 +22,7 @@ CREATE TABLE Users (
     password_reset_expires DATETIME NULL,
     login_attempt_count INT DEFAULT 0,
     is_manager BIT NULL,
-    manager_id NVARCHAR NULL
+    manager_id INT NULL
 )
 
 -- 基本情報テーブル
