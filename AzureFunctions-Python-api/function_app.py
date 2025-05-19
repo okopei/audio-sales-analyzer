@@ -327,7 +327,7 @@ def get_user_by_id_func(req: func.HttpRequest) -> func.HttpResponse:
 
         # データベースからユーザー情報を取得
         query = """
-            SELECT user_id, user_name, email, is_manager, manager_name, is_active, account_status 
+            SELECT user_id, user_name, email, is_manager, manager_id, is_active, account_status 
             FROM dbo.Users 
             WHERE user_id = ?
         """
@@ -457,14 +457,25 @@ def get_members_meetings_func(req: func.HttpRequest) -> func.HttpResponse:
             }
             return func.HttpResponse(status_code=204, headers=headers)
 
+        # manager_idパラメータの取得とバリデーション
+        manager_id = req.params.get('manager_id')
+        if not manager_id or not manager_id.isdigit():
+            return func.HttpResponse(
+                json.dumps({"error": "manager_id パラメータが必要です"}, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=400
+            )
+
         query = """
             SELECT m.meeting_id, m.user_id, m.client_contact_name, m.client_company_name, 
                    m.meeting_datetime, m.duration_seconds, m.status, m.transcript_text, 
                    m.file_name, m.file_size, m.error_message, u.user_name 
             FROM dbo.Meetings m 
             JOIN dbo.Users u ON m.user_id = u.user_id
+            WHERE u.manager_id = ?
+            ORDER BY m.meeting_datetime DESC
         """
-        meetings = execute_query(query)
+        meetings = execute_query(query, (int(manager_id),))
 
         headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(

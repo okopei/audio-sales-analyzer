@@ -33,43 +33,31 @@ export function useMembersMeetings() {
       setError(null)
 
       const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7071/api'
-      const url = `${baseUrl}/members-meetings?account_status=ACTIVE`
+      const url = `${baseUrl}/members-meetings?manager_id=${user.user_id}`
       
+      console.log("🔗 Fetching from:", url)
+      console.log("✅ useMembersMeetings manager_id:", user.user_id)
+
       const response = await fetch(url)
       
       if (!response.ok) {
-        throw new Error(`API error: ${response.status}`)
+        const errorData = await response.json()
+        console.error("❌ API Error Response:", errorData)
+        throw new Error(errorData.error || `API error: ${response.status}`)
       }
 
       const data = await response.json()
+      console.log("📊 Fetched meetings count:", data.length)
       
       // データの存在確認とエラーハンドリング
-      if (!data) {
-        setError("APIからのレスポンスが空です")
-        setMeetings([])
-        return
-      }
-      
-      if (data.error) {
-        setError(`APIエラー: ${data.error}`)
-        setMeetings([])
-        return
-      }
-      
-      if (data.message && !data.meetings) {
-        // エラーではなく情報メッセージとして扱う
-        setMeetings([])
-        return
-      }
-      
-      if (!data.meetings) {
-        setError("APIからのレスポンスに会議データが含まれていません")
+      if (!data || !Array.isArray(data)) {
+        setError("APIからのレスポンスが不正です")
         setMeetings([])
         return
       }
       
       // 日時でソートし、最新10件を取得
-      const sortedMeetings = data.meetings
+      const sortedMeetings = data
         .sort((a: Meeting, b: Meeting) => 
           new Date(b.meeting_datetime).getTime() - new Date(a.meeting_datetime).getTime()
         )

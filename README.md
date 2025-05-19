@@ -701,6 +701,57 @@ Invoke-WebRequest `
   -Headers @{ "Content-Type" = "application/json"; "aeg-event-type" = "Notification" } `
   -Body (Get-Content -Raw -Path "eventgrid-test-payload.json")
 
+## 音声認識・話者分離処理のローカルテストフロー（更新版）
+
+### 🎯 テスト目的
+- `.webm` → `.wav` 変換
+- Azure Speech への transcription job 登録
+- transcription 結果（JSON）を受信
+- 会話セグメント／話者情報を SQL に保存
+
+---
+
+### ✅ STEP 1: `.wav` を削除（再テスト時）
+- ストレージ上の `.wav` を削除（`.webm` は残す）
+
+---
+
+### ✅ STEP 2: Event Grid Trigger を手動発火
+
+```powershell
+# eventgrid-test-payload.json 作成
+$event = @(
+    @{
+        id = [guid]::NewGuid().ToString()
+        subject = "/blobServices/default/containers/moc-audio/blobs/meeting_83_user_34_2025-05-19T07-20-38-755.webm"
+        eventType = "Microsoft.Storage.BlobCreated"
+        eventTime = (Get-Date).ToUniversalTime().ToString("o")
+        dataVersion = "1.0"
+        data = @{
+            api = "PutBlob"
+            clientRequestId = [guid]::NewGuid().ToString()
+            requestId = [guid]::NewGuid().ToString()
+            eTag = "0x8DBB9715E8F04AF"
+            contentType = "video/webm"
+            contentLength = 123456
+            blobType = "BlockBlob"
+            url = "https://audiosalesanalyzeraudio.blob.core.windows.net/moc-audio/meeting_83_user_34_2025-05-19T07-20-38-755.webm"
+            sequencer = "000000000000000000000000000000000000000000000000"
+            storageDiagnostics = @{ batchId = [guid]::NewGuid().ToString() }
+        }
+    }
+) | ConvertTo-Json -Depth 10
+
+$event | Out-File -Encoding UTF8 -FilePath .\eventgrid-test-payload.json
+
+# 発火
+Invoke-WebRequest `
+  -Uri "http://localhost:7072/runtime/webhooks/eventgrid?functionName=TriggerTranscriptionJob" `
+  -Method POST `
+  -Headers @{ "Content-Type" = "application/json"; "aeg-event-type" = "Notification" } `
+  -Body (Get-Content -Raw -Path ".\eventgrid-test-payload.json")
+
+
 
 ## 🔐 Azure Entra ID 認証情報の取得・設定手順
 
