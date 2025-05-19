@@ -37,7 +37,10 @@ def get_db_connection():
         # アクセストークンの有効期限をログ出力
         logger.info(f"アクセストークンの有効期限 (UTC): {token.expires_on}")
         
-        access_token = token.token.encode("utf-16le")
+        # トークンをバイト列に変換
+        token_bytes = bytes(token.token, 'utf-8')
+        exptoken = b''.join(bytes((b, 0)) for b in token_bytes)
+        access_token = struct.pack('=i', len(exptoken)) + exptoken
         
         # 接続文字列をf-stringで明示的に構築
         conn_str = (
@@ -47,7 +50,6 @@ def get_db_connection():
             f"Encrypt=yes;"
             f"TrustServerCertificate=no;"
             f"Connection Timeout=30;"
-            f"Authentication=ActiveDirectoryAccessToken;"
         )
         
         logger.info("データベース接続を試行します...")

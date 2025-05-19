@@ -361,9 +361,11 @@ def get_user_by_id_func(req: func.HttpRequest) -> func.HttpResponse:
 
 # 会議関連のエンドポイント
 @app.function_name(name="SaveBasicInfo")
-@app.route(route="basicinfo", methods=["POST", "OPTIONS"])
+@app.route(route="basicinfo", auth_level=func.AuthLevel.ANONYMOUS)
 def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
+    """会議の基本情報を保存する"""
     try:
+        # OPTIONSリクエスト処理
         if req.method == "OPTIONS":
             headers = {
                 "Access-Control-Allow-Origin": "*",
@@ -372,18 +374,23 @@ def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
             }
             return func.HttpResponse(status_code=204, headers=headers)
 
-        data = req.get_json()
-        return save_basic_info(req, data)
-
+        # reqオブジェクトをそのまま渡す
+        return save_basic_info(req)
+        
+    except ValueError as e:
+        logger.error(f"Invalid request data: {str(e)}")
+        return func.HttpResponse(
+            json.dumps({"error": f"Invalid request data: {str(e)}"}),
+            status_code=400,
+            mimetype="application/json"
+        )
     except Exception as e:
         logger.error(f"Save basic info error: {str(e)}")
         logger.error(f"Error details: {traceback.format_exc()}")
-        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
-            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
-            mimetype="application/json",
+            json.dumps({"error": f"Internal server error: {str(e)}"}),
             status_code=500,
-            headers=headers
+            mimetype="application/json"
         )
 
 # 会議一覧取得エンドポイント
