@@ -29,47 +29,35 @@ export default function MeetingSearch() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // ユーザー一覧の取得と監視
+  // ユーザー一覧の取得
   useEffect(() => {
     const fetchUsers = async () => {
       try {
         const usersData = await getUsers()
-        console.log("取得したユーザー一覧:", usersData)
         setUsers(usersData)
       } catch (err) {
-        console.error("ユーザー一覧の取得に失敗しました:", err)
+        console.error("ユーザー一覧の取得に失敗:", err)
         setError("ユーザー一覧の取得に失敗しました")
       }
     }
     fetchUsers()
   }, [])
 
-  // usersの状態変更を監視
-  useEffect(() => {
-    if (users.length > 0) {
-      console.log("描画時の users:", users)
-    }
-  }, [users])
-
   const fetchMeetings = async (params?: MeetingSearchParams) => {
     try {
       setIsLoading(true)
       setError(null)
-      console.log("🧾 fetchMeetings 呼び出しパラメータ:", params)
       
       const response = await searchMeetings({
         ...params,
         userId: params?.userId || undefined
       })
       
-      console.log("✅ searchMeetings 成功:", response)
-      // 配列であることを確認してから設定
       setMeetings(Array.isArray(response) ? response : [])
       
     } catch (err) {
-      console.error("❌ searchMeetings エラー:", err)
+      console.error("会議データの取得に失敗:", err)
       setError("データの取得に失敗しました")
-      console.error(err)
       setMeetings([])
     } finally {
       setIsLoading(false)
