@@ -772,17 +772,28 @@ def get_segment_comments(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(status_code=204, headers=headers)
             
         segment_id = req.route_params.get('segment_id')
+        logger.info(f"[コメント取得] 開始 - segment_id: {segment_id}")
         
         query = """
-            SELECT c.comment_id, c.segment_id, c.meeting_id, c.user_id, c.content, 
-                   c.inserted_datetime, c.updated_datetime, u.user_name 
+            SELECT 
+                c.comment_id, c.segment_id, c.meeting_id, c.user_id, c.content, 
+                c.inserted_datetime, c.updated_datetime, u.user_name,
+                (
+                    SELECT JSON_QUERY((
+                        SELECT reader_id, read_datetime
+                        FROM dbo.CommentReads cr
+                        WHERE cr.comment_id = c.comment_id
+                        FOR JSON PATH
+                    ))
+                ) as readers_json
             FROM dbo.Comments c 
             JOIN dbo.Users u ON c.user_id = u.user_id 
             WHERE c.deleted_datetime IS NULL AND c.segment_id = ?
         """
         comments = execute_query(query, (segment_id,))
+        logger.info(f"[コメント取得] {len(comments)}件のコメントを取得")
                 
-                # 日付時刻の適切な変換
+        # 日付時刻の適切な変換と既読情報の設定
         for comment in comments:
             if hasattr(comment['inserted_datetime'], 'isoformat'):
                 comment['inserted_datetime'] = comment['inserted_datetime'].isoformat()
@@ -794,8 +805,14 @@ def get_segment_comments(req: func.HttpRequest) -> func.HttpResponse:
             elif comment['updated_datetime'] is not None and not isinstance(comment['updated_datetime'], str):
                 comment['updated_datetime'] = str(comment['updated_datetime'])
             
-            # 既読情報（一時的に空配列を返す）
-            comment['readers'] = []
+            # 既読情報の設定
+            try:
+                readers_json = comment.pop('readers_json', None)
+                comment['readers'] = json.loads(readers_json) if readers_json else []
+                logger.info(f"[コメント取得] comment_id: {comment['comment_id']} の既読情報: {comment['readers']}")
+            except Exception as e:
+                logger.error(f"[コメント取得] 既読情報の解析エラー - comment_id: {comment['comment_id']}, error: {str(e)}")
+                comment['readers'] = []
         
         response = {
             "success": True,
@@ -811,8 +828,8 @@ def get_segment_comments(req: func.HttpRequest) -> func.HttpResponse:
             headers=headers
         )
     except Exception as e:
-        logger.error(f"Get comments error: {str(e)}")
-        logger.error(f"Error details: {traceback.format_exc()}")
+        logger.error(f"[コメント取得] エラー: {str(e)}")
+        logger.error(f"[コメント取得] エラー詳細: {traceback.format_exc()}")
         headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
             json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
@@ -911,10 +928,44 @@ def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
             }
             return func.HttpResponse(status_code=204, headers=headers)
         
-        # 正常なレスポンスを返す（実際の処理は行わない）
+        # リクエストボディの取得とバリデーション
+        req_body = req.get_json()
+        logger.info(f"[既読更新] リクエストボディ: {req_body}")
+        
+        comment_id = req_body.get('comment_id')
+        user_id = req_body.get('user_id')
+        
+        if not all([comment_id, user_id]):
+            logger.warning("[既読更新] 必須パラメータが不足しています")
+            return func.HttpResponse(
+                json.dumps({
+                    "success": False,
+                    "message": "comment_idとuser_idが必要です"
+                }, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=400,
+                headers={"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+            )
+        
+        # 現在の日時をSQL Serverに適した形式で文字列化
+        now = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 既読情報をデータベースに挿入
+        insert_query = """
+            IF NOT EXISTS (
+                SELECT 1 FROM dbo.CommentReads 
+                WHERE comment_id = ? AND reader_id = ?
+            )
+            INSERT INTO dbo.CommentReads (comment_id, reader_id, read_datetime)
+            VALUES (?, ?, ?)
+        """
+        execute_query(insert_query, (comment_id, user_id, comment_id, user_id, now))
+        
+        logger.info(f"[既読更新] 成功 - comment_id: {comment_id}, user_id: {user_id}")
+        
         response = {
             "success": True,
-            "message": "既読機能は一時的に無効化されています"
+            "message": "コメントを既読にしました"
         }
         
         headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
@@ -926,11 +977,14 @@ def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     except Exception as e:
-        logger.error(f"Mark comment as read error: {str(e)}")
-        logger.error(f"Error details: {traceback.format_exc()}")
+        logger.error(f"[既読更新] エラー: {str(e)}")
+        logger.error(f"[既読更新] エラー詳細: {traceback.format_exc()}")
         headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
-            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
+            json.dumps({
+                "success": False,
+                "message": f"Internal server error: {str(e)}"
+            }, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
             headers=headers
