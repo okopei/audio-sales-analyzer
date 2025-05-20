@@ -395,6 +395,8 @@ git add -p
 | E022 | Azure Functions | EventGridトリガーエラー | • イベントデータのフォーマットが不正<br>• 接続文字列の問題 | テストJSONファイルのフォーマットとAzuriteの接続文字列を確認 | | |
 | E023 | Azure Functions | TranscriptionCallback関数が未実装 | 音声ファイルの文字起こし処理が実行できない | 1. Azure Speech Servicesの設定確認<br>2. TranscriptionCallback関数の実装<br>3. 文字起こし結果の保存処理の実装 | | |
 | E024 | Azure Functions | 音声ファイルの文字起こし処理 | 音声ファイルのアップロード後の処理が未実装 | 1. Azure Blob Storageからの音声ファイル取得<br>2. Azure Speech Servicesによる文字起こし<br>3. 文字起こし結果のデータベース保存 | | |
+| E036 | Azure Functions | EventGridトリガーの404エラー | EventGridトリガーに直接HTTPリクエストを送信した際に404エラーが発生 | 1. `/admin/functions/ProcessAudio`エンドポイントを使用してテスト<br>2. テストJSONファイルを使用してイベントデータを送信<br>3. `test_trigger.py`スクリプトを使用してテスト | ✅ エラー解消：正しいエンドポイントを使用してテスト可能に | 1. テストの実行<br>2. エラーハンドリングの確認<br>3. ログ出力の確認 |
+| E037 | Next.js | APIリクエストURLの重複 | APIリクエストのURLに`/api`が重複して含まれる<br>例：`http://localhost:7071/api/api/users` | `API_BASE_URL`の定義から`/api`を削除<br>例：`http://localhost:7071` → `http://localhost:7071/api` | ✅ エラー解消：正しいURL形式に修正 | 1. APIリクエストの動作確認<br>2. エラーハンドリングの確認<br>3. ログ出力の確認 |
 
 # ファイル名の命名規則
 
