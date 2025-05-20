@@ -407,24 +407,99 @@ def get_meetings_func(req: func.HttpRequest) -> func.HttpResponse:
             }
             return func.HttpResponse(status_code=204, headers=headers)
 
-        # クエリパラメータからユーザーIDを取得
-        user_id = req.params.get('userId')
-        if not user_id:
-            return func.HttpResponse(
-                json.dumps({"error": "ユーザーIDが必要です"}, ensure_ascii=False),
-                mimetype="application/json",
-                status_code=400
-            )
+        logger.info("=== 会議検索開始 ===")
+        
+        # クエリパラメータの取得
+        user_id = req.params.get("userId")
+        from_date_str = req.params.get("fromDate")
+        to_date_str = req.params.get("toDate")
 
+        logger.info(f"[会議検索] リクエストパラメータ:")
+        logger.info(f"[会議検索] - userId: {user_id}")
+        logger.info(f"[会議検索] - fromDate: {from_date_str}")
+        logger.info(f"[会議検索] - toDate: {to_date_str}")
+
+        # クエリの構築
         query = """
-            SELECT meeting_id, user_id, client_contact_name, client_company_name, 
-                   meeting_datetime, duration_seconds, status, transcript_text, 
-                   file_name, file_size, error_message 
-            FROM dbo.Meetings
-            WHERE user_id = ?
-            ORDER BY meeting_datetime DESC
+            SELECT m.meeting_id, m.user_id, m.client_contact_name, m.client_company_name, 
+                   m.meeting_datetime, m.duration_seconds, m.status, m.transcript_text, 
+                   m.file_name, m.file_size, m.error_message, u.user_name
+            FROM dbo.Meetings m
+            JOIN dbo.Users u ON m.user_id = u.user_id
+            WHERE 1=1
         """
-        meetings = execute_query(query, (user_id,))
+        params = []
+
+        # 営業担当でフィルター
+        if user_id:
+            try:
+                user_id_int = int(user_id)
+                query += " AND m.user_id = ?"
+                params.append(user_id_int)
+                logger.info(f"[会議検索] ユーザーIDフィルター適用: {user_id_int}")
+            except ValueError:
+                logger.error(f"[会議検索] 無効なユーザーID形式: {user_id}")
+                return func.HttpResponse(
+                    json.dumps({"error": "Invalid userId format"}, ensure_ascii=False),
+                    mimetype="application/json",
+                    status_code=400,
+                    headers={"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+                )
+
+        # 開催日付フィルター（from）
+        if from_date_str:
+            try:
+                from_date = datetime.fromisoformat(from_date_str)
+                query += " AND CAST(m.meeting_datetime AS DATE) >= ?"
+                params.append(from_date.date())
+                logger.info(f"[会議検索] 開始日フィルター適用: {from_date.date()}")
+            except ValueError:
+                logger.error(f"[会議検索] 無効な開始日形式: {from_date_str}")
+                return func.HttpResponse(
+                    json.dumps({"error": "Invalid fromDate format. Use YYYY-MM-DD"}, ensure_ascii=False),
+                    mimetype="application/json",
+                    status_code=400,
+                    headers={"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+                )
+
+        # 開催日付フィルター（to）
+        if to_date_str:
+            try:
+                to_date = datetime.fromisoformat(to_date_str)
+                query += " AND CAST(m.meeting_datetime AS DATE) <= ?"
+                params.append(to_date.date())
+                logger.info(f"[会議検索] 終了日フィルター適用: {to_date.date()}")
+            except ValueError:
+                logger.error(f"[会議検索] 無効な終了日形式: {to_date_str}")
+                return func.HttpResponse(
+                    json.dumps({"error": "Invalid toDate format. Use YYYY-MM-DD"}, ensure_ascii=False),
+                    mimetype="application/json",
+                    status_code=400,
+                    headers={"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+                )
+
+        # 日付の降順でソート
+        query += " ORDER BY m.meeting_datetime DESC"
+
+        logger.info(f"[会議検索] 実行クエリ: {query}")
+        logger.info(f"[会議検索] パラメータ: {params}")
+
+        # クエリの実行
+        meetings = execute_query(query, params)
+        logger.info(f"[会議検索] 取得件数: {len(meetings)}")
+
+        # フィルター適用状況のサマリー
+        logger.info("[会議検索] フィルター適用状況:")
+        if user_id:
+            logger.info(f"[会議検索] - ユーザーID: {user_id}")
+        if from_date_str:
+            logger.info(f"[会議検索] - 開始日: {from_date_str}")
+        if to_date_str:
+            logger.info(f"[会議検索] - 終了日: {to_date_str}")
+        if not any([user_id, from_date_str, to_date_str]):
+            logger.info("[会議検索] - フィルターなし（全件取得）")
+
+        logger.info("=== 会議検索終了 ===")
 
         headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
@@ -435,8 +510,8 @@ def get_meetings_func(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     except Exception as e:
-        logger.error(f"Get meetings error: {str(e)}")
-        logger.error(f"Error details: {traceback.format_exc()}")
+        logger.error(f"[会議検索] エラー発生: {str(e)}")
+        logger.error(f"[会議検索] エラー詳細: {traceback.format_exc()}")
         headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
             json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),

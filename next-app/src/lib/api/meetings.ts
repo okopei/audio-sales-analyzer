@@ -8,25 +8,21 @@ export async function searchMeetings(params: MeetingSearchParams): Promise<Meeti
   console.log("📍 API_BASE_URL:", API_BASE_URL)
   console.log("📥 params:", params)
 
-  // ベースURLを構築
-  let url = `${API_BASE_URL}/meetings`
-  console.log("🔨 ベースURL:", url)
-
-  // クエリパラメータを構築
-  const queryParams = new URLSearchParams()
-  if (params.userId) queryParams.append("userId", params.userId)
-  if (params.fromDate) queryParams.append("from_date", params.fromDate)
-  if (params.toDate) queryParams.append("to_date", params.toDate)
-
-  // クエリパラメータがある場合のみ追加
-  if (queryParams.toString()) {
-    url += `?${queryParams.toString()}`
-  }
-
-  console.log("🌐 最終リクエストURL:", url)
-
   try {
-    const response = await fetch(url, {
+    // クエリパラメータの構築
+    const queryParams = new URLSearchParams()
+    if (params.userId) queryParams.append("userId", params.userId)
+    if (params.fromDate) queryParams.append("fromDate", params.fromDate)
+    if (params.toDate) queryParams.append("toDate", params.toDate)
+
+    // リクエストURLの構築
+    const baseUrl = `${API_BASE_URL}/meetings`
+    console.log("🔨 ベースURL:", baseUrl)
+
+    const requestUrl = `${baseUrl}?${queryParams.toString()}`
+    console.log("🌐 最終リクエストURL:", requestUrl)
+
+    const response = await fetch(requestUrl, {
       headers: {
         "Accept": "application/json",
       },
@@ -53,7 +49,7 @@ export async function searchMeetings(params: MeetingSearchParams): Promise<Meeti
       console.error("❌ API Error:", {
         status: response.status,
         statusText: response.statusText,
-        url: url,
+        url: requestUrl,
         data: data
       })
       throw new Error(`会議データの取得に失敗しました (${response.status})`)
