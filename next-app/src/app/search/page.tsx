@@ -115,14 +115,16 @@ export default function MeetingSearch() {
                   <SelectValue placeholder="選択してください" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem key="all" value="all">全て</SelectItem>
-                  {users
-                    .filter((user) => user.user_id && user.user_name)
-                    .map((user) => (
-                      <SelectItem key={`user-${user.user_id}`} value={String(user.user_id)}>
-                        {user.user_name}
-                      </SelectItem>
-                    ))}
+                  <ScrollArea className="h-60">
+                    <SelectItem key="all" value="all">全て</SelectItem>
+                    {users
+                      .filter((user) => user.user_id && user.user_name)
+                      .map((user) => (
+                        <SelectItem key={`user-${user.user_id}`} value={String(user.user_id)}>
+                          {user.user_name}
+                        </SelectItem>
+                      ))}
+                  </ScrollArea>
                 </SelectContent>
               </Select>
             </div>
