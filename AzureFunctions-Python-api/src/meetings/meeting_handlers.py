@@ -42,6 +42,10 @@ def get_meetings(req: func.HttpRequest) -> func.HttpResponse:
 def get_members_meetings(req: func.HttpRequest) -> func.HttpResponse:
     """
     メンバーの会議一覧を取得する
+    クエリパラメータ:
+    - user_id: ユーザーIDでフィルタリング（オプション）
+    - from_date: 開始日でフィルタリング（オプション）
+    - to_date: 終了日でフィルタリング（オプション）
     """
     log_request(req, "GetMembersMeetings")
     
@@ -50,21 +54,81 @@ def get_members_meetings(req: func.HttpRequest) -> func.HttpResponse:
         return handle_options_request()
     
     try:
-        # メンバーの会議一覧を取得
+        # クエリパラメータの取得と検証
+        user_id = req.params.get('user_id')
+        from_date = req.params.get('from_date')
+        to_date = req.params.get('to_date')
+
+        # 日付形式の検証
+        if from_date:
+            try:
+                datetime.strptime(from_date, '%Y-%m-%d')
+            except ValueError:
+                return create_error_response("Invalid from_date format. Use YYYY-MM-DD", 400)
+        
+        if to_date:
+            try:
+                datetime.strptime(to_date, '%Y-%m-%d')
+            except ValueError:
+                return create_error_response("Invalid to_date format. Use YYYY-MM-DD", 400)
+
+        # クエリの構築
         query = """
             SELECT m.meeting_id, m.user_id, m.client_contact_name, m.client_company_name, 
                    m.meeting_datetime, m.duration_seconds, m.status, m.transcript_text, 
                    m.file_name, m.file_size, m.error_message, m.title, m.file_path, u.user_name 
             FROM dbo.Meetings m 
             JOIN dbo.Users u ON m.user_id = u.user_id
+            WHERE 1=1
         """
-        meetings = execute_query(query)
+        params = []
+
+        # ユーザーIDでフィルタリング
+        if user_id:
+            try:
+                user_id = int(user_id)
+                query += " AND m.user_id = ?"
+                params.append(user_id)
+            except ValueError:
+                return create_error_response("Invalid user_id format", 400)
+
+        # 日付範囲でフィルタリング
+        if from_date:
+            query += " AND CAST(m.meeting_datetime AS DATE) >= ?"
+            params.append(from_date)
+        if to_date:
+            query += " AND CAST(m.meeting_datetime AS DATE) <= ?"
+            params.append(to_date)
+
+        # 日付の降順でソート
+        query += " ORDER BY m.meeting_datetime DESC"
+
+        logging.info(f"Executing query: {query}")
+        logging.info(f"With parameters: {params}")
+
+        # クエリの実行
+        meetings = execute_query(query, params)
+        logging.info(f"Found {len(meetings)} meetings")
         
-        return create_json_response({"meetings": meetings})
+        # ユーザー一覧の取得
+        users_query = "SELECT user_id, user_name FROM dbo.Users WHERE deleted_datetime IS NULL"
+        users = execute_query(users_query)
+        logging.info(f"Found {len(users)} users")
+        
+        return create_json_response({
+            "meetings": meetings,
+            "users": users
+        })
         
     except Exception as e:
+        error_details = traceback.format_exc()
         logging.error(f"Error retrieving members meetings: {str(e)}")
-        return create_error_response(f"Internal server error: {str(e)}", 500)
+        logging.error(f"Error details: {error_details}")
+        return create_error_response({
+            "error": "Internal server error",
+            "message": str(e),
+            "details": error_details
+        }, 500)
 
 def save_basic_info(req: func.HttpRequest) -> func.HttpResponse:
     """

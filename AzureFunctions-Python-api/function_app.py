@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 # モジュール構造からのインポート
 from src.auth import login, register, get_user_by_id
 from src.meetings import get_meetings, get_members_meetings, save_basic_info, get_basic_info
+from src.users.user_handlers import get_users
 
 # Azure Functions アプリケーションの初期化
 app = FunctionApp(http_auth_level=AuthLevel.ANONYMOUS)
@@ -1167,3 +1168,8 @@ def delete_comment(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500,
             headers=headers
         )
+
+@app.function_name(name="users")
+@app.route(route="users", auth_level=func.AuthLevel.ANONYMOUS)
+def users(req: func.HttpRequest) -> func.HttpResponse:
+    return get_users(req)

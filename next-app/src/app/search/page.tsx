@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -9,6 +9,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ArrowLeft, Search, X } from "lucide-react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { Meeting, User, MeetingSearchParams } from "@/types/meeting"
+import { searchMeetings } from "@/lib/api/meetings"
+import { getUsers } from "@/lib/api/users"
 
 // ユーザータイプの定数
 const USER_TYPES = {
@@ -18,83 +21,80 @@ const USER_TYPES = {
 
 export default function MeetingSearch() {
   const router = useRouter()
-  // ユーザータイプのstate
-  const [userType, setUserType] = useState<typeof USER_TYPES[keyof typeof USER_TYPES]>(USER_TYPES.MANAGER)
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
+  const [fromDate, setFromDate] = useState<string>("")
+  const [toDate, setToDate] = useState<string>("")
+  const [meetings, setMeetings] = useState<Meeting[]>([])
+  const [users, setUsers] = useState<User[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  // ユーザータイプが変更されたときの処理
-  const handleUserTypeChange = (value: typeof USER_TYPES[keyof typeof USER_TYPES]) => {
-    setUserType(value)
+  // ユーザー一覧の取得と監視
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const usersData = await getUsers()
+        console.log("取得したユーザー一覧:", usersData)
+        setUsers(usersData)
+      } catch (err) {
+        console.error("ユーザー一覧の取得に失敗しました:", err)
+        setError("ユーザー一覧の取得に失敗しました")
+      }
+    }
+    fetchUsers()
+  }, [])
+
+  // usersの状態変更を監視
+  useEffect(() => {
+    if (users.length > 0) {
+      console.log("描画時の users:", users)
+    }
+  }, [users])
+
+  const fetchMeetings = async (params?: MeetingSearchParams) => {
+    try {
+      setIsLoading(true)
+      setError(null)
+      console.log("🧾 fetchMeetings 呼び出しパラメータ:", params)
+      
+      const response = await searchMeetings({
+        ...params,
+        userId: params?.userId || undefined
+      })
+      
+      console.log("✅ searchMeetings 成功:", response)
+      // 配列であることを確認してから設定
+      setMeetings(Array.isArray(response) ? response : [])
+      
+    } catch (err) {
+      console.error("❌ searchMeetings エラー:", err)
+      setError("データの取得に失敗しました")
+      console.error(err)
+      setMeetings([])
+    } finally {
+      setIsLoading(false)
+    }
   }
 
-  // テスト用に多めのデータを用意
-  const [searchResults, setSearchResults] = useState([
-    {
-      id: 1,
-      company: "株式会社ABC",
-      industry: "IT・通信業",
-      size: "大企業",
-      date: "2024/01/15",
-      status: "成約済",
-      salesPerson: "田中 一郎",
-      nextAction: "契約書の締結",
-    },
-    {
-      id: 2,
-      company: "株式会社XYZ",
-      industry: "製造業",
-      size: "中堅企業",
-      date: "2024/01/10",
-      status: "商談中",
-      salesPerson: "鈴木 花子",
-      nextAction: "見積書の提出",
-    },
-    {
-      id: 3,
-      company: "株式会社DEF",
-      industry: "小売業",
-      size: "中小企業",
-      date: "2024/01/05",
-      status: "終了",
-      salesPerson: "佐藤 健一",
-      nextAction: "競合採用",
-    },
-    // スクロールのテスト用データ
-    ...Array(10)
-      .fill(null)
-      .map((_, index) => ({
-        id: index + 4,
-        company: `テスト企業${index + 4}`,
-        industry: "その他",
-        size: "中小企業",
-        date: "2024/01/01",
-        status: "商談中",
-        salesPerson: "営業担当者",
-        nextAction: "フォローアップ",
-      })),
-  ])
+  const handleSearch = () => {
+    const params: MeetingSearchParams = {}
+    if (selectedUserId) params.userId = selectedUserId
+    if (fromDate) params.fromDate = fromDate
+    if (toDate) params.toDate = toDate
+    fetchMeetings(params)
+  }
 
-  // ダッシュボードへのリンク先を決定
-  const dashboardLink = userType === USER_TYPES.MANAGER ? "/manager-dashboard" : "/dashboard"
+  const handleClear = () => {
+    setSelectedUserId(null)
+    setFromDate("")
+    setToDate("")
+  }
 
   return (
     <div className="min-h-screen bg-zinc-50 p-3 sm:p-6">
-      {/* 開発用ユーザータイプ切り替え */}
-      <div className="mb-4 p-2 bg-yellow-100 rounded-md">
-        <div className="text-xs font-medium text-yellow-800 mb-1">開発用ユーザータイプ切り替え</div>
-        <Select value={userType} onValueChange={handleUserTypeChange}>
-          <SelectTrigger className="w-[140px] text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={USER_TYPES.MANAGER}>Manager</SelectItem>
-            <SelectItem value={USER_TYPES.MEMBER}>Member</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
       {/* ヘッダー */}
       <div className="mb-4 sm:mb-6">
-        <Link href={dashboardLink}>
+        <Link href="/dashboard">
           <Button variant="ghost" size="sm" className="mb-2 sm:mb-4 text-xs sm:text-sm">
             <ArrowLeft className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
             ダッシュボードに戻る
@@ -108,38 +108,58 @@ export default function MeetingSearch() {
         <Card className="p-4 sm:p-6 bg-white shadow-md">
           <h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">検索条件</h2>
           <div className="space-y-3 sm:space-y-4">
-            {/* 営業担当者選択（Managerの場合のみ表示） */}
-            {userType === USER_TYPES.MANAGER && (
-              <div className="space-y-1 sm:space-y-2">
-                <label className="text-xs sm:text-sm font-medium">営業担当者</label>
-                <Select>
-                  <SelectTrigger className="text-xs sm:text-sm">
-                    <SelectValue placeholder="選択してください" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">全て</SelectItem>
-                    <SelectItem value="tanaka">田中 一郎</SelectItem>
-                    <SelectItem value="suzuki">鈴木 花子</SelectItem>
-                    <SelectItem value="sato">佐藤 健一</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+            <div className="space-y-1 sm:space-y-2">
+              <label className="text-xs sm:text-sm font-medium">営業担当者</label>
+              <Select value={selectedUserId || undefined} onValueChange={setSelectedUserId}>
+                <SelectTrigger className="text-xs sm:text-sm truncate">
+                  <SelectValue placeholder="選択してください" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem key="all" value="all">全て</SelectItem>
+                  {users
+                    .filter((user) => user.user_id && user.user_name)
+                    .map((user) => (
+                      <SelectItem key={`user-${user.user_id}`} value={String(user.user_id)}>
+                        {user.user_name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
 
             <div className="space-y-1 sm:space-y-2">
               <label className="text-xs sm:text-sm font-medium">期間</label>
               <div className="grid grid-cols-2 gap-2">
-                <Input type="date" className="text-xs sm:text-sm" />
-                <Input type="date" className="text-xs sm:text-sm" />
+                <Input
+                  type="date"
+                  className="text-xs sm:text-sm"
+                  value={fromDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                />
+                <Input
+                  type="date"
+                  className="text-xs sm:text-sm"
+                  value={toDate}
+                  onChange={(e) => setToDate(e.target.value)}
+                />
               </div>
             </div>
 
             <div className="pt-3 sm:pt-4 space-y-2">
-              <Button className="w-full text-xs sm:text-sm">
+              <Button
+                className="w-full text-xs sm:text-sm"
+                onClick={handleSearch}
+                disabled={isLoading}
+              >
                 <Search className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
                 検索
               </Button>
-              <Button variant="outline" className="w-full text-xs sm:text-sm">
+              <Button
+                variant="outline"
+                className="w-full text-xs sm:text-sm"
+                onClick={handleClear}
+                disabled={isLoading}
+              >
                 <X className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
                 条件をクリア
               </Button>
@@ -162,25 +182,45 @@ export default function MeetingSearch() {
             </Select>
           </div>
 
+          {error && (
+            <div className="text-red-500 text-sm mb-4">{error}</div>
+          )}
+
           <ScrollArea className="h-[300px] sm:h-[calc(50vh-100px)]">
             <div className="space-y-3 sm:space-y-4 pr-4">
-              {searchResults.map((result) => (
+              {meetings.map((meeting) => (
                 <Link
-                  key={result.id}
-                  href={`/feedback#${result.id}`}
+                  key={meeting.meeting_id}
+                  href={`/feedback#${meeting.meeting_id}`}
                   className="block border rounded-lg p-3 sm:p-4 hover:bg-slate-50 transition-colors cursor-pointer"
                 >
                   <div className="flex justify-between items-start">
                     <div>
-                      <div className="font-medium text-sm sm:text-base">{result.company}</div>
-                      {userType === USER_TYPES.MANAGER && (
-                        <div className="text-xs sm:text-sm text-gray-500">担当: {result.salesPerson}</div>
-                      )}
+                      <div className="font-medium text-sm sm:text-base">
+                        {meeting.client_company_name}
+                      </div>
+                      <div className="text-xs sm:text-sm text-gray-500">
+                        担当: {users.find(u => String(u.user_id) === String(meeting.user_id))?.user_name || "不明"}
+                      </div>
+                      <div className="text-xs sm:text-sm text-gray-500">
+                        連絡先: {meeting.client_contact_name}
+                      </div>
+                      <div className="text-xs sm:text-sm text-gray-500">
+                        状態: {meeting.status}
+                      </div>
                     </div>
-                    <div className="text-xs sm:text-sm text-gray-500">{result.date}</div>
+                    <div className="text-xs sm:text-sm text-gray-500">
+                      {new Date(meeting.meeting_datetime).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}
+                    </div>
                   </div>
                 </Link>
               ))}
+              {meetings.length === 0 && !isLoading && !error && (
+                <div className="text-center text-gray-500 py-4">検索結果がありません</div>
+              )}
+              {isLoading && (
+                <div className="text-center text-gray-500 py-4">読み込み中...</div>
+              )}
             </div>
           </ScrollArea>
         </Card>
