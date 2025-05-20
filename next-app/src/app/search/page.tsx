@@ -21,7 +21,7 @@ const USER_TYPES = {
 
 export default function MeetingSearch() {
   const router = useRouter()
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
+  const [selectedUserId, setSelectedUserId] = useState<string>("all")
   const [fromDate, setFromDate] = useState<string>("")
   const [toDate, setToDate] = useState<string>("")
   const [meetings, setMeetings] = useState<Meeting[]>([])
@@ -78,14 +78,16 @@ export default function MeetingSearch() {
 
   const handleSearch = () => {
     const params: MeetingSearchParams = {}
-    if (selectedUserId) params.userId = selectedUserId
+    if (selectedUserId && selectedUserId !== "all") {
+      params.userId = selectedUserId
+    }
     if (fromDate) params.fromDate = fromDate
     if (toDate) params.toDate = toDate
     fetchMeetings(params)
   }
 
   const handleClear = () => {
-    setSelectedUserId(null)
+    setSelectedUserId("all")
     setFromDate("")
     setToDate("")
   }
@@ -110,7 +112,7 @@ export default function MeetingSearch() {
           <div className="space-y-3 sm:space-y-4">
             <div className="space-y-1 sm:space-y-2">
               <label className="text-xs sm:text-sm font-medium">営業担当者</label>
-              <Select value={selectedUserId || undefined} onValueChange={setSelectedUserId}>
+              <Select value={selectedUserId} onValueChange={setSelectedUserId}>
                 <SelectTrigger className="text-xs sm:text-sm truncate">
                   <SelectValue placeholder="選択してください" />
                 </SelectTrigger>
