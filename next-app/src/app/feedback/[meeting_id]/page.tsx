@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Trash2 } from 'lucide-react'
 import Link from 'next/link'
-import { getConversationSegments, getComments, addComment as apiAddComment, markAsRead } from '@/lib/api/feedback'
+import { getConversationSegments, getComments, addComment as apiAddComment, markAsRead, deleteComment } from '@/lib/api/feedback'
 import { useAuth } from '@/hooks/useAuth'
 import ChatMessage from '@/components/ChatMessage'
 import AudioSegmentPlayer from '@/components/AudioSegmentPlayer'
@@ -157,6 +157,36 @@ export default function FeedbackPage() {
       console.error("[コメント送信] エラー", error)
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const handleDeleteComment = async (commentId: number, segmentId: number) => {
+    try {
+      console.log("[コメント削除] 開始", { commentId, segmentId })
+      
+      // 削除確認ダイアログ
+      if (!window.confirm('このコメントを削除してもよろしいですか？')) {
+        console.log("[コメント削除] キャンセル")
+        return
+      }
+      
+      const response = await deleteComment(commentId)
+      
+      if (!response.success) {
+        throw new Error(response.message || 'コメントの削除に失敗しました')
+      }
+      
+      console.log("[コメント削除] 成功")
+      
+      // コメントリストを更新
+      await fetchCommentsBySegmentId(segmentId)
+      
+      // 成功メッセージを表示（オプション）
+      alert('コメントを削除しました')
+      
+    } catch (error) {
+      console.error("[コメント削除] エラー", error)
+      alert(error instanceof Error ? error.message : 'コメントの削除に失敗しました')
     }
   }
 
@@ -324,7 +354,19 @@ export default function FeedbackPage() {
                             <div key={comment.comment_id} className="bg-white p-2 rounded shadow-sm border border-gray-100 text-left">
                               <div className="flex justify-between items-start">
                                 <span className="font-semibold text-xs">{comment.user_name}</span>
-                                <span className="text-xs text-gray-500">{formatTime(comment.inserted_datetime)}</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-gray-500">{formatTime(comment.inserted_datetime)}</span>
+                                  {/* ゴミ箱アイコン（自分のコメントのみ表示） */}
+                                  {comment.user_id === userId && (
+                                    <button
+                                      onClick={() => handleDeleteComment(comment.comment_id, segment.segment_id)}
+                                      title="コメントを削除"
+                                      className="text-gray-400 hover:text-red-500 transition-colors p-1"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                </div>
                               </div>
                               <p className="text-sm mt-1">{comment.content}</p>
                             </div>

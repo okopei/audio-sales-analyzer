@@ -1110,3 +1110,60 @@ def get_comments_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
             cursor.close()
         if 'conn' in locals():
             conn.close()
+
+# コメント削除エンドポイント
+@app.function_name(name="DeleteComment")
+@app.route(route="comments/{comment_id}", methods=["DELETE", "OPTIONS"])
+def delete_comment(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        if req.method == "OPTIONS":
+            headers = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "DELETE, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            }
+            return func.HttpResponse(status_code=204, headers=headers)
+            
+        comment_id = req.route_params.get('comment_id')
+        if not comment_id:
+            return func.HttpResponse(
+                json.dumps({"success": False, "message": "コメントIDが必要です"}, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=400,
+                headers={"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+            )
+
+        # 現在の日時をSQL Serverに適した形式で文字列化
+        now = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
+        
+        # コメントを論理削除（deleted_datetimeを設定）
+        update_query = """
+            UPDATE dbo.Comments 
+            SET deleted_datetime = ? 
+            WHERE comment_id = ?
+        """
+        execute_query(update_query, (now, comment_id))
+        
+        response = {
+            "success": True,
+            "message": "コメントを削除しました"
+        }
+        
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps(response, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=200,
+            headers=headers
+        )
+
+    except Exception as e:
+        logger.error(f"Delete comment error: {str(e)}")
+        logger.error(f"Error details: {traceback.format_exc()}")
+        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+        return func.HttpResponse(
+            json.dumps({"success": False, "message": f"Internal server error: {str(e)}"}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500,
+            headers=headers
+        )
