@@ -1053,18 +1053,24 @@ def get_latest_comments(req: func.HttpRequest) -> func.HttpResponse:
             SELECT TOP (?) c.comment_id, c.segment_id, c.meeting_id, c.user_id, c.content, 
                    c.inserted_datetime, c.updated_datetime, u.user_name, 
                    b.client_company_name, b.client_contact_name,
-                   CASE WHEN cr.reader_id IS NOT NULL THEN 1 ELSE 0 END as is_read
+                   (
+                       SELECT JSON_QUERY((
+                           SELECT reader_id, read_datetime
+                           FROM dbo.CommentReads cr
+                           WHERE cr.comment_id = c.comment_id
+                           FOR JSON PATH
+                       ))
+                   ) as readers_json
             FROM dbo.Comments c 
             JOIN dbo.Users u ON c.user_id = u.user_id 
             JOIN dbo.BasicInfo b ON c.meeting_id = b.meeting_id 
-            LEFT JOIN dbo.CommentReads cr ON c.comment_id = cr.comment_id AND cr.reader_id = ?
             WHERE c.deleted_datetime IS NULL 
             AND c.meeting_id IN ({})
             AND b.user_id = ?
             ORDER BY c.inserted_datetime DESC
         """.format(','.join(['?'] * len(meeting_ids)))
 
-        params = [limit, user_id] + meeting_ids + [user_id]
+        params = [limit] + meeting_ids + [user_id]
         logger.info(f"Executing comments query with params: {params}")
         comments = execute_query(query, params)
         logger.info(f"Found {len(comments)} comments for user_id {user_id}")
@@ -1073,14 +1079,21 @@ def get_latest_comments(req: func.HttpRequest) -> func.HttpResponse:
         for comment in comments:
             logger.info(f"Comment details - id: {comment['comment_id']}, meeting_id: {comment['meeting_id']}, user_id: {comment['user_id']}, user_name: {comment['user_name']}")
 
-        # 日付時刻の変換とisReadの設定
+        # 日付時刻の変換とreadersの設定
         for comment in comments:
             if hasattr(comment['inserted_datetime'], 'isoformat'):
                 comment['inserted_datetime'] = comment['inserted_datetime'].isoformat()
             if hasattr(comment['updated_datetime'], 'isoformat'):
                 comment['updated_datetime'] = comment['updated_datetime'].isoformat()
-            comment['isRead'] = bool(comment['is_read'])
-            del comment['is_read']
+            
+            # readers_jsonの処理
+            try:
+                readers_json = comment.pop('readers_json', None)
+                comment['readers'] = json.loads(readers_json) if readers_json else []
+                logger.info(f"Comment {comment['comment_id']} readers: {comment['readers']}")
+            except Exception as e:
+                logger.error(f"Error parsing readers_json for comment {comment['comment_id']}: {str(e)}")
+                comment['readers'] = []
 
         response = {
             "success": True,
