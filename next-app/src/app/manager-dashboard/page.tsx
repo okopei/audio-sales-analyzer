@@ -12,11 +12,32 @@ import { useMembersMeetings } from "@/hooks/useMembersMeetings"
 import React, { useState, useEffect } from "react"
 import ProtectedRoute from "@/components/auth/ProtectedRoute"
 import { CommentsList } from '@/components/comments/CommentsList'
+import { DashboardCommentList } from '@/components/dashboard/comment-list'
+import { toast } from '@/components/ui/use-toast'
+
+interface Comment {
+  comment_id: number
+  segment_id: number
+  meeting_id: number
+  user_id: number
+  content: string
+  inserted_datetime: string
+  updated_datetime: string
+  user_name: string
+  client_company_name: string
+  client_contact_name: string
+  readers: Array<{
+    reader_id: number
+    read_datetime: string
+  }>
+}
 
 export default function ManagerDashboard() {
   const { user, logout } = useAuth()
   const { userInfo, loading: userLoading } = useUser()
   const { meetings, loading, error } = useMembersMeetings()
+  const [comments, setComments] = useState<Comment[]>([])
+  const [loadingComments, setLoadingComments] = useState(false)
 
   // 日付をフォーマットする関数
   const formatDateTime = (dateTimeStr: string) => {
@@ -43,10 +64,45 @@ export default function ManagerDashboard() {
     logout()
   }
 
+  // コメントを取得する関数
+  const fetchComments = async () => {
+    if (!user?.user_id) return
+
+    setLoadingComments(true)
+    try {
+      const response = await fetch(`http://localhost:7071/api/comments-latest?userId=${user.user_id}&isManager=true`)
+      if (!response.ok) throw new Error('コメントの取得に失敗しました')
+      
+      const data = await response.json()
+      if (data.success) {
+        setComments(data.comments)
+      } else {
+        throw new Error(data.message || 'コメントの取得に失敗しました')
+      }
+    } catch (error) {
+      console.error('コメント取得エラー:', error)
+      toast({
+        title: 'エラー',
+        description: error instanceof Error ? error.message : 'コメントの取得に失敗しました',
+        variant: 'destructive'
+      })
+    } finally {
+      setLoadingComments(false)
+    }
+  }
+
+  // コメントが既読になった時の処理
+  const handleCommentRead = () => {
+    fetchComments()
+  }
+
   useEffect(() => {
     console.log('ログイン中のuser_id:', user?.user_id)
     console.log('Usersテーブル検索結果:', userInfo)
     console.log('user_name:', userInfo?.user_name ?? user?.user_name)
+    if (user?.user_id) {
+      fetchComments()
+    }
   }, [user, userInfo])
 
   if (!user) {
@@ -164,34 +220,20 @@ export default function ManagerDashboard() {
           <Card className="p-4 sm:p-6">
             <h2 className="text-lg sm:text-xl font-semibold mb-4">コメント一覧</h2>
             <ScrollArea className="h-[300px] sm:h-[600px]">
-              {meetings.map((meeting) => (
-                <div key={meeting.meeting_id} className="mb-4 last:mb-0">
-                  <Link href={`/feedback/${meeting.meeting_id}`} className="block">
-                    <div className="mb-2 pb-2 border-b hover:bg-slate-50 transition-colors p-2 rounded">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h3 className="font-medium text-gray-900">
-                            {meeting.title || '無題の会議'}
-                          </h3>
-                          <p className="text-sm text-gray-600">
-                            {meeting.client_company_name && `${meeting.client_company_name} - `}
-                            {meeting.client_contact_name}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {new Date(meeting.meeting_datetime).toLocaleString('ja-JP')}
-                          </p>
-                        </div>
-                        <div className="text-sm text-blue-600">
-                          {meeting.user_name}
-                        </div>
-                      </div>
-                    </div>
-                  </Link>
-                  <div className="pl-2">
-                    <CommentsList meetingId={meeting.meeting_id} />
-                  </div>
+              {loadingComments ? (
+                <div className="flex items-center justify-center h-full">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-rose-500"></div>
                 </div>
-              ))}
+              ) : comments.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-[200px] text-gray-500">
+                  <p className="mb-2">コメントはありません</p>
+                </div>
+              ) : (
+                <DashboardCommentList
+                  comments={comments}
+                  onCommentRead={handleCommentRead}
+                />
+              )}
             </ScrollArea>
           </Card>
         </div>

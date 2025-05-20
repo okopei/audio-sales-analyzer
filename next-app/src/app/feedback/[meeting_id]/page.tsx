@@ -8,6 +8,7 @@ import { getConversationSegments, getComments, addComment as apiAddComment, mark
 import { useAuth } from '@/hooks/useAuth'
 import ChatMessage from '@/components/ChatMessage'
 import AudioSegmentPlayer from '@/components/AudioSegmentPlayer'
+import { CommentList } from '@/components/feedback/comment-list'
 
 interface Speaker {
   speaker_id: number
@@ -349,29 +350,26 @@ export default function FeedbackPage() {
                     {/* コメント一覧と入力フォーム */}
                     <div id={`comments-list-${segment.segment_id}`} className="mt-2 hidden">
                       {comments[segment.segment_id]?.length > 0 ? (
-                        <div className="space-y-2 mb-3">
-                          {comments[segment.segment_id].map(comment => (
-                            <div key={comment.comment_id} className="bg-white p-2 rounded shadow-sm border border-gray-100 text-left">
-                              <div className="flex justify-between items-start">
-                                <span className="font-semibold text-xs">{comment.user_name}</span>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs text-gray-500">{formatTime(comment.inserted_datetime)}</span>
-                                  {/* ゴミ箱アイコン（自分のコメントのみ表示） */}
-                                  {comment.user_id === userId && (
-                                    <button
-                                      onClick={() => handleDeleteComment(comment.comment_id, segment.segment_id)}
-                                      title="コメントを削除"
-                                      className="text-gray-400 hover:text-red-500 transition-colors p-1"
-                                    >
-                                      <Trash2 className="w-3 h-3" />
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                              <p className="text-sm mt-1">{comment.content}</p>
-                            </div>
-                          ))}
-                        </div>
+                        <CommentList
+                          comments={comments[segment.segment_id]}
+                          onCommentRead={(commentId) => {
+                            // コメントの既読状態を更新
+                            setComments(prev => ({
+                              ...prev,
+                              [segment.segment_id]: prev[segment.segment_id].map(comment =>
+                                comment.comment_id === commentId
+                                  ? {
+                                      ...comment,
+                                      readers: [
+                                        ...comment.readers,
+                                        { reader_id: userId, read_datetime: new Date().toISOString() }
+                                      ]
+                                    }
+                                  : comment
+                              )
+                            }))
+                          }}
+                        />
                       ) : <div className="text-sm text-gray-500 mb-3">まだコメントはありません</div>}
                       
                       {/* コメント入力フォーム */}

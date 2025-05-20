@@ -13,6 +13,11 @@ import { useUser } from "@/hooks/useUser"
 import { useMeetings } from "@/hooks/useMeetings"
 import ProtectedRoute from "@/components/auth/ProtectedRoute"
 import { getLatestComments } from "@/lib/api/feedback"
+import { DashboardCommentList } from '@/components/dashboard/comment-list'
+import { toast } from 'sonner'
+import { format } from 'date-fns'
+import { ja } from 'date-fns/locale'
+import { ReadButton } from '@/components/feedback/read-button'
 
 interface LatestComment {
   comment_id: number
@@ -28,6 +33,23 @@ interface LatestComment {
   isRead: boolean
 }
 
+interface Comment {
+  comment_id: number
+  segment_id: number
+  meeting_id: number
+  user_id: number
+  content: string
+  inserted_datetime: string
+  updated_datetime: string
+  user_name: string
+  client_company_name: string
+  client_contact_name: string
+  readers: Array<{
+    reader_id: number
+    read_datetime: string
+  }>
+}
+
 export default function Dashboard() {
   const { user, logout, isManager } = useAuth()
   const { userInfo, loading: userLoading } = useUser()
@@ -35,6 +57,8 @@ export default function Dashboard() {
   const router = useRouter()
   const [latestComments, setLatestComments] = useState<LatestComment[]>([])
   const [commentsLoading, setCommentsLoading] = useState(true)
+  const [comments, setComments] = useState<Comment[]>([])
+  const [isLoading, setIsLoading] = useState(true)
   
   // ログアウト処理
   const handleLogout = () => {
@@ -44,17 +68,15 @@ export default function Dashboard() {
   // 最新のコメントを取得
   useEffect(() => {
     const fetchLatestComments = async () => {
-      try {
-        // user_idが存在しない場合は早期リターン
-        if (!user?.user_id) {
-          console.log('ユーザーIDが存在しないため、コメント取得をスキップします')
-          setLatestComments([])
-          setCommentsLoading(false)
-          return
-        }
+      if (!user?.user_id) {
+        console.log('ユーザーIDが存在しないため、コメント取得をスキップします')
+        setLatestComments([])
+        setCommentsLoading(false)
+        return
+      }
 
+      try {
         setCommentsLoading(true)
-        // デバッグログを追加
         console.log('=== コメント取得デバッグ情報 ===')
         console.log('ログインユーザー情報:', {
           user_id: user.user_id,
@@ -88,6 +110,48 @@ export default function Dashboard() {
     fetchLatestComments()
   }, [user?.user_id]) // user全体ではなく、user_idのみを依存配列に設定
 
+  const fetchComments = async () => {
+    if (!user?.user_id) return
+
+    try {
+      setIsLoading(true)
+      console.log('[コメント取得] 開始:', { userId: user.user_id })
+
+      const response = await fetch(
+        `http://localhost:7071/api/comments-latest?userId=${user.user_id}`
+      )
+      console.log('[コメント取得] レスポンスステータス:', response.status)
+
+      const data = await response.json()
+      console.log('[コメント取得] レスポンスデータ:', data)
+
+      if (!response.ok) {
+        throw new Error(data.message || 'コメントの取得に失敗しました')
+      }
+
+      if (data.success) {
+        setComments(data.comments)
+      } else {
+        throw new Error(data.message || 'コメントの取得に失敗しました')
+      }
+    } catch (error) {
+      console.error('[コメント取得] エラー:', error)
+      toast.error(error instanceof Error ? error.message : 'コメントの取得に失敗しました')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (user?.user_id) {
+      fetchComments()
+    }
+  }, [user?.user_id]) // user_idのみを依存配列に設定
+
+  const handleCommentRead = () => {
+    fetchComments()
+  }
+
   // 日付をフォーマットする関数
   const formatDateTime = (dateTimeStr: string) => {
     const date = new Date(dateTimeStr)
@@ -118,6 +182,14 @@ export default function Dashboard() {
       hour: "2-digit",
       minute: "2-digit"
     })
+  }
+
+  if (!user) {
+    return (
+      <div className="container mx-auto p-4">
+        <p className="text-center text-muted-foreground">ログインが必要です</p>
+      </div>
+    )
   }
 
   return (
@@ -234,36 +306,56 @@ export default function Dashboard() {
           <Card className="p-4 sm:p-6">
             <h2 className="text-lg sm:text-xl font-semibold mb-4">最新のコメント</h2>
             <ScrollArea className="h-[300px] sm:h-[600px]">
-              {commentsLoading ? (
+              {isLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-rose-500"></div>
                 </div>
-              ) : latestComments.length === 0 ? (
+              ) : comments.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-[200px] text-gray-500">
                   <p>コメントデータがありません</p>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {latestComments.map((comment) => (
-                    <div key={comment.comment_id} className="block border-b last:border-0 pb-4 hover:bg-slate-50 rounded-lg transition-colors">
-                      <Link href={`/feedback/${comment.meeting_id}?segment=${comment.segment_id}`} className="block">
+                  {comments.map((comment) => {
+                    const isRead = comment.readers?.some(reader => reader.reader_id === user?.user_id) ?? false
+                    const isOwnComment = comment.user_id === user?.user_id
+
+                    return (
+                      <div
+                        key={comment.comment_id}
+                        className="block border-b last:border-0 pb-4 hover:bg-slate-50 rounded-lg transition-colors"
+                      >
                         <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <div className="text-sm font-medium">{comment.user_name}</div>
-                            <div className="text-sm text-gray-500">
-                              {comment.client_company_name && `${comment.client_company_name} - `}
-                              {comment.client_contact_name || '顧客名なし'}
+                          <Link
+                            href={`/feedback/${comment.meeting_id}?segment=${comment.segment_id}`}
+                            className="flex-1"
+                          >
+                            <div>
+                              <div className="text-sm font-medium">{comment.user_name}</div>
+                              <div className="text-sm text-gray-500">
+                                {comment.client_company_name && `${comment.client_company_name} - `}
+                                {comment.client_contact_name || '顧客名なし'}
+                              </div>
                             </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {!comment.isRead && <Badge variant="destructive">未読</Badge>}
-                            <span className="text-sm text-gray-500">{formatCommentTime(comment.inserted_datetime)}</span>
+                            <p className="text-sm text-gray-600 mt-2">{comment.content}</p>
+                          </Link>
+                          <div className="flex items-center gap-2 ml-4">
+                            {!isOwnComment && user?.user_id && (
+                              <ReadButton
+                                commentId={comment.comment_id}
+                                userId={user.user_id}
+                                isRead={isRead}
+                                onRead={handleCommentRead}
+                              />
+                            )}
+                            <span className="text-sm text-gray-500">
+                              {format(new Date(comment.inserted_datetime), 'yyyy/MM/dd HH:mm', { locale: ja })}
+                            </span>
                           </div>
                         </div>
-                        <p className="text-sm text-gray-600">{comment.content}</p>
-                      </Link>
-                    </div>
-                  ))}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </ScrollArea>
