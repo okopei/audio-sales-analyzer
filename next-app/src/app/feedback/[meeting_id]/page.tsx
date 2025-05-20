@@ -69,6 +69,7 @@ export default function FeedbackPage() {
   const [newComments, setNewComments] = useState<Record<number, string>>({})
   const [loading, setLoading] = useState(true)
   const [expandedSegments, setExpandedSegments] = useState<Record<number, boolean>>({})
+  const [submitting, setSubmitting] = useState(false)
   
   // ログインユーザーID（実際のユーザーIDまたはデフォルト値として1）
   const userId = user?.user_id || 1
@@ -141,22 +142,21 @@ export default function FeedbackPage() {
     const content = newComments[segmentId]
     if (!content || content.trim() === '') return
 
+    setSubmitting(true)
+    console.log("[コメント送信] 開始", { segmentId, meetingId, userId, content })
+
     try {
+      console.log("[コメント送信] API呼び出し直前")
       await apiAddComment(segmentId, parseInt(meetingId), content, userId)
-      
-      // コメント追加成功後、コメントリストを更新
+      console.log("[コメント送信] API成功")
+
       fetchCommentsBySegmentId(segmentId)
-      
-      // コメント一覧を表示する
       document.getElementById(`comments-list-${segmentId}`)?.classList.remove('hidden')
-      
-      // 入力フィールドをクリア
-      setNewComments(prev => ({
-        ...prev,
-        [segmentId]: ''
-      }))
+      setNewComments(prev => ({ ...prev, [segmentId]: '' }))
     } catch (error) {
-      console.error('Error adding comment:', error)
+      console.error("[コメント送信] エラー", error)
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -340,13 +340,17 @@ export default function FeedbackPage() {
                           placeholder="コメントを入力..."
                           value={newComments[segment.segment_id] || ''}
                           onChange={(e) => handleCommentChange(segment.segment_id, e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && handleAddComment(segment.segment_id)}
+                          onKeyDown={(e) => e.key === 'Enter' && !submitting && handleAddComment(segment.segment_id)}
+                          disabled={submitting}
                         />
                         <button
-                          className="px-3 py-1 bg-primary text-white rounded-md text-sm hover:bg-primary/90 transition-colors"
+                          disabled={submitting}
+                          className={`px-3 py-1 rounded-md text-sm transition-colors
+                            ${submitting ? 'bg-gray-300 cursor-not-allowed' : 'bg-primary text-white hover:bg-primary/90'}
+                          `}
                           onClick={() => handleAddComment(segment.segment_id)}
                         >
-                          送信
+                          {submitting ? '送信中…' : '送信'}
                         </button>
                       </div>
                     </div>
