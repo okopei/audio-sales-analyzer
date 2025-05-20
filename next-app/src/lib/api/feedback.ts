@@ -136,4 +136,37 @@ export const markAsRead = async (commentId: number, userId: number = 1) => {
   // 何もしないダミー関数
   console.log('既読機能は一時的に無効化されています')
   return { success: true }
+}
+
+// コメント削除API
+export const deleteComment = async (commentId: number) => {
+  try {
+    console.log("[API] コメント削除リクエスト", { commentId })
+    
+    const response = await fetch(`${API_BASE_URL}/comments/${commentId}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+    
+    // レスポンスが空の場合のエラーハンドリング
+    const text = await response.text()
+    if (!text) {
+      throw new Error('サーバーからの応答が空です')
+    }
+    
+    const data = JSON.parse(text)
+    
+    if (!response.ok) {
+      throw new Error(data.message || `HTTP error! status: ${response.status}`)
+    }
+    
+    console.log("[API] コメント削除レスポンス", data)
+    return data
+    
+  } catch (error) {
+    console.error('[API] コメント削除エラー:', error)
+    throw error
+  }
 } 
