@@ -146,55 +146,48 @@ def check_database_connection(meetingsTable):
         logger.error(f"Error details: {traceback.format_exc()}")
     logger.info("=== Database Connection Check Complete ===")
 
-def convert_webm_to_wav(webm_path: str) -> str:
+def convert_to_wav(input_path: str) -> str:
     """
-    WebMファイルをWAVファイルに変換する
+    m4a / webm ファイルを wav に変換。wav はそのまま返す。
+    
+    Args:
+        input_path (str): 入力ファイルのパス
+        
+    Returns:
+        str: 変換後のWAVファイルのパス（入力がWAVの場合はそのまま）
+        
+    Raises:
+        ValueError: サポートされていない音声形式の場合
     """
-    try:
-        logger.info(f"Converting WebM to WAV: {webm_path}")
-        wav_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.wav")
+    ext = os.path.splitext(input_path)[1].lower()
+    
+    if ext == ".wav":
+        logger.info(f"✅ WAVファイルは変換不要: {input_path}")
+        return input_path
+    
+    elif ext in [".webm", ".m4a"]:
+        output_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.wav")
+        logger.info(f"🔄 {ext} → WAV変換開始: {input_path}")
         
-        # ffmpegを使用してWebMからWAVに変換
-        result = subprocess.run([
-            'ffmpeg', '-i', webm_path,
-            '-acodec', 'pcm_s16le',  # 16-bit PCM
-            '-ar', '16000',          # 16kHz
-            '-ac', '1',              # モノラル
-            '-y',                    # 上書き
-            wav_path
-        ], check=True, capture_output=True, text=True)
-        
-        logger.info(f"ffmpeg conversion completed. Output: {result.stdout}")
-        
-        # 変換後のファイルを確認
-        if os.path.exists(wav_path):
-            logger.info(f"Successfully converted to WAV: {wav_path}")
-            # 変換後のWAVファイルの情報を確認
-            with wave.open(wav_path, 'rb') as wav_file:
-                channels = wav_file.getnchannels()
-                sample_width = wav_file.getsampwidth()
-                frame_rate = wav_file.getframerate()
-                frames = wav_file.getnframes()
-                duration = frames / float(frame_rate)
-                logger.info(f"Converted WAV file details:")
-                logger.info(f"- Channels: {channels} (should be 1 for mono)")
-                logger.info(f"- Sample width: {sample_width} bytes (should be 2 for 16-bit)")
-                logger.info(f"- Frame rate: {frame_rate} Hz (should be 16000)")
-                logger.info(f"- Duration: {duration:.2f} seconds")
-                logger.info(f"- File size: {os.path.getsize(wav_path)} bytes")
+        try:
+            result = subprocess.run([
+                'ffmpeg', '-i', input_path,
+                '-acodec', 'pcm_s16le',
+                '-ar', '16000',
+                '-ac', '1',
+                '-y',
+                output_path
+            ], check=True, capture_output=True, text=True)
             
-            return wav_path
-        else:
-            raise RuntimeError("WAV conversion failed: output file not found")
+            logger.info(f"✅ {ext} → WAV変換完了: {output_path}")
+            return output_path
             
-    except subprocess.CalledProcessError as e:
-        error_message = f"Failed to convert WebM to WAV: {e.stderr}"
-        logger.error(error_message)
-        raise RuntimeError(error_message)
-    except Exception as e:
-        error_message = f"Error in convert_webm_to_wav: {str(e)}"
-        logger.error(error_message)
-        raise RuntimeError(error_message)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"❌ 変換エラー: {e.stderr}")
+            raise ValueError(f"音声ファイルの変換に失敗しました: {e.stderr}")
+            
+    else:
+        raise ValueError(f"サポートされていない音声形式です: {ext}")
 
 # 本番用エンドポイント
 @app.function_name(name="TriggerTranscriptionJob")
@@ -236,8 +229,8 @@ def trigger_transcription_job(event: func.EventGridEvent):
             blob_data = blob_client.download_blob()
             blob_data.readinto(temp_file)
         
-        # WebMからWAVに変換
-        temp_wav_path = convert_webm_to_wav(temp_webm_path)
+        # 音声ファイルをWAV形式に変換
+        temp_wav_path = convert_to_wav(temp_webm_path)
         
         # 変換したWAVファイルを新しいBlobとしてアップロード
         wav_blob_name = f"{os.path.splitext(blob_name)[0]}.wav"

@@ -272,7 +272,13 @@ export default function NewMeetingPage() {
   }, [])
 
   const handleFileUpload = async (file: File) => {
+    console.log("🔍[UPLOAD] 受け取ったファイル:", file)
+    console.log("🔍[UPLOAD] ファイル名:", file.name)
+    console.log("🔍[UPLOAD] MIMEタイプ:", file.type)
+    console.log("🔍[UPLOAD] ファイルサイズ:", (file.size / 1024 / 1024).toFixed(2), "MB")
+
     if (!user) {
+      console.error("❌[UPLOAD] ユーザー未ログイン")
       toast.error("ログインしてください")
       return
     }
@@ -282,9 +288,11 @@ export default function NewMeetingPage() {
       setUploadStatus({ message: "商談情報を保存しています..." })
       
       // 基本情報を保存して会議IDを取得
+      console.log("📝[UPLOAD] 商談情報の保存を開始")
       const meetingId = await handleSubmit("save")
       
       if (!meetingId) {
+        console.error("❌[UPLOAD] 会議IDの取得に失敗")
         setUploadStatus({
           success: false,
           message: "商談情報の保存に失敗しました。もう一度お試しください。"
@@ -292,27 +300,23 @@ export default function NewMeetingPage() {
         return
       }
       
-      console.log("取得した会議ID:", meetingId)
-      
-      // 音声ファイルをWebM形式に変換（内部的に処理）
-      const webmFile = await convertToWebM(file)
+      console.log("✅[UPLOAD] 会議ID取得成功:", meetingId)
       
       setUploadStatus({ message: "音声をアップロード中..." })
-      
-      console.log("音声アップロード開始:", webmFile.name, "会議ID:", meetingId)
       
       // meeting_idとuser_idを含むファイル名を生成
       const userId = user.user_id
       const now = new Date()
       const timestamp = now.toISOString().replace(/[:.]/g, '-').replace('Z', '')
-      const fileName = `meeting_${meetingId}_user_${userId}_${timestamp}.webm`
+      const fileName = `meeting_${meetingId}_user_${userId}_${timestamp}${file.name.substring(file.name.lastIndexOf('.'))}`
       
-      console.log("アップロード用ファイル名:", fileName)
+      console.log("📝[UPLOAD] アップロード用ファイル名:", fileName)
       
-      // Azure Blob Storageにアップロード
-      const blobUrl = await uploadToAzureStorage(webmFile, fileName)
+      // Azure Blob Storageにアップロード（変換せずそのまま）
+      console.log("📤[UPLOAD] Azure Blob Storageへのアップロード開始")
+      const blobUrl = await uploadToAzureStorage(file, fileName)
       
-      console.log("アップロード成功:", blobUrl)
+      console.log("✅[UPLOAD] アップロード成功:", blobUrl)
       
       setUploadStatus({
         success: true,
@@ -321,21 +325,23 @@ export default function NewMeetingPage() {
       })
       
       // 成功メッセージ表示後、ダッシュボードに遷移
+      console.log("🔄[UPLOAD] ダッシュボードへの遷移準備")
       setTimeout(() => {
         if (user?.account_status === 'ACTIVE' && user?.role === 'manager') {
+          console.log("🔄[UPLOAD] マネージャーダッシュボードへ遷移")
           router.push('/manager-dashboard')
         } else {
+          console.log("��[UPLOAD] 一般ダッシュボードへ遷移")
           router.push('/dashboard')
         }
       }, 2000)
     } catch (error) {
-      console.error("アップロードエラー:", error)
+      console.error("❌[UPLOAD] アップロードエラー:", error)
       let errorMessage = "アップロードに失敗しました"
       
       if (error instanceof Error) {
-        if (error.message.includes("MediaRecorder")) {
-          errorMessage = "音声ファイルの変換に失敗しました。別のファイルを試してください。"
-        } else if (error.message.includes("BlobStorage")) {
+        if (error.message.includes("BlobStorage")) {
+          console.error("❌[UPLOAD] BlobStorageエラー:", error.message)
           errorMessage = "ストレージへのアップロードに失敗しました。ネットワーク接続を確認してください。"
         }
       }
@@ -347,64 +353,6 @@ export default function NewMeetingPage() {
     } finally {
       setIsUploading(false)
     }
-  }
-
-  const convertToWebM = async (file: File): Promise<File> => {
-    return new Promise((resolve, reject) => {
-      try {
-        // 音声ファイルを読み込む
-        const reader = new FileReader()
-        reader.onload = async (e) => {
-          try {
-            const arrayBuffer = e.target?.result as ArrayBuffer
-            const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
-            
-            // 音声データをデコード
-            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
-            
-            // 音声データをMediaStreamに変換
-            const destination = audioContext.createMediaStreamDestination()
-            const source = audioContext.createBufferSource()
-            source.buffer = audioBuffer
-            source.connect(destination)
-            
-            // WebM形式でエンコード
-            const mediaRecorder = new MediaRecorder(destination.stream, {
-              mimeType: 'audio/webm',
-              audioBitsPerSecond: 128000
-            })
-            
-            // 音声データをWebM形式に変換
-            const chunks: Blob[] = []
-            mediaRecorder.ondataavailable = (e) => chunks.push(e.data)
-            mediaRecorder.onstop = () => {
-              const webmBlob = new Blob(chunks, { type: 'audio/webm' })
-              const webmFile = new File([webmBlob], file.name.replace(/\.[^/.]+$/, '.webm'), {
-                type: 'audio/webm'
-              })
-              resolve(webmFile)
-            }
-            
-            // 変換開始
-            mediaRecorder.start()
-            source.start()
-            
-            // 変換完了
-            setTimeout(() => {
-              mediaRecorder.stop()
-              source.stop()
-              audioContext.close()
-            }, audioBuffer.duration * 1000)
-          } catch (error) {
-            reject(error)
-          }
-        }
-        reader.onerror = (error) => reject(error)
-        reader.readAsArrayBuffer(file)
-      } catch (error) {
-        reject(error)
-      }
-    })
   }
 
   const handleVoiceMemoImport = async () => {
