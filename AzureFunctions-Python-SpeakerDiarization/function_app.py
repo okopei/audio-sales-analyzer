@@ -1045,6 +1045,20 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                 
                 # 話者情報の登録が完了したら、セグメントを登録
                 logger.info(f"Inserting conversation segments with unique speaker_ids for meeting_id: {meeting_id}")
+                
+                # 一括挿入用のSQLとパラメータリストを準備
+                insert_sql = """
+                    INSERT INTO dbo.ConversationSegments (
+                        user_id, speaker_id, meeting_id, content,
+                        file_name, file_path, file_size, duration_seconds,
+                        status, inserted_datetime, updated_datetime,
+                        start_time, end_time
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE(), ?, ?)
+                """
+                
+                insert_values = []
+                
                 for phrase in result_json["recognizedPhrases"]:
                     speaker_number = phrase.get("speaker", "Unknown")
                     speaker_name = f"Speaker{speaker_number}"
@@ -1056,20 +1070,9 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                     duration = phrase.get("durationInTicks", 0) / 10000000  # 継続時間（秒）
                     end_time = offset + duration  # 終了時間（秒）
                     
-                    # ConversationSegmentsテーブルにINSERT
-                    insert_sql = """
-                        INSERT INTO dbo.ConversationSegments (
-                            user_id, speaker_id, meeting_id, content,
-                            file_name, file_path, file_size, duration_seconds,
-                            status, inserted_datetime, updated_datetime,
-                            start_time, end_time
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE(), ?, ?)
-                    """
-                    
-                    insert_params = (
+                    insert_values.append((
                         user_id,
-                        speaker_id,  # 一意なspeaker_idを使用
+                        speaker_id,
                         meeting_id,
                         text,
                         file_name,
@@ -1079,11 +1082,34 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                         "completed",
                         round(offset, 3),
                         round(end_time, 3)
-                    )
-                    
-                    execute_query(insert_sql, insert_params)
+                    ))
                 
-                logger.info(f"✅ Successfully inserted conversation segments with unique speaker_ids for meeting_id: {meeting_id}")
+                try:
+                    # 一括挿入を実行
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    cursor.executemany(insert_sql, insert_values)
+                    conn.commit()
+                    cursor.close()
+                    conn.close()
+                    
+                    logger.info(f"✅ Successfully inserted {len(insert_values)} conversation segments for meeting_id: {meeting_id}")
+                    
+                except Exception as e:
+                    error_message = f"Failed to insert conversation segments: {str(e)}"
+                    logger.error(error_message)
+                    logger.error(f"Error type: {type(e)}")
+                    logger.error(f"Error details: {traceback.format_exc()}")
+                    
+                    # エラーが発生した場合はロールバックを試みる
+                    try:
+                        if 'conn' in locals() and conn:
+                            conn.rollback()
+                            conn.close()
+                    except Exception as rollback_error:
+                        logger.error(f"Rollback failed: {str(rollback_error)}")
+                    
+                    raise Exception(error_message)
                 
                 # 成功ログを手動で記録（record_idを明示的に指定）
                 if loggable_meeting_id:
