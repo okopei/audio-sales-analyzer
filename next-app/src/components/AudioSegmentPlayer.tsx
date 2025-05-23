@@ -202,10 +202,10 @@ export const AudioSegmentPlayer: React.FC<AudioSegmentPlayerProps> = ({
     <div className="flex items-center gap-2">
       <button
         onClick={isPlaying ? handlePause : handlePlay}
-        className="p-2 rounded-full bg-blue-500 text-white hover:bg-blue-600 transition-colors"
+        className="p-1.5 rounded-full bg-blue-500 text-white hover:bg-blue-600 transition-colors"
         disabled={!isLoaded}
       >
-        {isPlaying ? <StopIcon className="w-5 h-5" /> : <PlayIcon className="w-5 h-5" />}
+        {isPlaying ? <StopIcon className="w-4 h-4" /> : <PlayIcon className="w-4 h-4" />}
       </button>
       <audio
         ref={audioRef}

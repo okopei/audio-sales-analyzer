@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
-import { ArrowLeft, Trash2 } from 'lucide-react'
+import { ArrowLeft, MessageCircle } from 'lucide-react'
 import Link from 'next/link'
 import { getConversationSegments, getComments, addComment as apiAddComment, markAsRead, deleteComment } from '@/lib/api/feedback'
 import { useAuth } from '@/hooks/useAuth'
@@ -69,7 +69,6 @@ export default function FeedbackPage() {
   const [comments, setComments] = useState<Record<number, Comment[]>>({})
   const [newComments, setNewComments] = useState<Record<number, string>>({})
   const [loading, setLoading] = useState(true)
-  const [expandedSegments, setExpandedSegments] = useState<Record<number, boolean>>({})
   const [submitting, setSubmitting] = useState(false)
   
   // ログインユーザーID（実際のユーザーIDまたはデフォルト値として1）
@@ -191,13 +190,6 @@ export default function FeedbackPage() {
     }
   }
 
-  const toggleExpand = (segmentId: number) => {
-    setExpandedSegments(prev => ({
-      ...prev,
-      [segmentId]: !prev[segmentId]
-    }))
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -259,148 +251,178 @@ export default function FeedbackPage() {
 
   return (
     <div className="container mx-auto px-4 py-6 max-w-3xl">
-      <div className="mb-4">
-        <Link href="/dashboard" className="flex items-center text-gray-600 hover:text-primary">
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          <span>ダッシュボードに戻る</span>
-        </Link>
-      </div>
-
       {meeting && (
-        <div className="mb-6">
-          <h1 className="text-xl font-bold mb-1">商談：{meeting.client_company_name} 様</h1>
-          <p className="text-gray-600">
-            {new Date(meeting.meeting_datetime).toLocaleDateString('ja-JP', { 
-              year: 'numeric', 
-              month: '2-digit', 
-              day: '2-digit',
-              hour: '2-digit',
-              minute: '2-digit'
-            })}
-          </p>
+        <div className="border border-gray-200 rounded-xl bg-slate-50 shadow-md overflow-hidden">
+          <div className="p-4 border-b border-gray-200 bg-white">
+            <div className="flex items-center gap-4">
+              <Link 
+                href="/dashboard" 
+                className="text-gray-600 hover:text-primary transition-colors"
+                title="ダッシュボードに戻る"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </Link>
+              <div>
+                <h1 className="text-lg font-bold">商談：{meeting.client_company_name} 様</h1>
+                <p className="text-sm text-gray-600">
+                  {new Date(meeting.meeting_datetime).toLocaleDateString('ja-JP', { 
+                    year: 'numeric', 
+                    month: '2-digit', 
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="p-6">
+            <style jsx global>{`
+              .chat-bubble-left::before {
+                content: "";
+                position: absolute;
+                left: -8px;
+                top: 12px;
+                width: 0;
+                height: 0;
+                border: 8px solid transparent;
+                border-right-color: #dbeafe; /* bg-blue-100 */
+              }
+              .chat-bubble-right::before {
+                content: "";
+                position: absolute;
+                right: -8px;
+                top: 12px;
+                width: 0;
+                height: 0;
+                border: 8px solid transparent;
+                border-left-color: #bbf7d0; /* bg-green-100 */
+              }
+              /* カスタムスクロールバー */
+              .custom-scrollbar::-webkit-scrollbar {
+                width: 6px;
+              }
+              .custom-scrollbar::-webkit-scrollbar-track {
+                background: transparent;
+              }
+              .custom-scrollbar::-webkit-scrollbar-thumb {
+                background-color: #cbd5e1;
+                border-radius: 3px;
+              }
+              .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+                background-color: #94a3b8;
+              }
+            `}</style>
+            <div className="space-y-3 max-h-[calc(100vh-200px)] overflow-y-auto overflow-x-hidden custom-scrollbar">
+              {!segments.length ? (
+                <div className="text-center py-8">
+                  <p className="text-gray-500">会話データがありません</p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {segments.map(segment => {
+                    const isCustomer = segment.speaker_role === 'Cust'
+                    const isSales = segment.speaker_role === 'Sale'
+                    const speakerName = segment.speaker_name || (isCustomer ? 'お客様' : '営業担当')
+                    const commentCount = comments[segment.segment_id]?.length || 0
+                    const displayContent = segment.content
+                    
+                    return (
+                      <div key={segment.segment_id} className={`flex ${isCustomer ? 'justify-start' : 'justify-end'}`}>
+                        <div className={`max-w-[75%] flex flex-col ${isCustomer ? 'items-start' : 'items-end'} break-words`}>
+                          {/* メッセージ本体 */}
+                          <div className={`relative px-4 py-2 rounded-2xl shadow-lg w-full ${
+                            isCustomer 
+                              ? 'bg-blue-100 rounded-tl-none chat-bubble-left' 
+                              : 'bg-green-100 rounded-tr-none chat-bubble-right'
+                          }`}>
+                            <div className={`flex items-center gap-2 mb-1 ${
+                              isCustomer ? 'justify-start' : 'justify-end'
+                            }`}>
+                              <div className="font-medium text-sm">{speakerName}</div>
+                              <span className="text-xs text-gray-500">
+                                {segment.inserted_datetime && formatTime(segment.inserted_datetime)}
+                              </span>
+                            </div>
+                            <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{displayContent}</p>
+                          </div>
+
+                          {/* コントロール部分 */}
+                          <div className={`flex items-center gap-2 mt-1 ${isCustomer ? 'justify-start' : 'justify-end'}`}>
+                            <AudioSegmentPlayer
+                              segmentId={segment.segment_id}
+                              startTime={segment.start_time}
+                              endTime={segment.end_time}
+                              audioPath={segment.file_path}
+                            />
+                            <button 
+                              className={`flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600 transition-colors ${
+                                commentCount > 0 ? 'font-medium' : ''
+                              }`}
+                              onClick={() => document.getElementById(`comments-list-${segment.segment_id}`)?.classList.toggle('hidden')}
+                            >
+                              <MessageCircle size={16} />
+                              <span>コメント ({commentCount})</span>
+                            </button>
+                          </div>
+
+                          {/* コメント一覧と入力フォーム */}
+                          <div id={`comments-list-${segment.segment_id}`} className="mt-2 hidden w-full">
+                            {comments[segment.segment_id]?.length > 0 ? (
+                              <CommentList
+                                comments={comments[segment.segment_id]}
+                                onCommentRead={(commentId) => {
+                                  // コメントの既読状態を更新
+                                  setComments(prev => ({
+                                    ...prev,
+                                    [segment.segment_id]: prev[segment.segment_id].map(comment =>
+                                      comment.comment_id === commentId
+                                        ? {
+                                            ...comment,
+                                            readers: [
+                                              ...comment.readers,
+                                              { reader_id: userId, read_datetime: new Date().toISOString() }
+                                            ]
+                                          }
+                                        : comment
+                                    )
+                                  }))
+                                }}
+                              />
+                            ) : <div className="text-sm text-gray-500 mb-3">まだコメントはありません</div>}
+                            
+                            {/* コメント入力フォーム */}
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                className="flex-1 px-3 py-1 border rounded-md text-sm"
+                                placeholder="コメントを入力..."
+                                value={newComments[segment.segment_id] || ''}
+                                onChange={(e) => handleCommentChange(segment.segment_id, e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && !submitting && handleAddComment(segment.segment_id)}
+                                disabled={submitting}
+                              />
+                              <button
+                                disabled={submitting}
+                                className={`px-3 py-1 rounded-md text-sm transition-colors
+                                  ${submitting ? 'bg-gray-300 cursor-not-allowed' : 'bg-primary text-white hover:bg-primary/90'}
+                                `}
+                                onClick={() => handleAddComment(segment.segment_id)}
+                              >
+                                {submitting ? '送信中…' : '送信'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
-
-      <div className="space-y-4 mt-6">
-        {!segments.length ? (
-          <div className="text-center py-8">
-            <p className="text-gray-500">会話データがありません</p>
-          </div>
-        ) : (
-          segments.map(segment => {
-            const isCustomer = segment.speaker_role !== '営業担当';
-            const speakerName = segment.speaker_name || (isCustomer ? 'お客様' : '営業担当');
-            const commentCount = comments[segment.segment_id]?.length || 0;
-            const isExpanded = expandedSegments[segment.segment_id];
-            const isCurrentUser = segment.user_id === userId;
-            const displayContent = segment.content;
-            const shouldShowExpandButton = segment.content.length > 100;
-            
-            return (
-              <div key={segment.segment_id} className="flex flex-col">
-                <div className={`flex items-start ${isCurrentUser ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`flex-1 max-w-[80%] ${isCurrentUser ? 'ml-12' : 'mr-12'}`}>
-                    {/* メッセージ本体 */}
-                    <div className={`relative p-3 rounded-lg ${
-                      isCurrentUser ? 'bg-blue-100' : isCustomer ? 'bg-green-50' : 'bg-blue-50'
-                    }`}>
-                      <div className="flex justify-between items-start mb-1">
-                        <div className="font-semibold">{speakerName}</div>
-                        <span className="text-xs text-gray-500 ml-2">
-                          {segment.inserted_datetime && formatTime(segment.inserted_datetime)}
-                        </span>
-                      </div>
-                      <p className="whitespace-pre-wrap text-sm">{displayContent}</p>
-                      {shouldShowExpandButton && (
-                        <button 
-                          className="text-xs text-blue-600 mt-1 flex items-center gap-1"
-                          onClick={() => toggleExpand(segment.segment_id)}
-                        >
-                          <span>全文を表示</span>
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3">
-                            <polyline points="6 9 12 15 18 9"></polyline>
-                          </svg>
-                        </button>
-                      )}
-                    </div>
-
-                    {/* コントロール部分（再生ボタンとコメントを横並びに） */}
-                    <div className="flex items-center gap-2 mt-2">
-                      <AudioSegmentPlayer
-                        segmentId={segment.segment_id}
-                        startTime={segment.start_time}
-                        endTime={segment.end_time}
-                        audioPath={segment.file_path}
-                      />
-                      <button 
-                        className={`text-xs flex items-center gap-1 px-2 py-1 rounded-full ${
-                          commentCount > 0 
-                            ? 'bg-blue-100 text-blue-700 font-medium hover:bg-blue-200' 
-                            : 'text-gray-600 hover:bg-gray-100'
-                        }`}
-                        onClick={() => document.getElementById(`comments-list-${segment.segment_id}`)?.classList.toggle('hidden')}
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3">
-                          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                        </svg>
-                        <span>コメント ({commentCount})</span>
-                      </button>
-                    </div>
-
-                    {/* コメント一覧と入力フォーム */}
-                    <div id={`comments-list-${segment.segment_id}`} className="mt-2 hidden">
-                      {comments[segment.segment_id]?.length > 0 ? (
-                        <CommentList
-                          comments={comments[segment.segment_id]}
-                          onCommentRead={(commentId) => {
-                            // コメントの既読状態を更新
-                            setComments(prev => ({
-                              ...prev,
-                              [segment.segment_id]: prev[segment.segment_id].map(comment =>
-                                comment.comment_id === commentId
-                                  ? {
-                                      ...comment,
-                                      readers: [
-                                        ...comment.readers,
-                                        { reader_id: userId, read_datetime: new Date().toISOString() }
-                                      ]
-                                    }
-                                  : comment
-                              )
-                            }))
-                          }}
-                        />
-                      ) : <div className="text-sm text-gray-500 mb-3">まだコメントはありません</div>}
-                      
-                      {/* コメント入力フォーム */}
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          className="flex-1 px-3 py-1 border rounded-md text-sm"
-                          placeholder="コメントを入力..."
-                          value={newComments[segment.segment_id] || ''}
-                          onChange={(e) => handleCommentChange(segment.segment_id, e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && !submitting && handleAddComment(segment.segment_id)}
-                          disabled={submitting}
-                        />
-                        <button
-                          disabled={submitting}
-                          className={`px-3 py-1 rounded-md text-sm transition-colors
-                            ${submitting ? 'bg-gray-300 cursor-not-allowed' : 'bg-primary text-white hover:bg-primary/90'}
-                          `}
-                          onClick={() => handleAddComment(segment.segment_id)}
-                        >
-                          {submitting ? '送信中…' : '送信'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )
-          })
-        )}
-      </div>
     </div>
   )
 } 
