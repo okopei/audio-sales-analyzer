@@ -1,8 +1,8 @@
 export interface ConversationSegment {
-  segment_id: string
-  user_id: string
-  speaker_id: string
-  meeting_id: string
+  segment_id: number
+  user_id: number
+  speaker_id: number
+  meeting_id: number
   content: string
   file_name: string
   file_path: string
@@ -14,6 +14,6 @@ export interface ConversationSegment {
   inserted_datetime: string
   updated_datetime: string
   speaker_name?: string
-  speaker_role?: string
+  speaker_role?: 'Cust' | 'Sale'
   comments?: Comment[]
 } 
