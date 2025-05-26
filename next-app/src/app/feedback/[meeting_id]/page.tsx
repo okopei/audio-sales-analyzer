@@ -388,6 +388,7 @@ export default function FeedbackPage() {
                                     )
                                   }))
                                 }}
+                                onDeleteComment={(commentId) => handleDeleteComment(commentId, segment.segment_id)}
                               />
                             ) : <div className="text-sm text-gray-500 mb-3">まだコメントはありません</div>}
                             
