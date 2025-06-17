@@ -1388,3 +1388,74 @@ else:
 - meeting_idの抽出に失敗した場合は、必ずログに記録
 - TriggerLogへのINSERTは、meeting_idが有効な場合のみ実行
 - エラーメッセージは具体的な内容を含める
+
+## FunctionApp側でのOpenAI処理自動化実装
+
+### 概要
+Azure Speech文字起こし完了後に、FunctionApp側で自動的にOpenAI整形処理を実行し、結果をConversationSegmentsテーブルに保存する実装。
+
+### 実装場所
+- `function_app.py` の `transcription_callback` 関数内
+
+### 処理フロー
+1. **Azure Speech文字起こし** → Meetingsテーブルにtranscript_text保存
+2. **OpenAI処理自動実行** → `clean_and_complete_conversation()`で整形
+3. **整形結果をConversationSegmentsテーブルに反映**
+
+### 主要な修正内容
+
+#### 1. OpenAI処理の組み込み
+```python
+# transcript_textが存在すれば処理
+if transcript_text and transcript_text.strip():
+    # OpenAI処理を実行
+    processed_text = clean_and_complete_conversation(load_transcript_segments(meeting_id))
+    
+    if processed_text and processed_text.strip():
+        # 既存のセグメントを削除
+        execute_query("DELETE FROM dbo.ConversationSegments WHERE meeting_id = ?", (meeting_id,))
+        
+        # 整形結果をセグメント化してDBに保存
+        segments = []
+        for line in processed_text.splitlines():
+            m = re.match(r"Speaker(\d+):(.+)", line)
+            if m:
+                segments.append({
+                    "speaker": int(m.group(1)),
+                    "text": m.group(2).strip()
+                })
+```
+
+#### 2. エラーハンドリングの強化
+- `transcript_text`がNoneまたは空の場合のスキップ処理
+- OpenAI処理結果が空の場合の検知
+- 想定外の形式の行の検知とログ出力
+- OpenAI処理失敗時の非致命的エラー処理（元の文字起こし結果を使用）
+
+#### 3. ログ出力の改善
+- transcript_textの長さと先頭100文字の表示
+- 処理結果の行数とセグメント化された行数の表示
+- 想定外の形式の行の警告ログ
+- 各段階での詳細なログ出力
+
+### テスト用スクリプト
+`test_openai_pipeline.py`を作成し、FunctionAppを通さずに直接OpenAI処理をテスト可能。
+
+```bash
+# meeting_id指定でテスト
+python test_openai_pipeline.py --meeting-id 123
+
+# 直接テキストでテスト
+python test_openai_pipeline.py --text "Speaker1: こんにちは\nSpeaker2: はい"
+```
+
+### 注意点
+- OpenAI処理の失敗は致命的ではないため、処理を継続
+- 既存のセグメントは削除してOpenAI処理結果で置き換え
+- 時間情報は簡易的に順番に1秒ずつ設定
+- 話者情報は既存のものを再利用、なければ新規作成
+
+### 関連ファイル
+- `function_app.py`: メイン実装
+- `openai_completion_core.py`: OpenAI処理のコア機能
+- `test_openai_pipeline.py`: テスト用スクリプト
