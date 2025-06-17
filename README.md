@@ -804,3 +804,53 @@ curl -X POST https://login.microsoftonline.com/<TENANT_ID>/oauth2/v2.0/token \
  -d "client_secret=<CLIENT_SECRET>" \
  -d "scope=https://database.windows.net/.default" \
  -d "grant_type=client_credentials"
+
+```
+
+## 🔐 Azure OpenAI 設定情報
+
+このプロジェクトでは Azure OpenAI Service を使用して、GPT-3.5 による会話補完・整形処理を行います。
+
+### ✅ 使用モデル
+- モデル名（Azure上の表示）: `gpt-35-turbo`
+- デプロイ名（APIで使用）: `gpt-35-turbo`
+- モデルバージョン: `0125`
+
+### 🌐 エンドポイント
+```
+https://processaudiodata-openai-a5f1.openai.azure.com/
+```
+
+### 🔑 APIキー
+プロジェクトの `.env` または `local.settings.json` に環境変数として格納してください。
+
+```json
+{
+    "OPENAI_API_KEY": "789dd5592704495b96735b8c3e55f7f8",
+    "OPENAI_API_TYPE": "azure",
+    "OPENAI_API_BASE": "https://processaudiodata-openai-a5f1.openai.azure.com/",
+    "OPENAI_API_VERSION": "2023-07-01-preview",
+    "OPENAI_DEPLOYMENT_NAME": "gpt-35-turbo"
+}
+```
+
+### 📦 API 呼び出し設定（Python）
+```python
+import openai
+
+response = openai.ChatCompletion.create(
+    engine="gpt-35-turbo",
+    messages=[
+        {"role": "system", "content": "あなたは丁寧なアシスタントです。"},
+        {"role": "user", "content": "えっと、それで、あのー、お願いします。"}
+    ]
+)
+```
+
+### ⚠️ セキュリティ注意事項
+1. APIキーは必ず環境変数として管理し、ソースコードに直接記述しないでください
+2. 本番環境では、Azure Key Vaultを使用してAPIキーを管理することを推奨します
+3. APIキーが漏洩した場合は、Azure Portalから直ちに再生成してください
+
+### 🔄 更新履歴
+- 2024-02-XX: 初期設定情報の追加

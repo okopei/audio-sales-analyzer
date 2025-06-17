@@ -28,6 +28,9 @@ import struct
 import json
 import base64
 from azure.eventgrid import EventGridEvent
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent))
+from openai_completion_core import clean_and_complete_conversation, load_transcript_segments
 
 # Base64デコード用のヘルパー関数
 def safe_base64_decode(data: str) -> bytes:
@@ -1118,6 +1121,177 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                         "INFO",
                         f"文字起こしテキストの更新と会話セグメントの登録が完了しました。文字数: {len(transcript_text)}"
                     )
+                
+                # OpenAI処理を実行して整形されたセグメントを取得
+                try:
+                    logger.info(f"🚀 OpenAI処理を開始します。meeting_id: {meeting_id}")
+                    
+                    # transcript_textがNoneでないことを確認
+                    if not transcript_text or transcript_text.strip() == "":
+                        logger.warning("⚠️ transcript_textが空のため、OpenAI処理をスキップします")
+                        insert_trigger_log(loggable_meeting_id, "WARNING", "transcript_textが空のため、OpenAI処理をスキップしました")
+                    else:
+                        logger.info(f"📝 transcript_textの長さ: {len(transcript_text)} 文字")
+                        logger.info(f"📝 transcript_textの先頭100文字: {transcript_text[:100]}...")
+                        
+                        # OpenAI処理を実行
+                        logger.info("🔄 clean_and_complete_conversationを呼び出し中...")
+                        processed_text = clean_and_complete_conversation(load_transcript_segments(meeting_id))
+                        
+                        if processed_text and processed_text.strip():
+                            logger.info(f"✅ OpenAI処理が完了しました。文字数: {len(processed_text)}")
+                            logger.info(f"📝 処理結果の先頭100文字: {processed_text[:100]}...")
+                            
+                            # 既存のセグメントを削除（OpenAI処理結果で置き換え）
+                            logger.info(f"🗑️ 既存のセグメントを削除して、OpenAI処理結果で置き換えます。meeting_id: {meeting_id}")
+                            execute_query(
+                                "DELETE FROM dbo.ConversationSegments WHERE meeting_id = ?",
+                                (meeting_id,)
+                            )
+                            
+                            # OpenAI処理結果をセグメント化してDBに保存
+                            segments = []
+                            lines = processed_text.splitlines()
+                            logger.info(f"📊 処理結果の行数: {len(lines)}")
+                            
+                            for i, line in enumerate(lines):
+                                if line.strip():
+                                    m = re.match(r"Speaker(\d+):(.+)", line)
+                                    if m:
+                                        segments.append({
+                                            "speaker": int(m.group(1)),
+                                            "text": m.group(2).strip()
+                                        })
+                                    else:
+                                        logger.warning(f"⚠️ 行 {i+1} が想定外の形式です: {line}")
+                            
+                            logger.info(f"📊 セグメント化された行数: {len(segments)}")
+                            
+                            if segments:
+                                # 話者情報の一意性を確保するためのマップ
+                                speaker_map = {}
+                                
+                                # まず、すべての話者を収集して一意なspeaker_idを確保
+                                for segment in segments:
+                                    speaker_number = segment["speaker"]
+                                    speaker_name = f"Speaker{speaker_number}"
+                                    
+                                    if speaker_name not in speaker_map:
+                                        # 既存の話者情報を確認
+                                        select_query = """
+                                            SELECT speaker_id 
+                                            FROM dbo.Speakers 
+                                            WHERE meeting_id = ? 
+                                            AND speaker_name = ? 
+                                            AND deleted_datetime IS NULL
+                                        """
+                                        result = execute_query(select_query, (meeting_id, speaker_name))
+                                        
+                                        if result:
+                                            # 既存のspeaker_idを使用
+                                            speaker_id = result[0]["speaker_id"]
+                                            logger.info(f"既存の話者情報を使用: {speaker_name} (speaker_id: {speaker_id})")
+                                        else:
+                                            # 新規話者として登録
+                                            insert_query = """
+                                                INSERT INTO dbo.Speakers (
+                                                    speaker_name, user_id, meeting_id, 
+                                                    inserted_datetime, updated_datetime
+                                                )
+                                                OUTPUT INSERTED.speaker_id
+                                                VALUES (?, ?, ?, GETDATE(), GETDATE())
+                                            """
+                                            try:
+                                                insert_result = execute_query(insert_query, (speaker_name, user_id, meeting_id))
+                                                
+                                                if not insert_result:
+                                                    error_message = f"Speaker INSERT failed: No OUTPUT returned for speaker_name={speaker_name}, meeting_id={meeting_id}"
+                                                    logger.error(error_message)
+                                                    raise Exception(error_message)
+                                                    
+                                                speaker_id = insert_result[0]["speaker_id"]
+                                                logger.info(f"新規話者を登録: {speaker_name} (speaker_id: {speaker_id})")
+                                                
+                                            except Exception as e:
+                                                error_message = f"Speaker INSERT failed for speaker_name={speaker_name}, meeting_id={meeting_id}: {str(e)}"
+                                                logger.error(error_message)
+                                                raise Exception(error_message)
+                                        
+                                        speaker_map[speaker_name] = speaker_id
+                                
+                                # OpenAI処理結果のセグメントをDBに保存
+                                insert_sql = """
+                                    INSERT INTO dbo.ConversationSegments (
+                                        user_id, speaker_id, meeting_id, content,
+                                        file_name, file_path, file_size, duration_seconds,
+                                        status, inserted_datetime, updated_datetime,
+                                        start_time, end_time
+                                    )
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE(), ?, ?)
+                                """
+                                
+                                insert_values = []
+                                
+                                for i, segment in enumerate(segments):
+                                    speaker_number = segment["speaker"]
+                                    speaker_name = f"Speaker{speaker_number}"
+                                    speaker_id = speaker_map[speaker_name]
+                                    text = segment["text"]
+                                    
+                                    # 時間情報は簡易的に設定（順番に1秒ずつ）
+                                    start_time = i
+                                    end_time = i + 1
+                                    
+                                    insert_values.append((
+                                        user_id,
+                                        speaker_id,
+                                        meeting_id,
+                                        text,
+                                        file_name,
+                                        file_path,
+                                        blob_properties.size,
+                                        1.0,  # duration_seconds
+                                        "completed",
+                                        start_time,
+                                        end_time
+                                    ))
+                                
+                                try:
+                                    # 一括挿入を実行
+                                    conn = get_db_connection()
+                                    cursor = conn.cursor()
+                                    cursor.executemany(insert_sql, insert_values)
+                                    conn.commit()
+                                    cursor.close()
+                                    conn.close()
+                                    
+                                    logger.info(f"✅ OpenAI処理結果の {len(insert_values)} セグメントを保存しました。meeting_id: {meeting_id}")
+                                    insert_trigger_log(loggable_meeting_id, "INFO", f"OpenAI処理完了。{len(insert_values)}セグメントを保存しました")
+                                    
+                                except Exception as e:
+                                    error_message = f"OpenAI処理結果の保存に失敗: {str(e)}"
+                                    logger.error(error_message)
+                                    insert_trigger_log(loggable_meeting_id, "ERROR", error_message)
+                                    raise Exception(error_message)
+                            else:
+                                logger.warning("⚠️ OpenAI処理結果のセグメント化に失敗しました")
+                                logger.warning(f"📝 処理結果: {processed_text[:200]}...")
+                                insert_trigger_log(loggable_meeting_id, "WARNING", "OpenAI処理結果のセグメント化に失敗しました")
+                        else:
+                            logger.warning("⚠️ OpenAI処理が失敗しました（空の結果）")
+                            insert_trigger_log(loggable_meeting_id, "WARNING", "OpenAI処理が失敗しました（空の結果）")
+                            
+                except Exception as openai_error:
+                    error_message = f"OpenAI処理でエラーが発生: {str(openai_error)}"
+                    logger.error(error_message)
+                    logger.error(f"Error type: {type(openai_error)}")
+                    logger.error(f"Error details: {traceback.format_exc()}")
+                    
+                    if loggable_meeting_id:
+                        insert_trigger_log(loggable_meeting_id, "ERROR", f"OpenAI処理エラー: {error_message}")
+                    
+                    # OpenAI処理の失敗は致命的ではないため、処理を継続
+                    logger.info("OpenAI処理の失敗により、元の文字起こし結果をそのまま使用します")
                 
             except Exception as db_error:
                 error_message = f"Database operation failed: {str(db_error)}"
