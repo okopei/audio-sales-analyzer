@@ -1,0 +1,18 @@
+# OpenAI API
+openai==1.82.0
+
+# Japanese Text Processing
+Janome==0.4.2
+
+# Data Processing
+pydantic==2.11.5
+pydantic-core==2.33.2
+
+# HTTP & Networking
+requests==2.32.3
+httpx==0.28.1
+urllib3==2.4.0
+
+# Utilities
+typing-extensions==4.13.2
+typing-inspection==0.4.1 

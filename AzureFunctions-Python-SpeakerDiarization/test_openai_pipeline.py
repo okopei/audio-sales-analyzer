@@ -9,8 +9,9 @@ import sys
 import argparse
 import logging
 from pathlib import Path
-import openai_completion_core
-from openai_completion_core import get_db_connection
+sys.path.append(str(Path(__file__).parent))
+from openai_processing import openai_completion_core
+from openai_processing.openai_completion_core import get_db_connection
 
 # ロギング設定
 logging.basicConfig(
@@ -38,9 +39,8 @@ def main():
         return 1
     
     try:
-        # openai_completion_coreをインポート
-        # sys.path.append(str(Path(__file__).parent))
-        from openai_completion_core import clean_and_complete_conversation, load_transcript_segments
+        # openai_processingパッケージからインポート
+        from openai_processing import clean_and_complete_conversation, load_transcript_segments
         
         if args.meeting_id:
             logger.info(f"🔍 meeting_id: {args.meeting_id} のtranscript_textを取得してOpenAI処理を実行します")

@@ -1,12 +1,15 @@
 import os
 import json
 import re
+import logging
 from openai import OpenAI
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
 from pathlib import Path
 import demjson3
 import traceback
+
+logger = logging.getLogger(__name__)
 
 # Azure関連のimportを条件付きで行う
 try:
@@ -224,59 +227,53 @@ def _parse_gpt_response(response_text: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         return None
 
-def clean_and_complete_conversation(segments: List[Dict[str, Any]]) -> Optional[str]:
-    """会話セグメントを整形・補完する
-
-    Args:
-        segments (List[Dict[str, Any]]): 会話セグメントのリスト
-
-    Returns:
-        Optional[str]: 整形済みテキスト。エラー時はNone
+def clean_and_complete_conversation(meeting_id: int) -> bool:
+    """
+    会話データを段階的にクリーンアップ・補完する
     """
     try:
-        # 各ステップのモジュールをインポート
-        from openai_completion_step1 import add_brackets_to_short_segments
-        from openai_completion_step2 import complete_utterance_with_openai
-        from openai_completion_step3 import remove_completion_fragments
-        from openai_completion_step4 import merge_backchannel_with_next
-        from openai_completion_step5 import merge_same_speaker_segments
-        from openai_completion_step6 import remove_fillers_with_openai
+        # データベースから会話データを取得
+        segments = load_transcript_segments(meeting_id)
+        if not segments:
+            logger.warning(f"会話データが見つかりません: meeting_id={meeting_id}")
+            return False
         
-        # ステップ1: 短い相槌を括弧で囲む
-        processed_segments = add_brackets_to_short_segments(segments)
-        processed_segments = _remove_duplicate_segments(processed_segments)
+        logger.info(f"会話データの処理を開始: {len(segments)}セグメント")
         
-        # ステップ2-①: OpenAIによる補完
-        processed_segments = complete_utterance_with_openai(processed_segments)
+        # ステップ1: フォーマットとオフセット処理
+        from .openai_completion_step1 import step1_format_with_offset
+        segments = step1_format_with_offset(segments)
         
-        # ステップ2-②: 補完材料の削除
-        processed_segments = remove_completion_fragments(processed_segments)
-        save_step_output(processed_segments, "2_phase2")
+        # ステップ2: 不完全な文の補完
+        from .openai_completion_step2 import step2_complete_incomplete_sentences
+        segments = step2_complete_incomplete_sentences(segments)
         
-        # ステップ3: 括弧付きセグメントの吸収
-        processed_segments = merge_backchannel_with_next(processed_segments)
+        # ステップ3: 補完材料の削除
+        from .openai_completion_step3 import step3_remove_completion_materials
+        segments = step3_remove_completion_materials(segments)
         
-        # ステップ4: 同一話者の発言連結
-        processed_segments = merge_same_speaker_segments(processed_segments)
+        # ステップ4: 相槌と次の発話の統合
+        from .openai_completion_step4 import step4_merge_backchannel_with_next
+        segments = step4_merge_backchannel_with_next(segments)
         
-        # ステップ5: フィラー削除
-        processed_segments = remove_fillers_with_openai(processed_segments)
-        save_step_output(processed_segments, 5)
+        # ステップ5: 同一話者の連続セグメントの統合
+        from .openai_completion_step5 import step5_merge_same_speaker_segments
+        segments = step5_merge_same_speaker_segments(segments)
         
-        # 最終結果をテキスト形式で返す
-        result_lines = []
-        for seg in processed_segments:
-            if seg.get("text", "").strip():
-                speaker = f"Speaker{seg.get('speaker', '?')}"
-                result_lines.append(f"{speaker}: {seg['text']}")
+        # ステップ6: フィラー削除
+        from .openai_completion_step6 import step6_remove_fillers
+        segments = step6_remove_fillers(segments)
         
-        result_text = "\n".join(result_lines)
+        # 処理結果をデータベースに保存
+        save_processed_segments(meeting_id, segments)
         
-        return result_text
-
+        logger.info(f"会話データの処理が完了: meeting_id={meeting_id}")
+        return True
+        
     except Exception as e:
-        traceback.print_exc()
-        return None 
+        logger.error(f"会話データの処理中にエラーが発生: meeting_id={meeting_id}, error={e}")
+        logger.error(traceback.format_exc())
+        return False
 
 def load_transcript_segments(meeting_id: Optional[int] = None) -> List[Dict[str, Any]]:
     """
@@ -383,3 +380,52 @@ def get_db_connection():
         return pyodbc.connect(conn_str, attrs_before={1256: access_token})
     except Exception as e:
         raise 
+
+def save_processed_segments(meeting_id: int, segments: List[Dict[str, Any]]) -> bool:
+    """
+    処理済みセグメントをデータベースに保存する
+    
+    Args:
+        meeting_id (int): 会議ID
+        segments (List[Dict[str, Any]]): 処理済みセグメントリスト
+        
+    Returns:
+        bool: 保存が成功したかどうか
+    """
+    if not AZURE_AVAILABLE:
+        logger.warning("Azure関連のモジュールが利用できません")
+        return False
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 既存のConversationSegmentを削除
+        cursor.execute("DELETE FROM dbo.ConversationSegment WHERE meeting_id = ?", (meeting_id,))
+        
+        # 新しいセグメントを挿入
+        for segment in segments:
+            speaker_id = segment.get("speaker", 1)
+            text = segment.get("text", "").strip()
+            offset = segment.get("offset", 0.0)
+            
+            if text:  # 空のテキストはスキップ
+                cursor.execute("""
+                    INSERT INTO dbo.ConversationSegment 
+                    (meeting_id, speaker_id, text, start_time, end_time, duration)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (meeting_id, speaker_id, text, offset, None, 0))
+        
+        conn.commit()
+        logger.info(f"処理済みセグメントを保存しました: meeting_id={meeting_id}, segments={len(segments)}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"セグメント保存中にエラーが発生: meeting_id={meeting_id}, error={e}")
+        return False
+    finally:
+        try:
+            if 'conn' in locals():
+                conn.close()
+        except Exception:
+            pass 

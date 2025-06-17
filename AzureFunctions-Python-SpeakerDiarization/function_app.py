@@ -5,7 +5,7 @@ import tempfile
 import uuid
 import time
 import re
-from datetime import datetime, UTC, timedelta
+from datetime import datetime, timezone, timedelta
 from azure.cognitiveservices.speech import (
     SpeechConfig,
     AudioConfig,
@@ -29,8 +29,9 @@ import json
 import base64
 from azure.eventgrid import EventGridEvent
 from pathlib import Path
+import isodate
 sys.path.append(str(Path(__file__).parent))
-from openai_completion_core import clean_and_complete_conversation, load_transcript_segments
+from openai_processing import clean_and_complete_conversation, load_transcript_segments
 
 # Base64デコード用のヘルパー関数
 def safe_base64_decode(data: str) -> bytes:
@@ -139,7 +140,7 @@ def check_database_connection(meetingsTable):
             "user_id": 0,
             "title": "Test Connection",
             "status": "test",
-            "inserted_datetime": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
+            "inserted_datetime": datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
         }
         meetingsTable.set(func.SqlRow(test_data))
         logger.info("Database connection test successful")
@@ -288,7 +289,7 @@ def trigger_transcription_job(event: func.EventGridEvent):
             blob_name=wav_blob_name,
             account_key=account_key,
             permission=BlobSasPermissions(read=True),
-            expiry=datetime.utcnow() + timedelta(hours=1)
+            expiry=datetime.now(timezone.utc) + timedelta(hours=1)
         )
         
         # SASトークン付きのURLを生成
@@ -629,7 +630,7 @@ def execute_query(query: str, params: Optional[Union[Dict[str, Any], Tuple[Any, 
 
 def get_current_time():
     """現在時刻をUTCで取得し、SQLサーバー互換の形式で返す"""
-    return datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
+    return datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
 def get_audio_duration(file_path: str) -> float:
     """
@@ -818,14 +819,27 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
             for phrase in result_json["recognizedPhrases"]:
                 speaker = phrase.get("speaker", "Unknown")
                 text = phrase["nBest"][0]["display"]
-                transcript.append(f"(Speaker{speaker})[{text}]")
+                
+                # offsetフィールドから時刻を取得（ISO 8601形式）
+                offset_str = phrase.get("offset", "PT0S")
+                try:
+                    # isodate.parse_durationで秒数に変換
+                    duration_obj = isodate.parse_duration(offset_str)
+                    offset_seconds = duration_obj.total_seconds()
+                    # 小数第1位まで表示
+                    offset_seconds = round(offset_seconds, 1)
+                except Exception as e:
+                    logger.warning(f"時刻の変換に失敗しました: {offset_str}, エラー: {str(e)}")
+                    offset_seconds = 0.0
+                
+                transcript.append(f"(Speaker{speaker})[{text}]({offset_seconds})")
 
             transcript_text = " ".join(transcript)
             logger.info(f"Generated transcript text: {transcript_text[:100]}...")  # 最初の100文字だけログ出力
 
             # ファイル名から日時を抽出
             datetime_match = re.search(r"(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3})", file_name)
-            meeting_datetime = datetime.strptime(datetime_match.group(1), "%Y-%m-%dT%H-%M-%S-%f") if datetime_match else datetime.now(UTC)
+            meeting_datetime = datetime.strptime(datetime_match.group(1), "%Y-%m-%dT%H-%M-%S-%f") if datetime_match else datetime.now(timezone.utc)
 
             # Blob Storageからファイル情報を取得
             blob_service_client = BlobServiceClient.from_connection_string(os.environ["AzureWebJobsStorage"])
@@ -849,8 +863,8 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                 "meeting_datetime": meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),
                 "start_datetime": meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),
                 "end_datetime": meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),
-                "inserted_datetime": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S'),
-                "updated_datetime": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
+                "inserted_datetime": datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+                "updated_datetime": datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
             }
 
             # 文字起こしテキストの更新とストアドプロシージャの実行
@@ -860,7 +874,7 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                 
                 # ファイル名から日時を抽出してタイトルを生成
                 datetime_match = re.search(r"(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3})", file_name)
-                meeting_datetime = datetime.strptime(datetime_match.group(1), "%Y-%m-%dT%H-%M-%S-%f") if datetime_match else datetime.now(UTC)
+                meeting_datetime = datetime.strptime(datetime_match.group(1), "%Y-%m-%dT%H-%M-%S-%f") if datetime_match else datetime.now(timezone.utc)
                 title = f"会議 {meeting_datetime.strftime('%Y-%m-%d %H:%M')}"
                 
                 # WAVファイルを一時的にダウンロードして長さを取得
@@ -1069,9 +1083,18 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                     text = phrase["nBest"][0]["display"]
                     
                     # 時間情報の変換（ナノ秒から秒へ）
-                    offset = phrase.get("offsetInTicks", 0) / 10000000  # 開始時間（秒）
-                    duration = phrase.get("durationInTicks", 0) / 10000000  # 継続時間（秒）
-                    end_time = offset + duration  # 終了時間（秒）
+                    offset_str = phrase.get("offset", "PT0S")
+                    try:
+                        # isodate.parse_durationで秒数に変換
+                        duration_obj = isodate.parse_duration(offset_str)
+                        offset_seconds = duration_obj.total_seconds()
+                        # 小数第1位まで表示
+                        offset_seconds = round(offset_seconds, 1)
+                    except Exception as e:
+                        logger.warning(f"時刻の変換に失敗しました: {offset_str}, エラー: {str(e)}")
+                        offset_seconds = 0.0
+                    
+                    end_time = offset_seconds
                     
                     insert_values.append((
                         user_id,
@@ -1081,9 +1104,9 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                         file_name,
                         file_path,
                         blob_properties.size,
-                        round(duration, 3),
+                        round(end_time - offset_seconds, 3),
                         "completed",
-                        round(offset, 3),
+                        round(offset_seconds, 3),
                         round(end_time, 3)
                     ))
                 
@@ -1156,14 +1179,37 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                             
                             for i, line in enumerate(lines):
                                 if line.strip():
-                                    m = re.match(r"Speaker(\d+):(.+)", line)
+                                    # offset付きの形式から正しくデータを抽出
+                                    # 例: "Speaker1: はい、大丈夫です。(12.5)"
+                                    m = re.match(r"Speaker(\d+): (.+)\(([\d.]+)\)$", line)
                                     if m:
+                                        speaker_id = int(m.group(1))
+                                        text = m.group(2).strip()
+                                        start_time = float(m.group(3))
+                                        
                                         segments.append({
-                                            "speaker": int(m.group(1)),
-                                            "text": m.group(2).strip()
+                                            "speaker": speaker_id,
+                                            "text": text,
+                                            "start_time": start_time
                                         })
+                                        logger.debug(f"✅ 行 {i+1} を正しく解析: Speaker{speaker_id}, text='{text}', start_time={start_time}")
                                     else:
-                                        logger.warning(f"⚠️ 行 {i+1} が想定外の形式です: {line}")
+                                        logger.warning(f"⚠️ 行 {i+1} が想定外の形式です（offsetなし）: {line}")
+                                        # offsetなしの行も処理（後方互換性のため）
+                                        m_fallback = re.match(r"Speaker(\d+):(.+)", line)
+                                        if m_fallback:
+                                            speaker_id = int(m_fallback.group(1))
+                                            text = m_fallback.group(2).strip()
+                                            start_time = i  # 簡易的に順番を設定
+                                            
+                                            segments.append({
+                                                "speaker": speaker_id,
+                                                "text": text,
+                                                "start_time": start_time
+                                            })
+                                            logger.debug(f"⚠️ 行 {i+1} を簡易解析: Speaker{speaker_id}, text='{text}', start_time={start_time}")
+                                        else:
+                                            logger.warning(f"❌ 行 {i+1} が解析不可能な形式です: {line}")
                             
                             logger.info(f"📊 セグメント化された行数: {len(segments)}")
                             
@@ -1237,10 +1283,11 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                                     speaker_name = f"Speaker{speaker_number}"
                                     speaker_id = speaker_map[speaker_name]
                                     text = segment["text"]
+                                    start_time = segment["start_time"]
                                     
-                                    # 時間情報は簡易的に設定（順番に1秒ずつ）
-                                    start_time = i
-                                    end_time = i + 1
+                                    # end_timeはNULL、durationは0（固定値）を設定
+                                    end_time = None
+                                    duration = 0
                                     
                                     insert_values.append((
                                         user_id,
@@ -1250,11 +1297,13 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                                         file_name,
                                         file_path,
                                         blob_properties.size,
-                                        1.0,  # duration_seconds
+                                        duration,  # 0（固定値）
                                         "completed",
                                         start_time,
                                         end_time
                                     ))
+                                    
+                                    logger.debug(f"💾 セグメント {i+1} を準備: Speaker{speaker_number}, text='{text}', start_time={start_time}")
                                 
                                 try:
                                     # 一括挿入を実行
@@ -1266,6 +1315,7 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                                     conn.close()
                                     
                                     logger.info(f"✅ OpenAI処理結果の {len(insert_values)} セグメントを保存しました。meeting_id: {meeting_id}")
+                                    logger.info(f"📊 保存されたセグメントの詳細: 話者数={len(speaker_map)}, 平均開始時間={sum(s['start_time'] for s in segments)/len(segments):.1f}秒")
                                     insert_trigger_log(loggable_meeting_id, "INFO", f"OpenAI処理完了。{len(insert_values)}セグメントを保存しました")
                                     
                                 except Exception as e:
