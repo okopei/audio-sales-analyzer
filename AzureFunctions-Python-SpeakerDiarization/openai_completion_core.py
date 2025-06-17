@@ -15,6 +15,7 @@ try:
     import struct
     AZURE_AVAILABLE = True
 except ImportError as e:
+    print('ImportError:', e)
     AZURE_AVAILABLE = False
     pyodbc = None
     DefaultAzureCredential = None
@@ -298,22 +299,40 @@ def load_transcript_segments(meeting_id: Optional[int] = None) -> List[Dict[str,
         if row and row[0]:
             transcript_text = row[0]
             
-            # transcript_textをセグメント化（話者分離済みテキスト想定）
+            # transcript_textをセグメント化
             segments = []
-            lines = transcript_text.splitlines()
             
-            for i, line in enumerate(lines):
-                if line.strip():  # 空行をスキップ
-                    m = re.match(r"Speaker(\d+):(.+)", line)
-                    if not m:
-                        m = re.match(r"\(Speaker(\d+)\)\[(.+?)\]", line)
-                    if m:
+            # (Speaker1)[...]形式のパターンを検索
+            import re
+            pattern = r'\(Speaker(\d+)\)\[([^\]]*)\]'
+            matches = re.findall(pattern, transcript_text)
+            
+            if matches:
+                # マッチしたセグメントを処理
+                for speaker_id, text in matches:
+                    if text.strip():  # 空のテキストはスキップ
                         segments.append({
-                            "speaker": int(m.group(1)),
-                            "text": m.group(2).strip(),
+                            "speaker": int(speaker_id),
+                            "text": text.strip(),
                             "duration": 0,
                             "offset": 0
                         })
+            else:
+                # 従来の行単位処理を試行
+                lines = transcript_text.splitlines()
+                
+                for i, line in enumerate(lines):
+                    if line.strip():  # 空行をスキップ
+                        m = re.match(r"Speaker(\d+):(.+)", line)
+                        if not m:
+                            m = re.match(r"\(Speaker(\d+)\)\[(.+?)\]", line)
+                        if m:
+                            segments.append({
+                                "speaker": int(m.group(1)),
+                                "text": m.group(2).strip(),
+                                "duration": 0,
+                                "offset": 0
+                            })
             
             if segments:
                 return segments
@@ -329,7 +348,7 @@ def load_transcript_segments(meeting_id: Optional[int] = None) -> List[Dict[str,
             if 'conn' in locals():
                 conn.close()
         except Exception:
-            pass 
+            pass
 
 # get_db_connection関数をopenai_completion_core.py内に直接実装
 def get_db_connection():
