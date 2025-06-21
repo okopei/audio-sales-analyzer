@@ -1,127 +1,74 @@
 import re
-import logging
-from typing import List, Dict, Any, Union
+from pathlib import Path
+from typing import List, Dict, Optional
 
-logger = logging.getLogger(__name__)
-
-def _is_short_acknowledgment(segment: Dict[str, Any]) -> bool:
-    """短い相槌かどうかを判定する
-
-    Args:
-        segment (Dict[str, Any]): セグメントデータ
-
-    Returns:
-        bool: 短い相槌の場合True
+def parse_transcript(text: str) -> List[Dict[str, any]]:
     """
-    # 3秒未満（30,000,000 ticks）かつ10文字未満
-    duration = float(segment.get("durationInTicks", 0))
-    text = segment.get("text", "").strip()
-    return duration < 30000000 and len(text) < 10
-
-def add_brackets_to_short_segments(segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """短い相槌を括弧で囲む処理
-
-    Args:
-        segments (List[Dict[str, Any]]): 元のセグメントリスト
-
-    Returns:
-        List[Dict[str, Any]]: 処理後のセグメントリスト
-    """
-    if not segments:
-        return []
-
-    result = []
-    i = 0
+    transcript_textから厳密な形式で会話セグメントを抽出して辞書のリストに変換します。
     
-    while i < len(segments):
-        current = segments[i]
+    Args:
+        text (str): 入力テキスト
         
-        # 次のセグメントが存在し、異なる話者で短い相槌の場合
-        if (i < len(segments) - 1 and 
-            current.get("speaker") != segments[i + 1].get("speaker") and 
-            _is_short_acknowledgment(segments[i + 1])):
-            
-            # 現在のセグメントをそのまま追加
-            result.append(current)
-            
-            # 次のセグメント（相槌）を括弧で囲んで追加
-            ack_segment = segments[i + 1].copy()
-            ack_segment["text"] = f"（{ack_segment['text']}）"
-            result.append(ack_segment)
-            i += 2
-        else:
-            result.append(current)
-            i += 1
-
-    return result
-
-def parse_transcript_text(transcript_text: str) -> List[Dict[str, Any]]:
-    """Meetings.transcript_textをパースしてセグメントリストに変換する
-
-    Args:
-        transcript_text (str): Meetings.transcript_textの文字列
-        (Speaker1)[こんにちは、よろしくお願いします。](12.5) (Speaker2)[ありがとうございます。](17.2)
-
     Returns:
-        List[Dict[str, Any]]: パースされたセグメントリスト
+        List[Dict[str, any]]: パースされたセグメントのリスト
     """
-    if not transcript_text or not transcript_text.strip():
-        return []
-    
+    pattern = re.compile(r"Speaker(\d+):\s*(.*?)\s*(?:\(([\d.]+)\))?$")
     segments = []
-    # 正規表現でセグメントを抽出
-    pattern = r"\(Speaker(\d+)\)\[(.+?)\]\(([\d.]+)\)"
-    
-    for match in re.finditer(pattern, transcript_text):
-        speaker = int(match.group(1))
-        text = match.group(2).strip()
-        offset = float(match.group(3))
-        
-        segments.append({
-            "speaker": speaker,
-            "text": text,
-            "offset": offset
-        })
-    
+    for line in text.splitlines():
+        match = pattern.match(line.strip())
+        if match:
+            speaker = int(match.group(1))
+            segment_text = match.group(2).strip()
+            offset = float(match.group(3)) if match.group(3) is not None else 0.0
+            segments.append({
+                "speaker": speaker,
+                "text": segment_text,
+                "offset": offset
+            })
     return segments
 
-def format_segments_with_offset(segments: List[Dict[str, Any]]) -> str:
-    """セグメントリストをoffset表記付きの形式に整形する
-
-    Args:
-        segments (List[Dict[str, Any]]): セグメントリスト
-
-    Returns:
-        str: 整形された文字列
-        Speaker1: こんにちは、よろしくお願いします。(12.5)
-        Speaker2: ありがとうございます。(17.2)
+def process_segments(segments: List[Dict[str, any]]) -> List[str]:
     """
-    if not segments:
-        return ""
-    
-    formatted_lines = []
-    for segment in segments:
-        speaker = segment.get("speaker", "Unknown")
-        text = segment.get("text", "").strip()
-        offset = segment.get("offset", 0.0)
-        
-        # 話者は括弧なし、会話文は : 区切り、末尾に offset を () で保持
-        formatted_line = f"Speaker{speaker}: {text}({offset})"
-        formatted_lines.append(formatted_line)
-    
-    return "\n".join(formatted_lines)
-
-def step1_format_with_offset(segments: list) -> list:
+    セグメントを1つずつ処理し、10文字未満の発話だけ括弧でくくって出力
+    発話のマージは一切しない
     """
-    ステップ1: セグメントリストをoffset表記付きの形式に整形する
-    """
-    logger.info("ステップ1: フォーマットとオフセット処理を開始")
-    
     if not segments:
         return []
+
+    formatted_lines = []
+    for seg in segments:
+        text = seg["text"].strip()
+        if len(text) < 10:  # 10文字未満は括弧
+            text = f'（{text}）'
+        line = f'Speaker{seg["speaker"]}: {text}({seg["offset"]})'
+        formatted_lines.append(line)
+
+    return formatted_lines
+
+def process_transcript(transcript_text: str) -> Optional[str]:
+    """
+    トランスクリプトを処理してフォーマットされたテキストを生成します
     
-    # セグメントリストをそのまま返す（既に適切な形式になっている）
-    # 必要に応じて、ここでフォーマット処理を追加
+    Args:
+        transcript_text (str): 入力トランスクリプト
+        
+    Returns:
+        Optional[str]: フォーマットされたテキスト、エラー時はNone
+    """
+    if not transcript_text:
+        return None
+        
+    segments = parse_transcript(transcript_text)
+    if not segments:
+        return None
     
-    logger.info("ステップ1: フォーマットとオフセット処理が完了")
-    return segments 
+    formatted_lines = process_segments(segments)
+    result = "\n".join(formatted_lines)
+    return result
+
+if __name__ == "__main__":
+    sample_text = "(Speaker1)[えっと、40分。はい、大丈夫です。](0.4)(Speaker2)[ありがとうございます。](2.0)"
+    result = process_transcript(sample_text)
+    if result:
+        print("処理結果:")
+        print(result) 

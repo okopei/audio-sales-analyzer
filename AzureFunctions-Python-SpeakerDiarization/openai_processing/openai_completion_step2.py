@@ -1,7 +1,9 @@
 import re
 import logging
+import json
 from .openai_completion_core import client, log_token_usage, _parse_gpt_response
 import os
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -14,13 +16,377 @@ def extract_offset_from_line(line: str) -> tuple[str, str]:
     Returns:
         tuple[str, str]: (本文, offset) または (元の行, '') のタプル
     """
-    match = re.match(r"(Speaker\d+: .+?)(\(\d+(\.\d+)?\))$", line)
+    match = re.match(r"(Speaker\d+: .*?)\s*\((\d+(\.\d+)?)\)$", line)
     if match:
         body = match.group(1).rstrip()    # ex. 'Speaker1: こんにちは。'
-        offset = match.group(2)           # ex. '(12.5)'
+        offset = f"({match.group(2)})"    # ex. '(12.5)'
         return body, offset
     else:
         return line, ""  # offsetなし行
+
+def extract_last_sentence(text: str) -> str:
+    """
+    テキストから最後の文（句点で終わる部分）を抽出する
+    
+    Args:
+        text (str): 入力テキスト
+        
+    Returns:
+        str: 最後の文（句点で終わる部分）
+    """
+    if not text:
+        return ""
+    
+    # Speaker部分を除去
+    if ":" in text:
+        text = text.split(":", 1)[-1].strip()
+    
+    # 句点で分割して最後の文を取得
+    sentences = text.split("。")
+    if len(sentences) > 1:
+        # 最後の文（句点を含む）
+        last_sentence = sentences[-2] + "。" if sentences[-2] else ""
+        return last_sentence
+    else:
+        # 句点がない場合は全体を返す
+        return text
+
+def extract_first_sentence(text: str) -> str:
+    """
+    テキストから最初の文（最初の句点まで）を抽出する
+    
+    Args:
+        text (str): 入力テキスト
+        
+    Returns:
+        str: 最初の文（句点で終わる部分）
+    """
+    if not text:
+        return ""
+    
+    # Speaker部分を除去
+    if ":" in text:
+        text = text.split(":", 1)[-1].strip()
+    
+    # 最初の句点までを取得
+    if "。" in text:
+        first_sentence = text.split("。")[0] + "。"
+        return first_sentence
+    else:
+        # 句点がない場合は全体を返す
+        return text
+
+def extract_last_complete_sentence(text: str) -> str:
+    """
+    文末の句点「。」まで含む最後の文を抽出
+    
+    Args:
+        text (str): 入力テキスト
+        
+    Returns:
+        str: 最後の完全な文（句点を含む）
+    """
+    if not text:
+        return ""
+    
+    # Speaker部分を除去
+    if ":" in text:
+        text = text.split(":", 1)[-1].strip()
+    
+    # 句点で終わる文を正規表現で抽出
+    sentences = re.findall(r"[^。]*?。", text)
+    return sentences[-1].strip() if sentences else text.strip()
+
+def extract_last_sentence_no_period(text: str) -> str:
+    """
+    テキストから最後の文を抽出し、句点を削除する
+    
+    Args:
+        text (str): 入力テキスト
+        
+    Returns:
+        str: 最後の文（句点なし）
+    """
+    if not text:
+        return ""
+
+    if ":" in text:
+        text = text.split(":", 1)[-1].strip()
+
+    sentences = text.split("。")
+    if len(sentences) > 1:
+        # 最後の文（句点を削除）
+        last_sentence = sentences[-2] if sentences[-2] else ""
+        return last_sentence
+    else:
+        # 句点がない場合は全体を返す（句点があれば削除）
+        return text.strip("。")
+
+def extract_first_sentence_no_period(text: str) -> str:
+    """
+    テキストから最初の文を抽出し、句点を削除する
+    
+    Args:
+        text (str): 入力テキスト
+        
+    Returns:
+        str: 最初の文（句点なし）
+    """
+    if not text:
+        return ""
+    
+    # Speaker部分を除去
+    if ":" in text:
+        text = text.split(":", 1)[-1].strip()
+    
+    # 最初の句点までを取得（句点を削除）
+    if "。" in text:
+        first_sentence = text.split("。")[0]
+        return first_sentence
+    else:
+        # 句点がない場合は全体を返す
+        return text
+
+# def process_segment_connection(prev_text: str, bracket_text: str, next_text: str) -> dict:
+#     """
+#     括弧内発話の接続先を判定し、補完と削除材料を決定する
+#     
+#     Args:
+#         prev_text (str): 前の発話
+#         bracket_text (str): 括弧内の発話
+#         next_text (str): 次の発話
+#         
+#     Returns:
+#         dict: 接続先、補完テキスト、削除材料を含む辞書
+#     """
+#     system_message = """
+# あなたは会話補完のエキスパートです。以下の条件で括弧内の短い発話（相槌）を、会話の前後どちらかに自然に接続してください。
+
+# 1. 括弧内の発話は、前の発話または次の発話と意味が通るように補完してください。
+# 2. 前後どちらと接続した方が自然かを比較し、適切な語句で補完してください。
+# 3. 補完に使った語（たとえば「大丈。」など）は元の発話から削除してください。
+# 4. 文脈上不要な単語や破綻した言葉（例：「すですよね」「あわ。」など）は削除してください。
+# 5. 同じ表現の繰り返しを避け、多様で自然な言葉遣いを使ってください。
+# 6. 括弧内の形式（「（〇〇です。）」）は維持してください。
+
+# 出力は補完された括弧内のテキストのみで構いません。
+
+# 出力形式（JSON）:
+# {
+#   "connect_to": "前" or "後",
+#   "corrected_text": "補完後の括弧内テキスト",
+#   "remove_fragment": "削除すべき語尾・語句（例：大丈。）"
+# }"""
+
+#     user_message = f"""以下の括弧内発話「{bracket_text}」は、文法的に前後どちらの文脈に接続するのが自然ですか？
+
+# - 前文：{prev_text}
+# - 後文：{next_text}
+
+# 接続先（前 or 後）と、自然な形に補完した括弧内発話、および削除すべき語句（例：「大丈。」）を返してください。
+
+# 出力形式：
+# {{
+#   "connect_to": "前",
+#   "corrected_text": "大丈夫です。",
+#   "remove_fragment": "大丈。"
+# }}"""
+
+#     try:
+#         response = client.chat.completions.create(
+#             model=os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
+#             messages=[
+#                 {"role": "system", "content": system_message},
+#                 {"role": "user", "content": user_message}
+#             ],
+#             temperature=0.1,
+#             max_tokens=300
+#         )
+        
+#         # トークン使用量のデバッグ出力
+#         total_tokens = response.usage.total_tokens
+#         prompt_tokens = response.usage.prompt_tokens
+#         completion_tokens = response.usage.completion_tokens
+        
+#         logger.debug(f"🧾 Step2 Token Usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}")
+        
+#         result = response.choices[0].message.content.strip()
+#         log_token_usage(response.usage.total_tokens, "step2_connection_analysis")
+        
+#         # JSONパース
+#         parsed_result = _parse_gpt_response(result)
+#         if parsed_result:
+#             return {
+#                 "connect_to": parsed_result.get("connect_to", "前"),
+#                 "corrected_text": parsed_result.get("corrected_text", bracket_text),
+#                 "remove_fragment": parsed_result.get("remove_fragment", "")
+#             }
+#         else:
+#             # パース失敗時は元の内容を保持
+#             return {
+#                 "connect_to": "前",
+#                 "corrected_text": bracket_text,
+#                 "remove_fragment": ""
+#             }
+            
+#     except Exception as e:
+#         logger.error(f"接続分析エラー: {e}")
+#         return {
+#             "connect_to": "前",
+#             "corrected_text": bracket_text,
+#             "remove_fragment": ""
+#         }
+
+# def remove_fragment_from_text(text: str, fragment: str) -> str:
+#     """
+#     テキストから指定されたフラグメントを削除し、フィラーや断片語も自動削除する
+#     
+#     Args:
+#         text (str): 元のテキスト
+#         fragment (str): 削除するフラグメント
+#         
+#     Returns:
+#         str: フラグメントを削除したテキスト
+#     """
+#     if not text:
+#         return text
+    
+#     # 指定されたフラグメントを削除
+#     if fragment:
+#         # フラグメントを削除（末尾から検索）
+#         if text.endswith(fragment):
+#             text = text[:-len(fragment)].rstrip()
+#         else:
+#             # フラグメントが含まれている場合は削除
+#             text = text.replace(fragment, "").strip()
+    
+#     # フィラー候補を削除
+#     fillers = ["えっと", "あの", "うーん", "なんか"]
+#     for filler in fillers:
+#         # 文頭のフィラーを削除
+#         if text.startswith(filler):
+#             text = text[len(filler):].strip()
+#         # 文末のフィラーを削除
+#         if text.endswith(filler):
+#             text = text[:-len(filler)].rstrip()
+    
+#     # 断片候補（2文字以下のひらがな文節で終わる）を削除
+#     import re
+#     # 末尾の2文字以下のひらがな文節を検出
+#     fragment_pattern = r'[あ-ん]{1,2}。$'
+#     if re.search(fragment_pattern, text):
+#         # 末尾の断片を削除
+#         text = re.sub(fragment_pattern, '', text).rstrip()
+    
+#     return text
+
+def step2_complete_incomplete_sentences(segments: list) -> list:
+    """
+    ステップ2: 括弧内発話の前後接続自然さスコアリング評価（句点削除・自然接続判定）
+    
+    Args:
+        segments (list): 文字列リスト（各行が "SpeakerX: 本文(offset)" 形式）
+        
+    Returns:
+        list: 処理済みの文字列リスト（スコア付き）
+    """
+    logger.info("ステップ2: 括弧内発話の前後接続自然さスコアリング評価（句点削除・自然接続判定）を開始")
+    logger.info(f"入力セグメント数: {len(segments)}")
+    
+    if not segments:
+        return segments
+    
+    result_segments = []
+    processed_count = 0
+    bracket_count = 0
+    
+    # 出力ファイルの準備
+    output_path = Path("outputs/completion_result_step2.txt")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    for i, segment in enumerate(segments):
+        if not isinstance(segment, str) or not segment.strip():
+            result_segments.append(segment)
+            continue
+        
+        segment = segment.strip()
+        logger.debug(f"処理中: {i+1}/{len(segments)} - {segment}")
+        
+        # 括弧内発話かどうかを最初にチェック
+        if segment.startswith("Speaker") and "（" in segment and "）" in segment:
+            bracket_count += 1
+            logger.info(f"括弧内発話を発見: {segment}")
+            
+            body, offset = extract_offset_from_line(segment)
+            
+            # 括弧内だけの発話であることを確認
+            body_without_speaker = body.split(":", 1)[-1].strip()
+            if body_without_speaker.startswith("（") and body_without_speaker.endswith("）"):
+                logger.info(f"括弧内だけの発話を確認: {body_without_speaker}")
+                
+                # 前後の行を取得
+                prev_segment = segments[i - 1] if i > 0 else ""
+                next_segment = segments[i + 1] if i < len(segments) - 1 else ""
+                
+                # 前後の行から本文を抽出
+                prev_body, _ = extract_offset_from_line(prev_segment)
+                next_body, _ = extract_offset_from_line(next_segment)
+                
+                # 括弧の内容を抽出
+                bracket_content = body_without_speaker[1:-1]  # （）を除去
+                
+                # 前の発話の最後の完全な文を抽出
+                front_complete_sentence = extract_last_complete_sentence(prev_body)
+                # 句点を削除した前文を取得
+                front_sentence = extract_last_sentence_no_period(prev_body)
+                # 句点を削除した後文を取得
+                back_sentence = extract_first_sentence_no_period(next_body)
+                bracket_no_period = bracket_content.strip("。")
+                
+                logger.info(f"前の完全文: {front_complete_sentence}")
+                logger.info(f"前の文（句点なし）: {front_sentence}")
+                logger.info(f"括弧内（句点なし）: {bracket_no_period}")
+                logger.info(f"後の文（句点なし）: {back_sentence}")
+                
+                # スコアリング評価を実行
+                score_result = evaluate_connection_naturalness_no_period(front_sentence, bracket_no_period, back_sentence)
+                
+                # 結果を適用
+                front_score = score_result.get("front_score", 0.0)
+                back_score = score_result.get("back_score", 0.0)
+                
+                logger.info(f"前接続スコア: {front_score}, 後接続スコア: {back_score}")
+                
+                # スコア付きの結果行を作成
+                speaker_prefix = body.split(':', 1)[0]
+                scored_segment = f"{speaker_prefix}: （{bracket_content}）{offset} [前:{front_score:.1f} 後:{back_score:.1f}]"
+                
+                # 結果を追加
+                result_segments.append(scored_segment)
+                processed_count += 1
+                
+                # ファイルに追記出力
+                with open(output_path, "a", encoding="utf-8") as f:
+                    f.write(scored_segment + "\n")
+                
+                logger.info(f"スコアリング完了: {segment} → {scored_segment}")
+                
+            else:
+                # 括弧内だけの発話でない場合はそのまま
+                logger.debug(f"括弧内だけの発話ではないためスキップ: {body_without_speaker}")
+                result_segments.append(segment)
+        else:
+            # 括弧付きでない場合はそのまま
+            result_segments.append(segment)
+    
+    logger.info(f"括弧を含むセグメント数: {bracket_count}")
+    logger.info(f"ステップ2完了: {processed_count}件の括弧内発話をスコアリング評価")
+    
+    # トークン使用量のサマリーを出力
+    from .openai_completion_core import total_tokens_used
+    logger.info(f"🧾 Step2 Total Token Usage: {total_tokens_used}")
+    
+    return result_segments
 
 def complete_utterance_with_openai(text: str) -> str:
     """
@@ -65,26 +431,6 @@ def complete_utterance_with_openai(text: str) -> str:
     except Exception as e:
         logger.error(f"OpenAI補完エラー: {e}")
         return text
-
-def step2_complete_incomplete_sentences(segments: list) -> list:
-    """
-    ステップ2: 不完全な文を補完する
-    """
-    logger.info("ステップ2: 不完全な文の補完を開始")
-    
-    for i, segment in enumerate(segments):
-        if not segment.get('text', '').strip():
-            continue
-            
-        original_text = segment['text']
-        completed_text = complete_utterance_with_openai(original_text)
-        
-        if completed_text != original_text:
-            logger.info(f"補完: {original_text} -> {completed_text}")
-            segments[i]['text'] = completed_text
-    
-    logger.info("ステップ2: 不完全な文の補完が完了")
-    return segments
 
 def complete_utterance_with_openai_text(text: str) -> str:
     """ステップ2-①：括弧付きセグメントの補完処理（文字列ベース）
@@ -188,55 +534,295 @@ def complete_utterance_with_openai_text(text: str) -> str:
             # 括弧付きでない場合はそのまま
             completed_body = body
         
-        # offsetを再付与
-        final_line = completed_body + offset if offset else completed_body
-        result_lines.append(final_line)
-
-    return '\n'.join(result_lines)
+        # offsetを付けて結果行を作成
+        result_line = f"{completed_body}{offset}"
+        result_lines.append(result_line)
+    
+    logger.info(f"ステップ2-①完了: {completion_count}件の括弧付きセグメントを補完")
+    return "\n".join(result_lines)
 
 def complete_utterance_with_openai(segments: list) -> list:
-    """ステップ2-①：括弧付きセグメントの補完処理（後方互換性のため残す）
-
-    Args:
-        segments (List[Dict[str, Any]]): セグメントリスト
-
-    Returns:
-        List[Dict[str, Any]]: 補完後のセグメントリスト
     """
-    # セグメントリストを文字列に変換
-    text_lines = []
+    ステップ2-②：不完全な発話の補完処理（セグメントベース）
+    """
+    logger.info("ステップ2-②: 不完全な発話の補完を開始")
+    
+    result_segments = []
+    completion_count = 0
+    
     for segment in segments:
-        speaker = segment.get("speaker", "Unknown")
-        text = segment.get("text", "").strip()
-        offset = segment.get("offset", 0.0)
-        line = f"Speaker{speaker}: {text}({offset})"
-        text_lines.append(line)
+        if not isinstance(segment, dict):
+            result_segments.append(segment)
+            continue
+        
+        text = segment.get("text", "")
+        if not text:
+            result_segments.append(segment)
+            continue
+        
+        # 不完全な発話の補完
+        completed_text = complete_utterance_with_openai(text)
+        
+        if completed_text != text:
+            segment["text"] = completed_text
+            completion_count += 1
+        
+        result_segments.append(segment)
     
-    text = '\n'.join(text_lines)
+    logger.info(f"ステップ2-②完了: {completion_count}件の発話を補完")
+    return result_segments
+
+def evaluate_connection_naturalness(prev_text: str, bracket_text: str, next_text: str) -> dict:
+    """
+    括弧内発話の前後接続の自然さをスコアリング評価する
     
-    # 文字列ベースの処理を実行
-    processed_text = complete_utterance_with_openai_text(text)
-    
-    # 結果をセグメントリストに戻す
-    result = []
-    for line in processed_text.strip().split('\n'):
-        if line.strip():
-            # 行をパースしてセグメントに変換
-            body, offset_str = extract_offset_from_line(line)
-            if offset_str:
-                offset = float(offset_str.strip('()'))
-            else:
-                offset = 0.0
+    Args:
+        prev_text (str): 前の発話
+        bracket_text (str): 括弧内の発話
+        next_text (str): 次の発話
+        
+    Returns:
+        dict: 前接続スコアと後接続スコアを含む辞書
+    """
+    system_message = """
+あなたは会話の自然さを評価する言語モデルです。
+与えられた2つの文を比較し、どちらが日本語の会話としてより自然かを判断し、それぞれに 0.0〜1.0 のスコアを与えてください。
+
+評価基準：
+- 1.0: 非常に自然で自然な会話
+- 0.8-0.9: 自然で理解しやすい
+- 0.6-0.7: やや不自然だが理解可能
+- 0.4-0.5: 不自然で理解しにくい
+- 0.2-0.3: 非常に不自然
+- 0.0-0.1: 文法的に破綻している
+
+出力形式：
+{
+  "front_score": 0.0-1.0,
+  "back_score": 0.0-1.0
+}"""
+
+    user_message = f"""次の2つの文を比較してください：
+
+1. 前文接続: {prev_text}{bracket_text}
+2. 後文接続: {bracket_text}{next_text}
+
+各文について自然さを評価し、以下の形式で出力してください：
+{{
+  "front_score": 0.0-1.0,
+  "back_score": 0.0-1.0
+}}"""
+
+    try:
+        response = client.chat.completions.create(
+            model=os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=0.1,
+            max_tokens=200
+        )
+        
+        # トークン使用量のデバッグ出力
+        total_tokens = response.usage.total_tokens
+        prompt_tokens = response.usage.prompt_tokens
+        completion_tokens = response.usage.completion_tokens
+        
+        logger.debug(f"🧾 Step2 Scoring Token Usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}")
+        
+        result = response.choices[0].message.content.strip()
+        log_token_usage(response.usage.total_tokens, "step2_scoring_evaluation")
+        
+        # JSONパース
+        parsed_result = _parse_gpt_response(result)
+        if parsed_result:
+            return {
+                "front_score": float(parsed_result.get("front_score", 0.0)),
+                "back_score": float(parsed_result.get("back_score", 0.0))
+            }
+        else:
+            # パース失敗時はデフォルトスコア
+            return {
+                "front_score": 0.5,
+                "back_score": 0.5
+            }
             
-            # Speaker部分を抽出
-            speaker_match = re.match(r"Speaker(\d+): (.+)", body)
-            if speaker_match:
-                speaker = int(speaker_match.group(1))
-                text = speaker_match.group(2).strip()
-                result.append({
-                    "speaker": speaker,
-                    "text": text,
-                    "offset": offset
-                })
+    except Exception as e:
+        logger.error(f"スコアリング評価エラー: {e}")
+        return {
+            "front_score": 0.5,
+            "back_score": 0.5
+        }
+
+def evaluate_connection_naturalness_sentence(front_sentence: str, bracket_text: str, back_sentence: str) -> dict:
+    """
+    括弧内発話の前後接続の自然さをスコアリング評価する（文単位対応）
     
-    return result 
+    Args:
+        front_sentence (str): 前の文（句点で終わる）
+        bracket_text (str): 括弧内の発話
+        back_sentence (str): 後の文（句点で終わる）
+        
+    Returns:
+        dict: 前接続スコアと後接続スコアを含む辞書
+    """
+    system_message = """
+あなたは会話の自然さを評価する日本語専門の言語モデルです。
+与えられた2つの文について、それぞれの自然さを0.0〜1.0で評価してください。
+
+評価基準：
+- 1.0: 非常に自然で自然な会話
+- 0.8-0.9: 自然で理解しやすい
+- 0.6-0.7: やや不自然だが理解可能
+- 0.4-0.5: 不自然で理解しにくい
+- 0.2-0.3: 非常に不自然
+- 0.0-0.1: 文法的に破綻している
+
+出力形式：
+{
+  "front_score": 0.0-1.0,
+  "back_score": 0.0-1.0
+}"""
+
+    user_message = f"""次の2つの文を比較してください：
+
+1. 前文接続: {front_sentence}{bracket_text}
+2. 後文接続: {bracket_text}{back_sentence}
+
+各文について自然さを評価し、以下の形式で出力してください：
+{{
+  "front_score": 0.0-1.0,
+  "back_score": 0.0-1.0
+}}"""
+
+    try:
+        response = client.chat.completions.create(
+            model=os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=0.1,
+            max_tokens=200
+        )
+        
+        # トークン使用量のデバッグ出力
+        total_tokens = response.usage.total_tokens
+        prompt_tokens = response.usage.prompt_tokens
+        completion_tokens = response.usage.completion_tokens
+        
+        logger.debug(f"🧾 Step2 Sentence Scoring Token Usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}")
+        
+        result = response.choices[0].message.content.strip()
+        log_token_usage(response.usage.total_tokens, "step2_sentence_scoring_evaluation")
+        
+        # JSONパース
+        parsed_result = _parse_gpt_response(result)
+        if parsed_result:
+            return {
+                "front_score": float(parsed_result.get("front_score", 0.0)),
+                "back_score": float(parsed_result.get("back_score", 0.0))
+            }
+        else:
+            # パース失敗時はデフォルトスコア
+            return {
+                "front_score": 0.5,
+                "back_score": 0.5
+            }
+            
+    except Exception as e:
+        logger.error(f"文単位スコアリング評価エラー: {e}")
+        return {
+            "front_score": 0.5,
+            "back_score": 0.5
+        }
+
+def evaluate_connection_naturalness_no_period(front_sentence: str, bracket_text: str, back_sentence: str) -> dict:
+    """
+    括弧内発話の前後接続の自然さをスコアリング評価する（句点削除・自然接続判定）
+    
+    Args:
+        front_sentence (str): 前の文（句点なし）
+        bracket_text (str): 括弧内の発話（句点なし）
+        back_sentence (str): 後の文（句点なし）
+        
+    Returns:
+        dict: 前接続スコアと後接続スコアを含む辞書
+    """
+    system_message = """
+あなたは会話の自然さを判定する日本語特化の言語モデルです。
+2つの文の自然さを比較し、それぞれスコア（0.0〜1.0）で評価してください。
+
+評価基準：
+- 1.0: 文法的に正しく、意味が通じる自然な会話
+- 0.8-0.9: ほぼ自然で理解しやすい
+- 0.6-0.7: やや不自然だが理解可能
+- 0.4-0.5: 不自然で理解しにくい
+- 0.2-0.3: 非常に不自然
+- 0.0-0.1: 文法的に破綻している、意味不明
+
+特に以下の点を重視してください：
+- 文法的な正しさ
+- 意味の通じやすさ
+- 日本語として自然な語順
+- 敬語や丁寧語の適切な使用
+
+出力形式：
+{
+  "front_score": 0.0-1.0,
+  "back_score": 0.0-1.0
+}"""
+
+    user_message = f"""次の2つの文を比較してください：
+
+1. 前文接続: {front_sentence}{bracket_text}
+2. 後文接続: {bracket_text}{back_sentence}
+
+各文について自然さを評価し、以下の形式で出力してください：
+{{
+  "front_score": 0.0-1.0,
+  "back_score": 0.0-1.0
+}}"""
+
+    try:
+        response = client.chat.completions.create(
+            model=os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=0.1,
+            max_tokens=200
+        )
+        
+        # トークン使用量のデバッグ出力
+        total_tokens = response.usage.total_tokens
+        prompt_tokens = response.usage.prompt_tokens
+        completion_tokens = response.usage.completion_tokens
+        
+        logger.debug(f"🧾 Step2 No Period Scoring Token Usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}")
+        
+        result = response.choices[0].message.content.strip()
+        log_token_usage(response.usage.total_tokens, "step2_no_period_scoring_evaluation")
+        
+        # JSONパース
+        parsed_result = _parse_gpt_response(result)
+        if parsed_result:
+            return {
+                "front_score": float(parsed_result.get("front_score", 0.0)),
+                "back_score": float(parsed_result.get("back_score", 0.0))
+            }
+        else:
+            # パース失敗時はデフォルトスコア
+            return {
+                "front_score": 0.5,
+                "back_score": 0.5
+            }
+            
+    except Exception as e:
+        logger.error(f"句点削除版スコアリング評価エラー: {e}")
+        return {
+            "front_score": 0.5,
+            "back_score": 0.5
+        } 

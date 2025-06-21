@@ -9,6 +9,14 @@ from pathlib import Path
 import demjson3
 import traceback
 
+# ロギング設定を追加
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+
+# スクリプトの場所を基準としたベースディレクトリを設定
+BASE_DIR = Path(__file__).resolve().parent
 logger = logging.getLogger(__name__)
 
 # Azure関連のimportを条件付きで行う
@@ -48,7 +56,7 @@ def load_local_settings():
         if os.environ.get("OPENAI_API_KEY") and os.environ.get("OPENAI_MODEL"):
             return True
 
-        settings_path = Path(__file__).parent / "local.settings.json"
+        settings_path = BASE_DIR / "local.settings.json"
         if not settings_path.exists():
             return False
 
@@ -122,26 +130,63 @@ def save_step_output(segments: List[Dict[str, Any]], step_num: int) -> None:
         segments (List[Dict[str, Any]]): 処理済みセグメントリスト
         step_num (int): ステップ番号（1-5、または"2_phase1"、"2_phase2"）
     """
+    print(f"[DEBUG] save_step_output() が呼ばれました（step_num={step_num}）")
+    print(f"[DEBUG] ステップ{step_num}のセグメント数: {len(segments)}")
+    
     try:
         # セグメントをテキスト形式に変換
         text = ""
         for seg in segments:
-            if seg["text"].strip():  # 空のセグメントはスキップ
-                speaker = f"Speaker{seg.get('speaker', '?')}"
-                text += f"{speaker}: {seg['text']}\n"
+            try:
+                if isinstance(seg, dict):
+                    text_val = seg["text"]
+                    speaker_val = f"Speaker{seg.get('speaker', '?')}"
+                elif isinstance(seg, ConversationSegment):
+                    text_val = seg.text
+                    speaker_val = f"Speaker{seg.speaker_id}"
+                else:
+                    continue
 
-        # ファイルに出力
+                if text_val.strip():
+                    text += f"{speaker_val}: {text_val.strip()}\n"
+
+            except Exception as e:
+                print(f"[DEBUG] セグメント出力時エラー: {e}")
+                continue
+
+        # 出力ディレクトリの準備
+        output_dir = BASE_DIR / "outputs"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 出力ファイルパスの設定
         if isinstance(step_num, str):
             # 2段階処理の中間結果の場合
-            output_path = f"completion_result_step{step_num}.txt"
+            output_path = output_dir / f"completion_result_step{step_num}.txt"
         else:
             # 通常のステップの場合
-            output_path = f"completion_result_step{step_num}.txt"
+            output_path = output_dir / f"completion_result_step{step_num}.txt"
+        
+        # デバッグ用：出力先の確認
+        print(f"[DEBUG] 出力先ディレクトリ: {output_dir}")
+        print(f"[DEBUG] 出力ファイルパス: {output_path}")
+        
+        # ファイル出力前のデバッグログ
+        logger.info(f"✅ completion_result_step{step_num}.txt を出力します: {output_path}")
             
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(text)
+            
+        print(f"[DEBUG] save_step_output: ステップ{step_num}の結果を正常に出力しました")
+        
+        # ファイル作成の確認
+        if output_path.exists():
+            print(f"[DEBUG] ✅ ファイル作成成功: {output_path}")
+        else:
+            print(f"[ERROR] ❌ ファイル作成失敗: {output_path} が存在しません")
+        
     except Exception as e:
-        pass
+        logger.error(f"[save_step_output] ステップ{step_num}の結果出力に失敗しました: {e}")
+        traceback.print_exc()
 
 def _remove_duplicate_segments(segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """重複する発話を除去する
@@ -227,48 +272,73 @@ def _parse_gpt_response(response_text: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         return None
 
-def clean_and_complete_conversation(meeting_id: int) -> bool:
+def clean_and_complete_conversation(meeting_id: int, transcript_text: str) -> bool:
     """
     会話データを段階的にクリーンアップ・補完する
     """
     try:
-        # データベースから会話データを取得
-        segments = load_transcript_segments(meeting_id)
-        if not segments:
-            logger.warning(f"会話データが見つかりません: meeting_id={meeting_id}")
-            return False
+        from pathlib import Path
+        import logging
+        logger = logging.getLogger(__name__)
+
+        logger.info("ステップ3のみの実行を開始")
         
-        logger.info(f"会話データの処理を開始: {len(segments)}セグメント")
-        
-        # ステップ1: フォーマットとオフセット処理
-        from .openai_completion_step1 import step1_format_with_offset
-        segments = step1_format_with_offset(segments)
-        
-        # ステップ2: 不完全な文の補完
-        from .openai_completion_step2 import step2_complete_incomplete_sentences
-        segments = step2_complete_incomplete_sentences(segments)
-        
-        # ステップ3: 補完材料の削除
-        from .openai_completion_step3 import step3_remove_completion_materials
-        segments = step3_remove_completion_materials(segments)
-        
-        # ステップ4: 相槌と次の発話の統合
-        from .openai_completion_step4 import step4_merge_backchannel_with_next
-        segments = step4_merge_backchannel_with_next(segments)
-        
-        # ステップ5: 同一話者の連続セグメントの統合
-        from .openai_completion_step5 import step5_merge_same_speaker_segments
-        segments = step5_merge_same_speaker_segments(segments)
-        
-        # ステップ6: フィラー削除
-        from .openai_completion_step6 import step6_remove_fillers
-        segments = step6_remove_fillers(segments)
-        
-        # 処理結果をデータベースに保存
-        save_processed_segments(meeting_id, segments)
-        
-        logger.info(f"会話データの処理が完了: meeting_id={meeting_id}")
+        # ステップ3: 会話補完の確定処理
+        from .openai_completion_step3 import step3_finalize_completion
+        step3_result = step3_finalize_completion(meeting_id)
+        if not step3_result:
+            raise ValueError("❌ Step3処理が失敗しました")
+
+        logger.info("✅ ステップ3処理が完了しました")
         return True
+
+        # 以下はコメントアウト（ステップ1・2の実行を停止）
+        """
+        # Step1: transcript_text を整形する
+        step1_result = process_transcript(transcript_text)
+        if not step1_result:
+            raise ValueError("❌ Step1結果が空です")
+
+        # Step1の出力を BASE_DIR/outputs/completion_result_step1.txt に保存
+        step1_path = BASE_DIR / "outputs" / "completion_result_step1.txt"
+        step1_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(step1_path, "w", encoding="utf-8") as f:
+            f.write(step1_result)
+        logger.info(f"Step1の整形済み出力を {step1_path} に保存しました")
+
+        # 追加: ファイル存在確認と出力件数ログ
+        if step1_path.exists():
+            with open(step1_path, "r", encoding="utf-8") as f:
+                line_count = sum(1 for _ in f)
+            logger.info(f"✅ completion_result_step1.txt の出力を確認: {step1_path} (行数: {line_count})")
+        else:
+            logger.error(f"❌ completion_result_step1.txt の出力が見つかりません: {step1_path}")
+
+        # Step1の結果を行ごとに分割
+        step1_lines = step1_result.strip().split('\n')
+        
+        # Step2: 不完全文の補完
+        from .openai_completion_step2 import step2_complete_incomplete_sentences
+        segments_step2 = step2_complete_incomplete_sentences(step1_lines)
+        
+        # Step2の出力を保存
+        step2_path = BASE_DIR / "outputs" / "completion_result_step2.txt"
+        step2_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(step2_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(segments_step2))
+        logger.info(f"Step2の補完済み出力を {step2_path} に保存しました")
+        
+        # Step2の出力確認
+        if step2_path.exists():
+            with open(step2_path, "r", encoding="utf-8") as f:
+                line_count = sum(1 for _ in f)
+            logger.info(f"✅ completion_result_step2.txt の出力を確認: {step2_path} (行数: {line_count})")
+        else:
+            logger.error(f"❌ completion_result_step2.txt の出力が見つかりません: {step2_path}")
+
+        logger.info("🛑 Step2までで処理を終了（デバッグ用）")
+        return True
+        """
         
     except Exception as e:
         logger.error(f"会話データの処理中にエラーが発生: meeting_id={meeting_id}, error={e}")
@@ -276,69 +346,147 @@ def clean_and_complete_conversation(meeting_id: int) -> bool:
         return False
 
 def load_transcript_segments(meeting_id: Optional[int] = None) -> List[Dict[str, Any]]:
-    """
-    meeting_idを指定してDBからtranscript_textを取得し、セグメント化する。
+    """DBからtranscript_textを読み込み、セグメントリストに変換する
+
+    Args:
+        meeting_id (Optional[int]): 会議ID
+
     Returns:
         List[Dict[str, Any]]: セグメントリスト
     """
+    logger.info(f"[DEBUG] loading segments from DB for meeting_id={meeting_id}")
+    logger.info(f"[DEBUG] meeting_id type: {type(meeting_id)}")
+
     if meeting_id is None:
+        logger.error("[DEBUG] meeting_id is None")
         return []
-    
+
     if not AZURE_AVAILABLE:
+        logger.error("[DEBUG] Azure modules not available")
         return []
-    
+
     try:
+        logger.info("[DEBUG] Attempting to get DB connection")
         conn = get_db_connection()
+        if not conn:
+            logger.error("[DEBUG] Failed to get DB connection")
+            return []
+
         cursor = conn.cursor()
-        cursor.execute("SELECT transcript_text FROM dbo.Meetings WHERE meeting_id = ?", (meeting_id,))
+
+        # SQL実行前のデバッグログ
+        logger.info(f"[DEBUG] Executing SQL query for meeting_id={meeting_id}")
+        query = "SELECT transcript_text FROM dbo.Meetings WHERE meeting_id = ?"
+        logger.info(f"[DEBUG] SQL Query: {query}")
+        
+        cursor.execute(query, (meeting_id,))
         row = cursor.fetchone()
         
-        if row and row[0]:
+        if row:
+            logger.info(f"[DEBUG] Found transcript_text for meeting_id={meeting_id}")
             transcript_text = row[0]
-            
-            # transcript_textをセグメント化
-            segments = []
-            
-            # (Speaker1)[...]形式のパターンを検索
-            import re
-            pattern = r'\(Speaker(\d+)\)\[([^\]]*)\]'
-            matches = re.findall(pattern, transcript_text)
-            
-            if matches:
-                # マッチしたセグメントを処理
-                for speaker_id, text in matches:
-                    if text.strip():  # 空のテキストはスキップ
-                        segments.append({
-                            "speaker": int(speaker_id),
-                            "text": text.strip(),
-                            "duration": 0,
-                            "offset": 0
-                        })
+            if transcript_text:
+                logger.info(f"[DEBUG] transcript_text content (first 100 chars): {transcript_text[:100]}...")
+                logger.info(f"[DEBUG] transcript_text length: {len(transcript_text)}")
             else:
-                # 従来の行単位処理を試行
-                lines = transcript_text.splitlines()
-                
-                for i, line in enumerate(lines):
-                    if line.strip():  # 空行をスキップ
-                        m = re.match(r"Speaker(\d+):(.+)", line)
-                        if not m:
-                            m = re.match(r"\(Speaker(\d+)\)\[(.+?)\]", line)
-                        if m:
-                            segments.append({
-                                "speaker": int(m.group(1)),
-                                "text": m.group(2).strip(),
-                                "duration": 0,
-                                "offset": 0
-                            })
-            
-            if segments:
-                return segments
-            else:
+                logger.warning("[DEBUG] transcript_text is empty")
                 return []
         else:
+            logger.warning(f"[DEBUG] No row found for meeting_id={meeting_id}")
             return []
+
+        # transcript_textをセグメント化
+        segments = []
+        
+        # 複数の正規表現パターンを試行
+        patterns = [
+            # パターン1: (SpeakerX)[発言](offset)
+            r'\(Speaker(\d+)\)\[(.*?)\]\(([\d.]+)\)',
+            # パターン2: (SpeakerX)[発言]
+            r'\(Speaker(\d+)\)\[(.*?)\]',
+            # パターン3: SpeakerX:発言
+            r'Speaker(\d+):(.+?)(?=Speaker\d+:|$)',
+            # パターン4: [SpeakerX]発言
+            r'\[Speaker(\d+)\](.+?)(?=\[Speaker\d+\]|$)'
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, transcript_text, flags=re.DOTALL)
+            if matches:
+                logger.info(f"✅ meeting_id={meeting_id}: パターンマッチ成功")
+                
+                for match in matches:
+                    if len(match) >= 2:  # 最低でもspeaker_idとtextは必要
+                        speaker_id = int(match[0])
+                        text = match[1].strip()
+                        # offsetは3番目の要素がある場合のみ使用
+                        offset = float(match[2]) if len(match) > 2 else 0.0
+                        
+                        if text:  # 空のテキストはスキップ
+                            segments.append({
+                                "speaker": speaker_id,
+                                "text": text,
+                                "offset": offset
+                            })
+                
+                # マッチが見つかったらループを抜ける
+                if segments:
+                    break
+        
+        if segments:
+            # ✅ デバッグログ追加：return直前のsegments確認
+            logger.info(f"[DEBUG] meeting_id={meeting_id}: セグメント抽出完了")
+            logger.info(f"[DEBUG] 抽出されたセグメント数: {len(segments)}")
+            return segments
+        else:
+            # 最後の手段：行単位での分割を試みる
+            lines = transcript_text.splitlines()
+            current_speaker = None
+            current_text = []
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                # 新しい話者の検出
+                speaker_match = re.match(r'(?:Speaker|＜話者)(\d+)(?:＞|:|）|\])', line)
+                if speaker_match:
+                    # 前の話者のテキストがあれば保存
+                    if current_speaker is not None and current_text:
+                        segments.append({
+                            "speaker": current_speaker,
+                            "text": " ".join(current_text).strip(),
+                            "offset": 0.0
+                        })
+                        current_text = []
+                    
+                    current_speaker = int(speaker_match.group(1))
+                    # 話者ID以降のテキストを取得
+                    text_part = re.sub(r'^(?:Speaker|＜話者)(\d+)(?:＞|:|）|\])\s*', '', line).strip()
+                    if text_part:
+                        current_text.append(text_part)
+                elif current_speaker is not None:
+                    # 既存の話者の発言の続き
+                    current_text.append(line)
+            
+            # 最後の話者のテキストを保存
+            if current_speaker is not None and current_text:
+                segments.append({
+                    "speaker": current_speaker,
+                    "text": " ".join(current_text).strip(),
+                    "offset": 0.0
+                })
+            
+            # ✅ デバッグログ追加：行単位処理後のsegments確認
+            logger.info(f"[DEBUG] meeting_id={meeting_id}: 行単位処理でセグメント抽出完了")
+            logger.info(f"[DEBUG] 抽出されたセグメント数: {len(segments)}")
+            return segments
+            
+        return []
             
     except Exception as e:
+        logger.error(f"❌ meeting_id={meeting_id} のセグメント抽出中にエラー: {str(e)}")
         return []
     finally:
         try:
@@ -347,7 +495,6 @@ def load_transcript_segments(meeting_id: Optional[int] = None) -> List[Dict[str,
         except Exception:
             pass
 
-# get_db_connection関数をopenai_completion_core.py内に直接実装
 def get_db_connection():
     """
     Entra ID認証を使用してAzure SQL Databaseに接続する
@@ -359,10 +506,14 @@ def get_db_connection():
         Exception: 接続に失敗した場合
     """
     if not AZURE_AVAILABLE:
+        logger.error("❌ Azure関連のモジュールが利用できません")
         raise Exception("Azure関連のモジュールが利用できません")
     
     try:
+        logger.info("🔑 DefaultAzureCredentialを取得中...")
         credential = DefaultAzureCredential()
+        
+        logger.info("🎟 データベースアクセストークンを取得中...")
         token = credential.get_token("https://database.windows.net/.default")
         token_bytes = bytes(token.token, 'utf-8')
         exptoken = b''.join(bytes((b, 0)) for b in token_bytes)
@@ -376,10 +527,18 @@ def get_db_connection():
             f"TrustServerCertificate=no;"
             f"Connection Timeout=30;"
         )
-
-        return pyodbc.connect(conn_str, attrs_before={1256: access_token})
+        
+        logger.info("🔌 データベースに接続中...")
+        logger.debug(f"接続文字列: {conn_str}")
+        
+        conn = pyodbc.connect(conn_str, attrs_before={1256: access_token})
+        logger.info("✅ データベース接続成功")
+        return conn
+        
     except Exception as e:
-        raise 
+        logger.error(f"❌ データベース接続エラー: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
 
 def save_processed_segments(meeting_id: int, segments: List[Dict[str, Any]]) -> bool:
     """
@@ -392,6 +551,9 @@ def save_processed_segments(meeting_id: int, segments: List[Dict[str, Any]]) -> 
     Returns:
         bool: 保存が成功したかどうか
     """
+    # meeting_idの型と値を確認するデバッグログ
+    logger.debug(f"[DEBUG] save_processed_segments - meeting_id type: {type(meeting_id)} value: {meeting_id}")
+    
     if not AZURE_AVAILABLE:
         logger.warning("Azure関連のモジュールが利用できません")
         return False
