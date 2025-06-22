@@ -9,6 +9,9 @@ import sys
 import argparse
 import logging
 from pathlib import Path
+sys.path.append(str(Path(__file__).parent))
+from openai_processing import openai_completion_core
+from openai_processing.openai_completion_core import get_db_connection
 
 # ロギング設定
 logging.basicConfig(
@@ -16,6 +19,8 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+print('AZURE_AVAILABLE:', openai_completion_core.AZURE_AVAILABLE)
 
 def main():
     parser = argparse.ArgumentParser(description='OpenAI処理パイプラインのテスト')
@@ -34,9 +39,8 @@ def main():
         return 1
     
     try:
-        # openai_completion_coreをインポート
-        sys.path.append(str(Path(__file__).parent))
-        from openai_completion_core import clean_and_complete_conversation, load_transcript_segments
+        # openai_processingパッケージからインポート
+        from openai_processing import clean_and_complete_conversation, load_transcript_segments
         
         if args.meeting_id:
             logger.info(f"🔍 meeting_id: {args.meeting_id} のtranscript_textを取得してOpenAI処理を実行します")
@@ -53,6 +57,7 @@ def main():
                 return 1
             
             logger.info(f"✅ {len(segments)} セグメントを取得しました")
+            print('segments:', segments)
         
         else:
             logger.info("🔍 指定されたテキストでOpenAI処理を実行します")
@@ -89,6 +94,30 @@ def main():
                 f.write(processed_text)
             
             logger.info(f"✅ 結果を {args.output} に保存しました")
+            
+            # DBに保存する処理（ConversationSegment）
+            if args.meeting_id:
+                conn = get_db_connection()
+                cursor = conn.cursor()
+
+                inserted = 0
+                for line in processed_text.splitlines():
+                    import re
+                    match = re.match(r"Speaker(\d+):(.+)", line)
+                    if match:
+                        speaker_id = int(match.group(1))
+                        text = match.group(2).strip()
+                        cursor.execute(
+                            "INSERT INTO dbo.ConversationSegment (meeting_id, speaker_id, text) VALUES (?, ?, ?)",
+                            (args.meeting_id, speaker_id, text)
+                        )
+                        inserted += 1
+
+                conn.commit()
+                conn.close()
+                logger.info(f"✅ ConversationSegment に {inserted} 件のレコードを挿入しました")
+            else:
+                logger.warning("⚠️ meeting_id が指定されていないため、ConversationSegment への挿入はスキップされました")
             
             # 結果の一部を表示
             print("\n" + "="*50)

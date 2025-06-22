@@ -1305,6 +1305,10 @@ BLOBストレージ（moc-audio） → トリガー検知 → 音声処理 → �
 | E004 | Azure Functions | バインディングパラメータの不一致 | `FunctionLoadError: cannot load the ProcessAudio function: the following parameters are declared in function.json but not in Python` | 関数のパラメータにバインディングパラメータを追加し、適切な型アノテーションを設定 | 解決：`process_audio`関数のパラメータに`meetingsTable`と`basicInfoQuery`を追加し、型アノテーションを設定 | 関数が正常に読み込まれるようになる |
 | E035 | Azure Functions | 複数トリガーの設定エラー | 1つの関数に複数のトリガー（EventGridとHTTP）を設定しようとした<br>エラー：`ValueError: A trigger was already registered to this function` | EventGridトリガーのみを残し、HTTPトリガーの設定を削除 | ✅ エラー解消：EventGridトリガーのみの設定に修正 | 1. テストの実行<br>2. エラーハンドリングの確認<br>3. ログ出力の確認 |
 | E036 | Azure Functions | EventGridトリガーの404エラー | EventGridトリガーに直接HTTPリクエストを送信した際に404エラーが発生 | 1. `/admin/functions/ProcessAudio`エンドポイントを使用してテスト<br>2. テストJSONファイルを使用してイベントデータを送信<br>3. `test_trigger.py`スクリプトを使用してテスト | ✅ エラー解消：正しいエンドポイントを使用してテスト可能に | 1. テストの実行<br>2. エラーハンドリングの確認<br>3. ログ出力の確認 |
+| E037 | Azure Functions | EventGridTrigger拡張機能の未インストール | `func start`実行時に「The binding type(s) 'eventGridTrigger' are not registered」エラーが発生 | 1. EventGrid拡張機能をインストール：<br>`func extensions install --package Microsoft.Azure.WebJobs.Extensions.EventGrid --version 3.3.0`<br>2. requirements.txtに以下を追加：<br>`azure-functions`<br>`azure-eventgrid`<br>3. function_app.pyでEventGridトリガーが正しく定義されていることを確認 | 未実行 | 1. 拡張機能インストール後のテスト実行<br>2. ログ出力の確認<br>3. EventGridトリガーの動作確認 |
+| E038 | Azure Functions | datetime.UTCのインポートエラー | `func start`実行時に「cannot import name 'UTC' from 'datetime'」エラーが発生 | Python 3.10では`datetime.UTC`が利用不可。Python 3.11以降の機能。解決策：<br>1. `from datetime import datetime, timezone, timedelta`に変更<br>2. `UTC`の代わりに`timezone.utc`を使用<br>3. または`datetime.now(timezone.utc)`を使用 | 未実行 | 1. インポート文の修正<br>2. UTC使用箇所の修正<br>3. 動作確認 |
+| E039 | Azure Functions | openai_completion_coreモジュールのインポートエラー | `func start`実行時に「No module named 'openai_completion_core'」エラーが発生 | openai_processingパッケージ内のファイルで絶対インポートを使用しているため。解決策：<br>1. 相対インポートに変更：`from .openai_completion_core import ...`<br>2. または`from openai_processing.openai_completion_core import ...`<br>3. パッケージ構造の確認と修正 | 未実行 | 1. インポート文の修正<br>2. パッケージ構造の確認<br>3. 動作確認 |
+| E040 | Azure Functions | step3_remove_completion_materials関数のインポートエラー | `func start`実行時に「cannot import name 'step3_remove_completion_materials'」エラーが発生 | openai_processingパッケージ内の関数名が一致していない。解決策：<br>1. 各ステップファイルに関数が正しく定義されているか確認<br>2. 関数名の統一（step1_format_with_offset、step2_complete_incomplete_sentences等）<br>3. __init__.pyでのエクスポート確認 | 未実行 | 1. 関数定義の確認<br>2. 関数名の統一<br>3. 動作確認 |
 
 # 技術的知見・トラブルシューティング
 
@@ -1459,3 +1463,245 @@ python test_openai_pipeline.py --text "Speaker1: こんにちは\nSpeaker2: は�
 - `function_app.py`: メイン実装
 - `openai_completion_core.py`: OpenAI処理のコア機能
 - `test_openai_pipeline.py`: テスト用スクリプト
+
+## Azure Speech 処理
+
+### FuncApp_MTG処理変更（2024年12月）
+
+#### 変更内容
+Azure Speech の channel_0.json をもとに、Meetings.transcript_text に保存する形式を変更。
+
+#### 出力フォーマット
+```
+(Speaker1)[こんにちは、よろしくお願いします。](12.5) (Speaker2)[ありがとうございます。](17.2) ...
+```
+
+#### 処理内容
+1. **channel_0.json の "recognizedPhrases" をループ**
+2. **各セグメントから以下を抽出：**
+   - 話者番号：`speaker`
+   - 発言内容：`nBest[0]["display"]`
+   - 開始時刻（秒）：`offset`（ISO 8601）→ `isodate.parse_duration` で秒数に変換
+3. **形式で文字列を生成：**
+   ```python
+   (Speaker{n})[{テキスト}]({秒数})
+   ```
+4. **各セグメントを " "（半角スペース）で結合して 1行に整形**
+5. **Meetings.transcript_text に保存**
+
+#### 実装詳細
+- `isodate`ライブラリを使用してISO 8601形式の時刻を秒数に変換
+- 秒数は小数第1位まで表示（例：12.5）
+- 改行はせず、すべてのセグメントを連結して1行にまとめる
+- エラーハンドリング：時刻変換に失敗した場合は0.0秒として処理
+
+#### 変更箇所
+- `AzureFunctions-Python-SpeakerDiarization/function_app.py`
+- `recognizedPhrases`の処理部分（817行目付近）
+- `isodate`ライブラリのインポート追加
+
+#### 技術的ポイント
+- ISO 8601形式の時刻文字列（例：PT12.5S）を秒数に変換
+- `isodate.parse_duration()`でDurationオブジェクトを取得
+- `total_seconds()`で秒数を取得し、`round(seconds, 1)`で小数第1位まで表示
+
+### 会話整形ステップでのoffset表記保持（2024年12月）
+
+#### 変更内容
+ステップ1・2・3において、各行の末尾に記載されているoffset（例：(12.5)）を削除せず、常に保持する処理に統一。
+
+#### 対象ファイル
+- `openai_completion_step1.py`
+- `openai_completion_step2.py`
+- `openai_completion_step3.py`
+
+#### 処理ルール
+1. **各行の末尾にある `(<数値>)` を offset として一時保持**
+   - 例：`Speaker1: こんにちは。(12.5)` の `(12.5)` 部分
+
+2. **本文の整形処理後も、元の offset をそのまま再付与**
+   - offset を誤って変形・削除・統合しないようにする
+
+3. **実装参考（正規表現）**
+   ```python
+   import re
+   
+   match = re.match(r"(Speaker\d+: .+?)(\(\d+(\.\d+)?\))$", line)
+   if match:
+       body = match.group(1)    # ex. 'Speaker1: こんにちは。'
+       offset = match.group(2)  # ex. '(12.5)'
+       cleaned_body = clean_text(body)
+       final_line = cleaned_body + offset
+   else:
+       final_line = clean_text(line)  # fallback（offsetなし行）
+   ```
+
+#### ステップ1の実装詳細
+- **入力仕様**: `(Speaker1)[こんにちは、よろしくお願いします。](12.5) (Speaker2)[ありがとうございます。](17.2)`
+- **出力フォーマット**: 
+  ```
+  Speaker1: こんにちは、よろしくお願いします。(12.5)
+  Speaker2: ありがとうございます。(17.2)
+  ```
+- **処理内容**:
+  1. `parse_transcript_text()`: Meetings.transcript_textをパース
+  2. `format_segments_with_offset()`: offset表記付きの形式に整形
+  3. `step1_format_with_offset()`: メイン処理関数
+
+#### ステップ2・3の実装詳細
+- **文字列ベースの処理に変更**: セグメントリストから文字列ベースの処理に変更
+- **offset分離・再付与**: `extract_offset_from_line()`でoffsetを分離し、処理後に再付与
+- **後方互換性**: 既存のセグメントリスト処理関数も残して後方互換性を保持
+
+#### 技術的ポイント
+- 正規表現 `r"(Speaker\d+: .+?)(\(\d+(\.\d+)?\))$"` でoffsetを抽出
+- 処理前後でoffsetを一時保存し、処理後に再付与
+- 小数の末尾の `.0` を削る必要はなし（12.0 でも可）
+- エラーハンドリング：offset抽出に失敗した場合は元の行をそのまま保持
+
+#### 変更箇所
+- `openai_completion_step1.py`: 新機能追加
+- `openai_completion_step2.py`: 文字列ベース処理に変更
+- `openai_completion_step3.py`: 文字列ベース処理に変更
+
+### 会話整形ステップ4・5でのoffset保持（2024年12月）
+
+#### 変更内容
+ステップ4・5において、会話が前後の行に統合（吸収）される場合でも、もともとのoffsetを正しく保持した状態で出力するように処理を変更。
+
+#### 対象ファイル
+- `openai_completion_step4.py`
+- `openai_completion_step5.py`
+
+#### 処理仕様
+**吸収が発生する例**:
+```
+Speaker1: えっと、40分。(12.5)  
+Speaker1: はい、大丈夫です。(13.8)
+```
+
+**統合後（正しい出力）**:
+```
+Speaker1: えっと、40分。はい、大丈夫です。(12.5)
+```
+※ offsetは先頭行（吸収元）の値を保持し、吸収された側のoffsetは破棄
+
+#### 修正内容
+1. **各行の末尾 `(<数値>)` を正規表現で抽出し、offset値として保持**
+2. **会話統合が発生する場合**:
+   - 結合対象行の本文を前の行に追加
+   - offsetは結合元（先頭の行）のものを維持
+   - 統合されたあとの行は出力しない or スキップ
+
+#### 実装詳細
+- **offset抽出関数**: `extract_offset_from_line()`で正規表現 `r"(Speaker\d+: .+?)\(([\d.]+)\)$"` を使用
+- **統合処理**: 先頭行のoffsetを保持し、統合される行のoffsetは破棄
+- **文字列ベース処理**: セグメントリストから文字列ベースの処理に変更
+- **後方互換性**: 既存のセグメントリスト処理関数も残して後方互換性を保持
+
+#### ステップ4の実装詳細
+- **括弧付きセグメントの吸収処理**: `merge_backchannel_with_next_text()`でoffset保持
+- **吸収元のoffset維持**: 前の行（吸収元）のoffsetを保持し、括弧付きセグメントのoffsetは破棄
+- **エラーハンドリング**: offset抽出に失敗した場合は元の行をそのまま保持
+
+#### ステップ5の実装詳細
+- **同一話者の発言連結処理**: `merge_same_speaker_segments_text()`でoffset保持
+- **先頭行のoffset維持**: 連続する同じ話者の行を結合する際、先頭行のoffsetを保持
+- **統合行のoffset破棄**: 統合される行のoffsetは破棄し、先頭行のoffsetのみを使用
+
+#### 技術的ポイント
+- 正規表現 `r"(Speaker\d+: .+?)\(([\d.]+)\)$"` でoffsetを抽出
+- 統合処理では先頭行（吸収元）のoffsetを優先
+- 統合される行のoffsetは破棄して、先頭行のoffsetのみを保持
+- エラーハンドリング：offset抽出に失敗した場合は元の行をそのまま保持
+
+#### 注意点
+- 吸収の対象外（話者違い or 時間間隔が大きいなど）の場合は、統合せずそのまま出力
+- offsetがない／壊れている行についてはログ警告 or スキップで問題なし
+- 後方互換性のため、既存のセグメントリスト処理関数も残存
+
+#### 変更箇所
+- `openai_completion_step4.py`: 文字列ベース処理に変更、offset保持機能追加
+- `openai_completion_step5.py`: 文字列ベース処理に変更、offset保持機能追加
+
+### 会話整形ステップ6でのoffset保持（2024年12月）
+
+#### 変更内容
+ステップ6において、フィラー削除処理を行う際に、各行の末尾に記載されているoffset（例：(12.5)）を削除せず、常に保持するように処理を変更。
+
+#### 対象ファイル
+- `openai_completion_step6.py`
+
+#### 処理仕様
+**入力例**:
+```
+Speaker1: えっと、40分の会議ですね。(12.5)
+Speaker2: あの、はい、大丈夫です。(13.8)
+```
+
+**出力例**:
+```
+Speaker1: 40分の会議ですね。(12.5)
+Speaker2: はい、大丈夫です。(13.8)
+```
+※ フィラー（「えっと」「あの」）が削除されるが、offsetは保持される
+
+#### 修正内容
+1. **各行の末尾 `(<数値>)` を正規表現で抽出し、offset値として保持**
+2. **フィラー削除処理**:
+   - 本文のみをOpenAI APIでフィラー削除処理
+   - offsetは元の値をそのまま保持
+   - 処理後にoffsetを再付与
+
+#### 実装詳細
+- **offset抽出関数**: `extract_offset_from_line()`で正規表現 `r"(Speaker\d+: .+?)\(([\d.]+)\)$"` を使用
+- **フィラー削除処理**: `remove_fillers_from_text_with_offset()`でoffset保持
+- **文字列ベース処理**: セグメントリストから文字列ベースの処理に変更
+
+### ConversationSegment挿入処理の修正（2024年12月）
+
+#### 変更内容
+OpenAIにより整形済みとなった会話データ（offset付き）をFunctionApp側で受け取り、ConversationSegmentテーブルへ挿入する処理を追加・修正。
+
+#### 対象ファイル
+- `function_app.py`
+
+#### 処理対象
+ConversationSegmentテーブルへのINSERT部分
+
+#### 入力データ形式
+```
+Speaker1: はい、大丈夫です。(12.5)
+Speaker2: お願いします。(17.2)
+```
+
+#### 抽出項目
+| 項目 | 取得元 | 備考 |
+|------|--------|------|
+| speaker_id | Speaker{n} | n を整数として抽出 |
+| text | 冒頭の SpeakerX: を除いた本文部分 | 末尾の offset も除外 |
+| start_time | (...) の中の秒数（float） | ISO 8601 に変換しない秒形式 |
+| end_time | NULL | 今回は offset のみで duration 不明のため |
+| duration | 0（固定値） | 固定で 0 を設定 |
+
+#### 実装詳細
+- **正規表現**: `r"Speaker(\d+): (.+)\(([\d.]+)\)$"` でoffset付きの形式を解析
+- **データ抽出**: speaker_id、text、start_timeを正しく抽出
+- **後方互換性**: offsetなしの行も簡易解析で処理
+- **エラーハンドリング**: 解析不可能な行はスキップして警告ログを出力
+
+#### 技術的ポイント
+- 正規表現でoffset付きの形式を正確に解析
+- start_timeはfloat型で保存（秒単位）
+- end_timeはNULL、durationは0（固定値）を設定
+- 解析不可能な行はスキップして処理を継続
+
+#### 注意点
+- データが壊れている（offsetがない等）場合はスキップして警告ログを出す
+- 整形済みテキストはlist形式または1行ごとの配列で渡されることを想定
+- 後方互換性のため、offsetなしの行も簡易解析で処理
+
+#### 変更箇所
+- `function_app.py`: ConversationSegment挿入処理の修正
+
+## データベース

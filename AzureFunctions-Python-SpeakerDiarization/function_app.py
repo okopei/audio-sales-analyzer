@@ -5,20 +5,11 @@ import tempfile
 import uuid
 import time
 import re
-from datetime import datetime, UTC, timedelta
-from azure.cognitiveservices.speech import (
-    SpeechConfig,
-    AudioConfig,
-    SpeechRecognizer,
-    ResultReason,
-    PropertyId
-)
-from azure.data.tables import TableClient
-from azure.identity import DefaultAzureCredential, ClientSecretCredential
+from datetime import datetime, timezone, timedelta
+from azure.identity import DefaultAzureCredential
 import traceback
 from azure.storage.blob import BlobServiceClient, BlobClient, BlobSasPermissions, generate_blob_sas
 import subprocess
-import shutil
 import wave
 import requests
 import pyodbc
@@ -29,8 +20,9 @@ import json
 import base64
 from azure.eventgrid import EventGridEvent
 from pathlib import Path
+import isodate
 sys.path.append(str(Path(__file__).parent))
-from openai_completion_core import clean_and_complete_conversation, load_transcript_segments
+from openai_processing import clean_and_complete_conversation, load_transcript_segments
 
 # Base64デコード用のヘルパー関数
 def safe_base64_decode(data: str) -> bytes:
@@ -56,98 +48,6 @@ logger = logging.getLogger(__name__)
 
 # FunctionAppインスタンスの生成（1回のみ）
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
-
-# 環境変数の確認
-def check_environment_variables():
-    required_env_vars = ["SPEECH_KEY", "SPEECH_REGION", "AzureWebJobsStorage"]
-    for var in required_env_vars:
-        if not os.environ.get(var):
-            logger.error(f"Missing required environment variable: {var}")
-        else:
-            logger.info(f"Environment variable {var} is set")
-
-# Speech Serviceの設定確認
-def configure_speech_service():
-    try:
-        logger.info("=== Speech Service Configuration Start ===")
-        speech_key = os.environ["SPEECH_KEY"]
-        speech_region = os.environ["SPEECH_REGION"]
-        
-        logger.info(f"Using region: {speech_region}")
-        
-        # SpeechConfigの作成
-        speech_config = SpeechConfig(
-            subscription=speech_key,
-            region=speech_region
-        )
-        
-        # 話者分離機能を有効化（set_property_by_nameを使用）
-        logger.info("Attempting to enable diarization")
-        speech_config.set_property_by_name(
-            "SpeechServiceConnection.EnableDiarization",
-            "true"
-        )
-        speech_config.set_property_by_name(
-            "SpeechServiceConnection.SpeakerCount",
-            "2"
-        )
-        
-        # 設定の確認（get_property_by_nameを使用）
-        diarization_enabled = speech_config.get_property_by_name("SpeechServiceConnection.EnableDiarization")
-        speaker_count = speech_config.get_property_by_name("SpeechServiceConnection.SpeakerCount")
-        logger.info(f"Diarization enabled: {diarization_enabled}")
-        logger.info(f"Speaker count: {speaker_count}")
-        
-        logger.info("=== Speech Service Configuration Complete ===")
-        return speech_config
-    except Exception as e:
-        logger.error(f"Failed to configure Speech Service: {str(e)}")
-        logger.error(f"Error type: {type(e)}")
-        logger.error(f"Error details: {traceback.format_exc()}")
-        raise
-
-# 音声ファイルの処理確認
-def check_audio_file(file_path):
-    logger.info(f"=== Audio File Check Start ===")
-    logger.info(f"Processing audio file: {file_path}")
-    logger.info(f"File exists: {os.path.exists(file_path)}")
-    if os.path.exists(file_path):
-        logger.info(f"File size: {os.path.getsize(file_path)} bytes")
-        try:
-            with wave.open(file_path, 'rb') as wav_file:
-                channels = wav_file.getnchannels()
-                sample_width = wav_file.getsampwidth()
-                frame_rate = wav_file.getframerate()
-                frames = wav_file.getnframes()
-                duration = frames / float(frame_rate)
-                logger.info(f"Audio file details:")
-                logger.info(f"- Channels: {channels}")
-                logger.info(f"- Sample width: {sample_width} bytes")
-                logger.info(f"- Frame rate: {frame_rate} Hz")
-                logger.info(f"- Duration: {duration:.2f} seconds")
-        except Exception as e:
-            logger.error(f"Failed to read audio file: {str(e)}")
-    logger.info(f"=== Audio File Check Complete ===")
-
-# データベース接続確認
-def check_database_connection(meetingsTable):
-    logger.info("=== Database Connection Check Start ===")
-    try:
-        # テスト用のデータを挿入
-        test_data = {
-            "meeting_id": 0,
-            "user_id": 0,
-            "title": "Test Connection",
-            "status": "test",
-            "inserted_datetime": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
-        }
-        meetingsTable.set(func.SqlRow(test_data))
-        logger.info("Database connection test successful")
-    except Exception as e:
-        logger.error(f"Database connection test failed: {str(e)}")
-        logger.error(f"Error type: {type(e)}")
-        logger.error(f"Error details: {traceback.format_exc()}")
-    logger.info("=== Database Connection Check Complete ===")
 
 def convert_to_wav(input_path: str) -> str:
     """
@@ -288,7 +188,7 @@ def trigger_transcription_job(event: func.EventGridEvent):
             blob_name=wav_blob_name,
             account_key=account_key,
             permission=BlobSasPermissions(read=True),
-            expiry=datetime.utcnow() + timedelta(hours=1)
+            expiry=datetime.now(timezone.utc) + timedelta(hours=1)
         )
         
         # SASトークン付きのURLを生成
@@ -629,7 +529,7 @@ def execute_query(query: str, params: Optional[Union[Dict[str, Any], Tuple[Any, 
 
 def get_current_time():
     """現在時刻をUTCで取得し、SQLサーバー互換の形式で返す"""
-    return datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
+    return datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
 def get_audio_duration(file_path: str) -> float:
     """
@@ -818,40 +718,23 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
             for phrase in result_json["recognizedPhrases"]:
                 speaker = phrase.get("speaker", "Unknown")
                 text = phrase["nBest"][0]["display"]
-                transcript.append(f"(Speaker{speaker})[{text}]")
+                
+                # offsetフィールドから時刻を取得（ISO 8601形式）
+                offset_str = phrase.get("offset", "PT0S")
+                try:
+                    # isodate.parse_durationで秒数に変換
+                    duration_obj = isodate.parse_duration(offset_str)
+                    offset_seconds = duration_obj.total_seconds()
+                    # 小数第1位まで表示
+                    offset_seconds = round(offset_seconds, 1)
+                except Exception as e:
+                    logger.warning(f"時刻の変換に失敗しました: {offset_str}, エラー: {str(e)}")
+                    offset_seconds = 0.0
+                
+                transcript.append(f"(Speaker{speaker})[{text}]({offset_seconds})")
 
             transcript_text = " ".join(transcript)
             logger.info(f"Generated transcript text: {transcript_text[:100]}...")  # 最初の100文字だけログ出力
-
-            # ファイル名から日時を抽出
-            datetime_match = re.search(r"(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3})", file_name)
-            meeting_datetime = datetime.strptime(datetime_match.group(1), "%Y-%m-%dT%H-%M-%S-%f") if datetime_match else datetime.now(UTC)
-
-            # Blob Storageからファイル情報を取得
-            blob_service_client = BlobServiceClient.from_connection_string(os.environ["AzureWebJobsStorage"])
-            container_name = file_path.split('/')[0]
-            blob_client = blob_service_client.get_blob_client(container=container_name, blob=file_name)
-            blob_properties = blob_client.get_blob_properties()
-
-            meeting_data = {
-                "meeting_id": meeting_id,
-                "user_id": user_id,
-                "title": f"会議 {meeting_datetime.strftime('%Y-%m-%d %H:%M')}",
-                "file_name": file_name,
-                "file_path": file_path,
-                "file_size": blob_properties.size,
-                "duration_seconds": 0,  # TODO: 音声ファイルの長さを取得
-                "status": "completed",
-                "transcript_text": transcript_text,
-                "error_message": None,
-                "client_company_name": client_company_name,  # 安全に取得した値を使用
-                "client_contact_name": client_contact_name,  # 安全に取得した値を使用
-                "meeting_datetime": meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),
-                "start_datetime": meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),
-                "end_datetime": meeting_datetime.strftime('%Y-%m-%d %H:%M:%S'),
-                "inserted_datetime": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S'),
-                "updated_datetime": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
-            }
 
             # 文字起こしテキストの更新とストアドプロシージャの実行
             try:
@@ -860,7 +743,7 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                 
                 # ファイル名から日時を抽出してタイトルを生成
                 datetime_match = re.search(r"(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3})", file_name)
-                meeting_datetime = datetime.strptime(datetime_match.group(1), "%Y-%m-%dT%H-%M-%S-%f") if datetime_match else datetime.now(UTC)
+                meeting_datetime = datetime.strptime(datetime_match.group(1), "%Y-%m-%dT%H-%M-%S-%f") if datetime_match else datetime.now(timezone.utc)
                 title = f"会議 {meeting_datetime.strftime('%Y-%m-%d %H:%M')}"
                 
                 # WAVファイルを一時的にダウンロードして長さを取得
@@ -983,143 +866,12 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                 execute_query(merge_sql, merge_params, skip_trigger_log=True)
                 logger.info(f"✅ Successfully updated transcript_text for meeting_id: {meeting_id}, user_id: {user_id}, title: {title}, file: {file_name}, duration: {duration_seconds}秒")
                 
-                # 既存のセグメントを削除（重複防止）
-                logger.info(f"Deleting existing segments for meeting_id: {meeting_id}")
-                execute_query(
-                    "DELETE FROM dbo.ConversationSegments WHERE meeting_id = ?",
-                    (meeting_id,)
-                )
-                
-                # 話者情報の一意性を確保するためのマップ
-                speaker_map = {}
-                
-                # 文字起こし結果からセグメントを抽出して直接INSERT
-                logger.info(f"Processing conversation segments for meeting_id: {meeting_id}")
-                
-                # まず、すべての話者を収集して一意なspeaker_idを確保
-                for phrase in result_json["recognizedPhrases"]:
-                    speaker_number = phrase.get("speaker", "Unknown")
-                    speaker_name = f"Speaker{speaker_number}"
-                    
-                    if speaker_name not in speaker_map:
-                        # 既存の話者情報を確認
-                        select_query = """
-                            SELECT speaker_id 
-                            FROM dbo.Speakers 
-                            WHERE meeting_id = ? 
-                            AND speaker_name = ? 
-                            AND deleted_datetime IS NULL
-                        """
-                        result = execute_query(select_query, (meeting_id, speaker_name))
-                        
-                        if result:
-                            # 既存のspeaker_idを使用
-                            speaker_id = result[0]["speaker_id"]
-                            logger.info(f"既存の話者情報を使用: {speaker_name} (speaker_id: {speaker_id})")
-                        else:
-                            # 新規話者として登録
-                            insert_query = """
-                                INSERT INTO dbo.Speakers (
-                                    speaker_name, user_id, meeting_id, 
-                                    inserted_datetime, updated_datetime
-                                )
-                                OUTPUT INSERTED.speaker_id
-                                VALUES (?, ?, ?, GETDATE(), GETDATE())
-                            """
-                            try:
-                                insert_result = execute_query(insert_query, (speaker_name, user_id, meeting_id))
-                                
-                                if not insert_result:
-                                    error_message = f"Speaker INSERT failed: No OUTPUT returned for speaker_name={speaker_name}, meeting_id={meeting_id}"
-                                    logger.error(error_message)
-                                    raise Exception(error_message)
-                                    
-                                speaker_id = insert_result[0]["speaker_id"]
-                                logger.info(f"新規話者を登録: {speaker_name} (speaker_id: {speaker_id})")
-                                
-                            except Exception as e:
-                                error_message = f"Speaker INSERT failed for speaker_name={speaker_name}, meeting_id={meeting_id}: {str(e)}"
-                                logger.error(error_message)
-                                logger.error(f"Error type: {type(e)}")
-                                logger.error(f"Error details: {traceback.format_exc()}")
-                                raise Exception(error_message)
-                        
-                        speaker_map[speaker_name] = speaker_id
-                
-                # 話者情報の登録が完了したら、セグメントを登録
-                logger.info(f"Inserting conversation segments with unique speaker_ids for meeting_id: {meeting_id}")
-                
-                # 一括挿入用のSQLとパラメータリストを準備
-                insert_sql = """
-                    INSERT INTO dbo.ConversationSegments (
-                        user_id, speaker_id, meeting_id, content,
-                        file_name, file_path, file_size, duration_seconds,
-                        status, inserted_datetime, updated_datetime,
-                        start_time, end_time
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE(), ?, ?)
-                """
-                
-                insert_values = []
-                
-                for phrase in result_json["recognizedPhrases"]:
-                    speaker_number = phrase.get("speaker", "Unknown")
-                    speaker_name = f"Speaker{speaker_number}"
-                    speaker_id = speaker_map[speaker_name]  # 一意なspeaker_idを取得
-                    text = phrase["nBest"][0]["display"]
-                    
-                    # 時間情報の変換（ナノ秒から秒へ）
-                    offset = phrase.get("offsetInTicks", 0) / 10000000  # 開始時間（秒）
-                    duration = phrase.get("durationInTicks", 0) / 10000000  # 継続時間（秒）
-                    end_time = offset + duration  # 終了時間（秒）
-                    
-                    insert_values.append((
-                        user_id,
-                        speaker_id,
-                        meeting_id,
-                        text,
-                        file_name,
-                        file_path,
-                        blob_properties.size,
-                        round(duration, 3),
-                        "completed",
-                        round(offset, 3),
-                        round(end_time, 3)
-                    ))
-                
-                try:
-                    # 一括挿入を実行
-                    conn = get_db_connection()
-                    cursor = conn.cursor()
-                    cursor.executemany(insert_sql, insert_values)
-                    conn.commit()
-                    cursor.close()
-                    conn.close()
-                    
-                    logger.info(f"✅ Successfully inserted {len(insert_values)} conversation segments for meeting_id: {meeting_id}")
-                    
-                except Exception as e:
-                    error_message = f"Failed to insert conversation segments: {str(e)}"
-                    logger.error(error_message)
-                    logger.error(f"Error type: {type(e)}")
-                    logger.error(f"Error details: {traceback.format_exc()}")
-                    
-                    # エラーが発生した場合はロールバックを試みる
-                    try:
-                        if 'conn' in locals() and conn:
-                            conn.rollback()
-                            conn.close()
-                    except Exception as rollback_error:
-                        logger.error(f"Rollback failed: {str(rollback_error)}")
-                    
-                    raise Exception(error_message)
-                
                 # 成功ログを手動で記録（record_idを明示的に指定）
                 if loggable_meeting_id:
                     insert_trigger_log(
                         loggable_meeting_id,  # 明示的にrecord_idとして使用
                         "INFO",
-                        f"文字起こしテキストの更新と会話セグメントの登録が完了しました。文字数: {len(transcript_text)}"
+                        f"文字起こしテキストの更新が完了しました。文字数: {len(transcript_text)}"
                     )
                 
                 # OpenAI処理を実行して整形されたセグメントを取得
@@ -1136,150 +888,14 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                         
                         # OpenAI処理を実行
                         logger.info("🔄 clean_and_complete_conversationを呼び出し中...")
-                        processed_text = clean_and_complete_conversation(load_transcript_segments(meeting_id))
+                        openai_success = clean_and_complete_conversation(meeting_id)
                         
-                        if processed_text and processed_text.strip():
-                            logger.info(f"✅ OpenAI処理が完了しました。文字数: {len(processed_text)}")
-                            logger.info(f"📝 処理結果の先頭100文字: {processed_text[:100]}...")
-                            
-                            # 既存のセグメントを削除（OpenAI処理結果で置き換え）
-                            logger.info(f"🗑️ 既存のセグメントを削除して、OpenAI処理結果で置き換えます。meeting_id: {meeting_id}")
-                            execute_query(
-                                "DELETE FROM dbo.ConversationSegments WHERE meeting_id = ?",
-                                (meeting_id,)
-                            )
-                            
-                            # OpenAI処理結果をセグメント化してDBに保存
-                            segments = []
-                            lines = processed_text.splitlines()
-                            logger.info(f"📊 処理結果の行数: {len(lines)}")
-                            
-                            for i, line in enumerate(lines):
-                                if line.strip():
-                                    m = re.match(r"Speaker(\d+):(.+)", line)
-                                    if m:
-                                        segments.append({
-                                            "speaker": int(m.group(1)),
-                                            "text": m.group(2).strip()
-                                        })
-                                    else:
-                                        logger.warning(f"⚠️ 行 {i+1} が想定外の形式です: {line}")
-                            
-                            logger.info(f"📊 セグメント化された行数: {len(segments)}")
-                            
-                            if segments:
-                                # 話者情報の一意性を確保するためのマップ
-                                speaker_map = {}
-                                
-                                # まず、すべての話者を収集して一意なspeaker_idを確保
-                                for segment in segments:
-                                    speaker_number = segment["speaker"]
-                                    speaker_name = f"Speaker{speaker_number}"
-                                    
-                                    if speaker_name not in speaker_map:
-                                        # 既存の話者情報を確認
-                                        select_query = """
-                                            SELECT speaker_id 
-                                            FROM dbo.Speakers 
-                                            WHERE meeting_id = ? 
-                                            AND speaker_name = ? 
-                                            AND deleted_datetime IS NULL
-                                        """
-                                        result = execute_query(select_query, (meeting_id, speaker_name))
-                                        
-                                        if result:
-                                            # 既存のspeaker_idを使用
-                                            speaker_id = result[0]["speaker_id"]
-                                            logger.info(f"既存の話者情報を使用: {speaker_name} (speaker_id: {speaker_id})")
-                                        else:
-                                            # 新規話者として登録
-                                            insert_query = """
-                                                INSERT INTO dbo.Speakers (
-                                                    speaker_name, user_id, meeting_id, 
-                                                    inserted_datetime, updated_datetime
-                                                )
-                                                OUTPUT INSERTED.speaker_id
-                                                VALUES (?, ?, ?, GETDATE(), GETDATE())
-                                            """
-                                            try:
-                                                insert_result = execute_query(insert_query, (speaker_name, user_id, meeting_id))
-                                                
-                                                if not insert_result:
-                                                    error_message = f"Speaker INSERT failed: No OUTPUT returned for speaker_name={speaker_name}, meeting_id={meeting_id}"
-                                                    logger.error(error_message)
-                                                    raise Exception(error_message)
-                                                    
-                                                speaker_id = insert_result[0]["speaker_id"]
-                                                logger.info(f"新規話者を登録: {speaker_name} (speaker_id: {speaker_id})")
-                                                
-                                            except Exception as e:
-                                                error_message = f"Speaker INSERT failed for speaker_name={speaker_name}, meeting_id={meeting_id}: {str(e)}"
-                                                logger.error(error_message)
-                                                raise Exception(error_message)
-                                        
-                                        speaker_map[speaker_name] = speaker_id
-                                
-                                # OpenAI処理結果のセグメントをDBに保存
-                                insert_sql = """
-                                    INSERT INTO dbo.ConversationSegments (
-                                        user_id, speaker_id, meeting_id, content,
-                                        file_name, file_path, file_size, duration_seconds,
-                                        status, inserted_datetime, updated_datetime,
-                                        start_time, end_time
-                                    )
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE(), ?, ?)
-                                """
-                                
-                                insert_values = []
-                                
-                                for i, segment in enumerate(segments):
-                                    speaker_number = segment["speaker"]
-                                    speaker_name = f"Speaker{speaker_number}"
-                                    speaker_id = speaker_map[speaker_name]
-                                    text = segment["text"]
-                                    
-                                    # 時間情報は簡易的に設定（順番に1秒ずつ）
-                                    start_time = i
-                                    end_time = i + 1
-                                    
-                                    insert_values.append((
-                                        user_id,
-                                        speaker_id,
-                                        meeting_id,
-                                        text,
-                                        file_name,
-                                        file_path,
-                                        blob_properties.size,
-                                        1.0,  # duration_seconds
-                                        "completed",
-                                        start_time,
-                                        end_time
-                                    ))
-                                
-                                try:
-                                    # 一括挿入を実行
-                                    conn = get_db_connection()
-                                    cursor = conn.cursor()
-                                    cursor.executemany(insert_sql, insert_values)
-                                    conn.commit()
-                                    cursor.close()
-                                    conn.close()
-                                    
-                                    logger.info(f"✅ OpenAI処理結果の {len(insert_values)} セグメントを保存しました。meeting_id: {meeting_id}")
-                                    insert_trigger_log(loggable_meeting_id, "INFO", f"OpenAI処理完了。{len(insert_values)}セグメントを保存しました")
-                                    
-                                except Exception as e:
-                                    error_message = f"OpenAI処理結果の保存に失敗: {str(e)}"
-                                    logger.error(error_message)
-                                    insert_trigger_log(loggable_meeting_id, "ERROR", error_message)
-                                    raise Exception(error_message)
-                            else:
-                                logger.warning("⚠️ OpenAI処理結果のセグメント化に失敗しました")
-                                logger.warning(f"📝 処理結果: {processed_text[:200]}...")
-                                insert_trigger_log(loggable_meeting_id, "WARNING", "OpenAI処理結果のセグメント化に失敗しました")
+                        if openai_success:
+                            logger.info("✅ OpenAI処理が完了しました")
+                            insert_trigger_log(loggable_meeting_id, "INFO", "OpenAI処理完了。ステップ7とステップ8が正常に実行されました")
                         else:
-                            logger.warning("⚠️ OpenAI処理が失敗しました（空の結果）")
-                            insert_trigger_log(loggable_meeting_id, "WARNING", "OpenAI処理が失敗しました（空の結果）")
+                            logger.warning("⚠️ OpenAI処理が失敗しました")
+                            insert_trigger_log(loggable_meeting_id, "WARNING", "OpenAI処理が失敗しました")
                             
                 except Exception as openai_error:
                     error_message = f"OpenAI処理でエラーが発生: {str(openai_error)}"
@@ -1293,6 +909,8 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                     # OpenAI処理の失敗は致命的ではないため、処理を継続
                     logger.info("OpenAI処理の失敗により、元の文字起こし結果をそのまま使用します")
                 
+                return func.HttpResponse("Success", status_code=200)
+
             except Exception as db_error:
                 error_message = f"Database operation failed: {str(db_error)}"
                 logger.error(error_message)
@@ -1307,11 +925,9 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                     logger.warning("meeting_idが未取得のため、TriggerLogへの記録をスキップします")
                 
                 return func.HttpResponse(
-                    "Error updating transcript or extracting speakers",
+                    "Error updating transcript",
                     status_code=500
                 )
-
-            return func.HttpResponse("Success", status_code=200)
 
         except Exception as e:
             error_message = f"Error in webhook callback: {str(e)}"
