@@ -281,64 +281,60 @@ def clean_and_complete_conversation(meeting_id: int, transcript_text: str) -> bo
         import logging
         logger = logging.getLogger(__name__)
 
-        logger.info("ステップ3のみの実行を開始")
+        logger.info("ステップ7のみの実行を開始")
         
-        # ステップ3: 会話補完の確定処理
-        from .openai_completion_step3 import step3_finalize_completion
-        step3_result = step3_finalize_completion(meeting_id)
-        if not step3_result:
-            raise ValueError("❌ Step3処理が失敗しました")
-
-        logger.info("✅ ステップ3処理が完了しました")
-        return True
-
-        # 以下はコメントアウト（ステップ1・2の実行を停止）
-        """
-        # Step1: transcript_text を整形する
-        step1_result = process_transcript(transcript_text)
-        if not step1_result:
-            raise ValueError("❌ Step1結果が空です")
-
-        # Step1の出力を BASE_DIR/outputs/completion_result_step1.txt に保存
-        step1_path = BASE_DIR / "outputs" / "completion_result_step1.txt"
-        step1_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(step1_path, "w", encoding="utf-8") as f:
-            f.write(step1_result)
-        logger.info(f"Step1の整形済み出力を {step1_path} に保存しました")
-
-        # 追加: ファイル存在確認と出力件数ログ
-        if step1_path.exists():
-            with open(step1_path, "r", encoding="utf-8") as f:
+        # ステップ6の結果ファイルを読み込み（ステップ7の入力として必要）
+        step6_path = BASE_DIR / "outputs" / "completion_result_step6.txt"
+        if not step6_path.exists():
+            logger.error(f"❌ ステップ6の結果ファイルが見つかりません: {step6_path}")
+            return False
+        
+        # ステップ6の結果を読み込み
+        with open(step6_path, "r", encoding="utf-8") as f:
+            step6_lines = f.readlines()
+        
+        # ステップ6の結果をセグメント形式に変換
+        segments_step6 = []
+        for line in step6_lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # 行をパースしてセグメントに変換
+            match = re.match(r'Speaker(\d+): (.+?)\(([\d.]+)\)', line)
+            if match:
+                speaker = int(match.group(1))
+                text = match.group(2).strip()
+                offset = float(match.group(3))
+                segments_step6.append({
+                    "speaker": speaker,
+                    "text": text,
+                    "offset": offset
+                })
+        
+        # ステップ7: 会話の分割・要約
+        from .openai_completion_step7 import step7_summarize_conversation
+        step7_text = step7_summarize_conversation(segments_step6)
+        
+        # ステップ7の結果を保存
+        step7_path = BASE_DIR / "outputs" / "completion_result_step7.txt"
+        step7_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(step7_path, "w", encoding="utf-8") as f:
+            f.write(step7_text)
+        
+        logger.info(f"✅ ステップ7の結果を {step7_path} に保存しました")
+        
+        # ステップ7の出力確認
+        if step7_path.exists():
+            with open(step7_path, "r", encoding="utf-8") as f:
                 line_count = sum(1 for _ in f)
-            logger.info(f"✅ completion_result_step1.txt の出力を確認: {step1_path} (行数: {line_count})")
+            logger.info(f"✅ completion_result_step7.txt の出力を確認: {step7_path} (行数: {line_count})")
         else:
-            logger.error(f"❌ completion_result_step1.txt の出力が見つかりません: {step1_path}")
-
-        # Step1の結果を行ごとに分割
-        step1_lines = step1_result.strip().split('\n')
+            logger.error(f"❌ completion_result_step7.txt の出力が見つかりません: {step7_path}")
         
-        # Step2: 不完全文の補完
-        from .openai_completion_step2 import step2_complete_incomplete_sentences
-        segments_step2 = step2_complete_incomplete_sentences(step1_lines)
-        
-        # Step2の出力を保存
-        step2_path = BASE_DIR / "outputs" / "completion_result_step2.txt"
-        step2_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(step2_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(segments_step2))
-        logger.info(f"Step2の補完済み出力を {step2_path} に保存しました")
-        
-        # Step2の出力確認
-        if step2_path.exists():
-            with open(step2_path, "r", encoding="utf-8") as f:
-                line_count = sum(1 for _ in f)
-            logger.info(f"✅ completion_result_step2.txt の出力を確認: {step2_path} (行数: {line_count})")
-        else:
-            logger.error(f"❌ completion_result_step2.txt の出力が見つかりません: {step2_path}")
-
-        logger.info("🛑 Step2までで処理を終了（デバッグ用）")
+        logger.info("✅ ステップ7処理が完了しました")
         return True
-        """
         
     except Exception as e:
         logger.error(f"会話データの処理中にエラーが発生: meeting_id={meeting_id}, error={e}")
