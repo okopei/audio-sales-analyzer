@@ -23,7 +23,7 @@ export function useComments() {
       setError(null)
 
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL
-      const url = `${baseUrl}/api/comments/by-meeting/${meetingId}`
+      const url = `${baseUrl}/comments/by-meeting/${meetingId}`
       
       console.log("🔗 Fetching comments from:", url)
 

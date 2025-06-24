@@ -12,7 +12,7 @@ export async function searchMeetings(params: MeetingSearchParams): Promise<Meeti
     if (params.toDate) queryParams.append("toDate", params.toDate)
 
     // リクエストURLの構築
-    const requestUrl = `${API_BASE_URL}/api/meetings?${queryParams.toString()}`
+    const requestUrl = `${API_BASE_URL}/meetings?${queryParams.toString()}`
 
     const response = await fetch(requestUrl, {
       headers: {

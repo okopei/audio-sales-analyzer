@@ -41,7 +41,7 @@ export interface BasicInfoSearchResult {
  * HTTP リクエストを送信する汎用関数
  */
 async function fetchAPI(endpoint: string, options: RequestInit = {}): Promise<any> {
-  const url = `${API_BASE_URL}/api${endpoint}`;
+  const url = `${API_BASE_URL}${endpoint}`;
   console.log(`API リクエスト: ${options.method || 'GET'} ${url}`, options);
 
   try {

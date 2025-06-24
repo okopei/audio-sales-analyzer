@@ -115,7 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       console.log(`Attempting login for ${email}`)
       
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/users/login`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/users/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -29,38 +29,29 @@ export default function RegisterPage() {
     setError("")
 
     try {
-      // APIリクエストの準備
-      const requestData = {
-        user_name: formData.username,
-        email: formData.email,
-        password: formData.password,
-        role: formData.role,
-        account_status: formData.role === "manager" ? "ACTIVE" : "ACTIVE"
-      }
-
-      // APIエンドポイントにPOSTリクエスト
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/register/test`, {
-        method: "POST",
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/register/test`, {
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestData),
+        body: JSON.stringify({
+          email: formData.email,
+          password: formData.password,
+          user_name: formData.username,
+        }),
       })
 
       const data = await response.json()
 
-      if (!response.ok) {
-        throw new Error(data.error || "ユーザー登録に失敗しました")
+      if (response.ok && data.success) {
+        console.log("Registration successful:", data)
+        router.push("/?registered=true")
+      } else {
+        setError(data.message || "登録に失敗しました")
       }
-
-      // 登録成功
-      console.log("Registration successful:", data)
-      
-      // ログインページにリダイレクト
-      router.push("/?registered=true")
-    } catch (error) {
-      console.error("Registration error:", error)
-      setError(error instanceof Error ? error.message : "ユーザー登録に失敗しました")
+    } catch (err) {
+      console.error("Registration error:", err)
+      setError("登録中にエラーが発生しました")
     } finally {
       setLoading(false)
     }
