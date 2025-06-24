@@ -39,7 +39,7 @@ export default function RegisterPage() {
       }
 
       // APIエンドポイントにPOSTリクエスト
-      const response = await fetch("http://localhost:7071/api/register/test", {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/register/test`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
