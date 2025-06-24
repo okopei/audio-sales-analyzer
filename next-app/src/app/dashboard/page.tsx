@@ -118,7 +118,7 @@ export default function Dashboard() {
       console.log('[コメント取得] 開始:', { userId: user.user_id })
 
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_BASE_URL}/api/comments-latest?userId=${user.user_id}`
+        `${process.env.NEXT_PUBLIC_API_BASE_URL}/comments-latest?userId=${user.user_id}`
       )
       console.log('[コメント取得] レスポンスステータス:', response.status)
 

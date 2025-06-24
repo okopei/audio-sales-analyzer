@@ -14,15 +14,10 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db_utils import execute_query
 
-# FunctionAppインスタンスの生成（1回のみ）
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
-
 # ロガーの設定
 logger = logging.getLogger(__name__)
 
-@app.function_name(name="GetFeedback")
-@app.route(route="feedback", methods=["GET", "OPTIONS"])
-def get_feedback_func(req: func.HttpRequest) -> func.HttpResponse:
+def main(req: func.HttpRequest) -> func.HttpResponse:
     """フィードバック一覧取得エンドポイント"""
     try:
         if req.method == "OPTIONS":

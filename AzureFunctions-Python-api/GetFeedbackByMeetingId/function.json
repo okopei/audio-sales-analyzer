@@ -15,5 +15,5 @@
     }
   ],
   "scriptFile": "__init__.py",
-  "entryPoint": "get_feedback_by_meeting_id_func"
+  "entryPoint": "main"
 } 

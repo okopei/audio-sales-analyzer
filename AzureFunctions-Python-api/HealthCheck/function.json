@@ -15,5 +15,5 @@
     }
   ],
   "scriptFile": "__init__.py",
-  "entryPoint": "health_check"
+  "entryPoint": "main"
 } 

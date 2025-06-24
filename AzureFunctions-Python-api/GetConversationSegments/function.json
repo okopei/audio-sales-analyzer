@@ -15,5 +15,5 @@
     }
   ],
   "scriptFile": "__init__.py",
-  "entryPoint": "get_conversation_segments"
+  "entryPoint": "main"
 } 

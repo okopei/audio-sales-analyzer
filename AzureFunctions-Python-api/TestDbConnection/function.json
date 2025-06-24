@@ -15,5 +15,5 @@
     }
   ],
   "scriptFile": "__init__.py",
-  "entryPoint": "test_db_connection_func"
+  "entryPoint": "main"
 } 

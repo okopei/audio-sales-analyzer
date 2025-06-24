@@ -14,15 +14,10 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db_utils import test_db_connection
 
-# FunctionAppインスタンスの生成（1回のみ）
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
-
 # ロガーの設定
 logger = logging.getLogger(__name__)
 
-@app.function_name(name="TestDbConnection")
-@app.route(route="test/db-connection", methods=["GET", "OPTIONS"])
-def test_db_connection_func(req: func.HttpRequest) -> func.HttpResponse:
+def main(req: func.HttpRequest) -> func.HttpResponse:
     """データベース接続をテストするエンドポイント"""
     try:
         if req.method == "OPTIONS":

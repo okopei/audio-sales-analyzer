@@ -17,7 +17,7 @@ interface Comment {
   user_name: string
   client_company_name: string
   client_contact_name: string
-  readers: Array<{
+  readers?: Array<{
     reader_id: number
     read_datetime: string
   }>
@@ -37,7 +37,7 @@ export function DashboardCommentList({ comments, onCommentRead }: DashboardComme
   return (
     <div className="space-y-4">
       {comments.map((comment) => {
-        const isRead = comment.readers.some(reader => reader.reader_id === currentUserId)
+        const isRead = comment.readers?.some(reader => reader.reader_id === currentUserId) ?? false
         const isOwnComment = comment.user_id === currentUserId
 
         return (

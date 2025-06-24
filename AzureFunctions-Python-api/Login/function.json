@@ -15,5 +15,5 @@
     }
   ],
   "scriptFile": "__init__.py",
-  "entryPoint": "login_func"
+  "entryPoint": "main"
 } 

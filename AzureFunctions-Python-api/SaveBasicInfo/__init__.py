@@ -14,15 +14,10 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from src.meetings import save_basic_info
 
-# FunctionAppインスタンスの生成（1回のみ）
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
-
 # ロガーの設定
 logger = logging.getLogger(__name__)
 
-@app.function_name(name="SaveBasicInfo")
-@app.route(route="basicinfo", auth_level=func.AuthLevel.ANONYMOUS)
-def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
+def main(req: func.HttpRequest) -> func.HttpResponse:
     """会議の基本情報を保存する"""
     try:
         # OPTIONSリクエスト処理
