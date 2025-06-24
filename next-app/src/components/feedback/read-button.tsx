@@ -26,7 +26,7 @@ export function ReadButton({ commentId, userId, isRead, onRead }: ReadButtonProp
       }
       console.log('[既読更新] リクエストボディ:', requestBody)
 
-      const response = await fetch('http://localhost:7071/api/comments/read', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/comments/read`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

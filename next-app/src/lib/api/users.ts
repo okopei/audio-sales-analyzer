@@ -1,6 +1,6 @@
 import { User } from "@/types/meeting"
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:7071/api"
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL
 
 export async function getUsers(): Promise<User[]> {
   try {

@@ -22,7 +22,7 @@ export function useComments() {
       setLoading(true)
       setError(null)
 
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7071'
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL
       const url = `${baseUrl}/api/comments/by-meeting/${meetingId}`
       
       console.log("🔗 Fetching comments from:", url)

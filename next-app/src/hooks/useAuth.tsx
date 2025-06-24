@@ -28,7 +28,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 // APIのベースURL - 環境に応じて変更
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7071/api'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL
 
 // ブラウザ環境かどうかを確認する関数
 const isBrowser = () => typeof window !== 'undefined'
@@ -59,8 +59,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           
           // Cookieになければローカルストレージから取得
           if (!storedUser || !storedToken) {
-            storedUser = localStorage.getItem('user')
-            storedToken = localStorage.getItem('token')
+            storedUser = localStorage.getItem('user') ?? undefined
+            storedToken = localStorage.getItem('token') ?? undefined
             
             // ローカルストレージにあればCookieにも保存
             if (storedUser && storedToken) {

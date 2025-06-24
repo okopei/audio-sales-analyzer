@@ -31,7 +31,7 @@ export function useUser() {
       setLoading(true)
       setError(null)
 
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7071/api'
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL
       const response = await fetch(`${baseUrl}/users/${user.user_id}`)
       
       if (!response.ok) {
