@@ -27,9 +27,6 @@ interface AuthContextType {
 // 認証コンテキストの作成
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-// APIのベースURL - 環境に応じて変更
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL
-
 // ブラウザ環境かどうかを確認する関数
 const isBrowser = () => typeof window !== 'undefined'
 
@@ -118,7 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       console.log(`Attempting login for ${email}`)
       
-      const response = await fetch(`${API_BASE_URL}/users/login`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/users/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

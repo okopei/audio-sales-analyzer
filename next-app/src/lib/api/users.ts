@@ -1,10 +1,8 @@
 import { User } from "@/types/meeting"
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL
-
 export async function getUsers(): Promise<User[]> {
   try {
-    const response = await fetch(`${API_BASE_URL}/users`, {
+    const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/users`, {
       headers: {
         "Accept": "application/json",
       },

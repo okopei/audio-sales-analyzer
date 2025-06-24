@@ -31,8 +31,7 @@ export function useUser() {
       setLoading(true)
       setError(null)
 
-      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL
-      const response = await fetch(`${baseUrl}/users/${user.user_id}`)
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/users/${user.user_id}`)
       
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`)
