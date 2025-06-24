@@ -26,12 +26,15 @@ def get_conversation_segments(req: func.HttpRequest) -> func.HttpResponse:
     """会話セグメント取得エンドポイント"""
     try:
         if req.method == "OPTIONS":
-            headers = {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type",
-            }
-            return func.HttpResponse(status_code=204, headers=headers)
+            return func.HttpResponse(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type"
+                }
+            )
             
         meeting_id = req.route_params.get('meeting_id')
         
@@ -64,21 +67,29 @@ def get_conversation_segments(req: func.HttpRequest) -> func.HttpResponse:
             "segments": segments
         }
         
-        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
             json.dumps(response, ensure_ascii=False),
             mimetype="application/json",
             status_code=200,
-            headers=headers
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type"
+            }
         )
     except Exception as e:
         logger.error(f"Get conversation segments error: {str(e)}")
         logger.error(f"Error details: {traceback.format_exc()}")
-        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
             json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
-            headers=headers
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type"
+            }
         )
  

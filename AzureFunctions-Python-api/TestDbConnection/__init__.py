@@ -26,12 +26,15 @@ def test_db_connection_func(req: func.HttpRequest) -> func.HttpResponse:
     """データベース接続をテストするエンドポイント"""
     try:
         if req.method == "OPTIONS":
-            headers = {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type",
-            }
-            return func.HttpResponse(status_code=204, headers=headers)
+            return func.HttpResponse(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type"
+                }
+            )
 
         # 接続テストを実行
         success = test_db_connection()
@@ -49,18 +52,21 @@ def test_db_connection_func(req: func.HttpRequest) -> func.HttpResponse:
             }
             status_code = 500
 
-        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
             json.dumps(response, ensure_ascii=False),
             mimetype="application/json",
             status_code=status_code,
-            headers=headers
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type"
+            }
         )
 
     except Exception as e:
         logger.error(f"Database connection test error: {str(e)}")
         logger.error(f"Error details: {traceback.format_exc()}")
-        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
             json.dumps({
                 "success": False,
@@ -68,5 +74,10 @@ def test_db_connection_func(req: func.HttpRequest) -> func.HttpResponse:
             }, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
-            headers=headers
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type"
+            }
         ) 

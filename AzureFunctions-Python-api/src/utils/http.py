@@ -8,10 +8,10 @@ def get_cors_headers():
     CORS対応のためのヘッダーを返す
     """
     return {
-        # TODO: 本番環境デプロイ時に環境変数に変更
-        "Access-Control-Allow-Origin": os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000"),
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS, PUT, DELETE",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization"
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type"
     }
 
 def handle_options_request():

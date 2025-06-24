@@ -20,17 +20,24 @@ def health_check(req: func.HttpRequest) -> func.HttpResponse:
     
     if req.method == "OPTIONS":
         # CORS プリフライトリクエスト処理
-        headers = {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-        }
-        return func.HttpResponse(status_code=204, headers=headers)
+        return func.HttpResponse(
+            status_code=204,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type"
+            }
+        )
     
     # ヘルスチェックレスポンス
-    headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
     return func.HttpResponse(
         body='{"status":"ok","message":"API server is running"}',
         status_code=200,
-        headers=headers
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type"
+        }
     ) 
