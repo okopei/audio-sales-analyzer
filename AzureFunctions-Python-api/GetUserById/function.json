@@ -15,5 +15,5 @@
     }
   ],
   "scriptFile": "__init__.py",
-  "entryPoint": "get_user_by_id_func"
+  "entryPoint": "main"
 } 

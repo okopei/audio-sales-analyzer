@@ -1,7 +1,7 @@
 import { MeetingSearchParams, Meeting } from "@/types/meeting"
 
 // API_BASE_URLを明示的に定義
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:7071'
 
 export async function searchMeetings(params: MeetingSearchParams): Promise<Meeting[]> {
   try {

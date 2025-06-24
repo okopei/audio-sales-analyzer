@@ -70,7 +70,7 @@ export default function ManagerDashboard() {
 
     setLoadingComments(true)
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/comments-latest?userId=${user.user_id}&isManager=true`)
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/comments-latest?userId=${user.user_id}&isManager=true`)
       if (!response.ok) throw new Error('コメントの取得に失敗しました')
       
       const data = await response.json()

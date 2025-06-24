@@ -15,24 +15,22 @@ from datetime import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db_utils import execute_query
 
-# FunctionAppインスタンスの生成（1回のみ）
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
-
 # ロガーの設定
 logger = logging.getLogger(__name__)
 
-@app.function_name(name="GetMeetings")
-@app.route(route="meetings", methods=["GET", "OPTIONS"])
-def get_meetings_func(req: func.HttpRequest) -> func.HttpResponse:
+def main(req: func.HttpRequest) -> func.HttpResponse:
     """会議一覧取得エンドポイント"""
     try:
         if req.method == "OPTIONS":
-            headers = {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type",
-            }
-            return func.HttpResponse(status_code=204, headers=headers)
+            return func.HttpResponse(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type"
+                }
+            )
 
         logger.info("=== 会議検索開始 ===")
         
@@ -70,7 +68,12 @@ def get_meetings_func(req: func.HttpRequest) -> func.HttpResponse:
                     json.dumps({"error": "Invalid userId format"}, ensure_ascii=False),
                     mimetype="application/json",
                     status_code=400,
-                    headers={"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+                    headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Credentials": "true",
+                        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type"
+                    }
                 )
 
         # 開催日付フィルター（from）
@@ -86,7 +89,12 @@ def get_meetings_func(req: func.HttpRequest) -> func.HttpResponse:
                     json.dumps({"error": "Invalid fromDate format. Use YYYY-MM-DD"}, ensure_ascii=False),
                     mimetype="application/json",
                     status_code=400,
-                    headers={"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+                    headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Credentials": "true",
+                        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type"
+                    }
                 )
 
         # 開催日付フィルター（to）
@@ -102,7 +110,12 @@ def get_meetings_func(req: func.HttpRequest) -> func.HttpResponse:
                     json.dumps({"error": "Invalid toDate format. Use YYYY-MM-DD"}, ensure_ascii=False),
                     mimetype="application/json",
                     status_code=400,
-                    headers={"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+                    headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Credentials": "true",
+                        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type"
+                    }
                 )
 
         # 日付の降順でソート
@@ -128,21 +141,29 @@ def get_meetings_func(req: func.HttpRequest) -> func.HttpResponse:
 
         logger.info("=== 会議検索終了 ===")
 
-        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
             json.dumps(meetings, ensure_ascii=False),
             mimetype="application/json",
             status_code=200,
-            headers=headers
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type"
+            }
         )
 
     except Exception as e:
         logger.error(f"[会議検索] エラー発生: {str(e)}")
         logger.error(f"[会議検索] エラー詳細: {traceback.format_exc()}")
-        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
             json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
-            headers=headers
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type"
+            }
         ) 

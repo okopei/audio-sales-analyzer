@@ -16,42 +16,33 @@ export function ReadButton({ commentId, userId, isRead, onRead }: ReadButtonProp
   const [isLoading, setIsLoading] = useState(false)
 
   const handleRead = async () => {
+    if (isRead) return
+
     try {
       setIsLoading(true)
-      console.log('[既読更新] リクエスト開始:', { commentId, userId })
-
-      const requestBody = {
-        comment_id: commentId,
-        user_id: userId,
-      }
-      console.log('[既読更新] リクエストボディ:', requestBody)
-
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/comments/read`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/comments/read`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify({
+          comment_id: commentId,
+          user_id: userId
+        }),
       })
 
-      console.log('[既読更新] レスポンスステータス:', response.status)
-      const responseData = await response.json().catch(() => null)
-      console.log('[既読更新] レスポンスデータ:', responseData)
-
       if (!response.ok) {
-        throw new Error(responseData?.message || '既読の更新に失敗しました')
+        throw new Error('既読更新に失敗しました')
       }
 
-      if (!responseData?.success) {
-        throw new Error(responseData?.message || '既読の更新に失敗しました')
+      const data = await response.json()
+      if (data.success) {
+        onRead()
+      } else {
+        throw new Error(data.message || '既読更新に失敗しました')
       }
-
-      console.log('[既読更新] 成功:', responseData)
-      onRead()
-      toast.success('既読にしました')
     } catch (error) {
-      console.error('[既読更新] エラー:', error)
-      toast.error(error instanceof Error ? error.message : '既読の更新に失敗しました')
+      console.error('既読更新エラー:', error)
     } finally {
       setIsLoading(false)
     }

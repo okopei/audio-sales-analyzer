@@ -1,19 +1,21 @@
 {
+  "scriptFile": "__init__.py",
   "bindings": [
     {
       "authLevel": "anonymous",
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "methods": ["get", "options"],
-      "route": "meetings"
+      "methods": [
+        "get",
+        "options"
+      ],
+      "route": "comments-latest"
     },
     {
       "type": "http",
       "direction": "out",
       "name": "$return"
     }
-  ],
-  "scriptFile": "__init__.py",
-  "entryPoint": "main"
-} 
+  ]
+}

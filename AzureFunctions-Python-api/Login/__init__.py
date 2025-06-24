@@ -15,24 +15,22 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db_utils import execute_query
 from src.models.user import User
 
-# FunctionAppインスタンスの生成（1回のみ）
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
-
 # ロガーの設定
 logger = logging.getLogger(__name__)
 
-@app.function_name(name="Login")
-@app.route(route="users/login", methods=["POST", "OPTIONS"])
-def login_func(req: func.HttpRequest) -> func.HttpResponse:
+def main(req: func.HttpRequest) -> func.HttpResponse:
     """ログインエンドポイント"""
     try:
         if req.method == "OPTIONS":
-            headers = {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type",
-            }
-            return func.HttpResponse(status_code=204, headers=headers)
+            return func.HttpResponse(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type"
+                }
+            )
 
         data = req.get_json()
         email = data.get('email')
@@ -42,7 +40,13 @@ def login_func(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(
                 json.dumps({"error": "Email and password are required"}, ensure_ascii=False),
                 mimetype="application/json",
-                status_code=400
+                status_code=400,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type"
+                }
             )
 
         # データベースからユーザー情報を取得
@@ -53,7 +57,13 @@ def login_func(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(
                 json.dumps({"error": "Invalid email or password"}, ensure_ascii=False),
                 mimetype="application/json",
-                status_code=401
+                status_code=401,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type"
+                }
             )
 
         user = User.from_dict(users[0])
@@ -61,7 +71,13 @@ def login_func(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(
                 json.dumps({"error": "Invalid email or password"}, ensure_ascii=False),
                 mimetype="application/json",
-                status_code=401
+                status_code=401,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type"
+                }
             )
 
         response = {
@@ -74,21 +90,29 @@ def login_func(req: func.HttpRequest) -> func.HttpResponse:
             "account_status": user.account_status
         }
 
-        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
             json.dumps(response, ensure_ascii=False),
             mimetype="application/json",
             status_code=200,
-            headers=headers
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type"
+            }
         )
 
     except Exception as e:
         logger.error(f"Login error: {str(e)}")
         logger.error(f"Error details: {traceback.format_exc()}")
-        headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
         return func.HttpResponse(
             json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
-            headers=headers
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type"
+            }
         ) 

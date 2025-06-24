@@ -81,7 +81,8 @@ export default function FeedbackPage() {
 
   const fetchMeeting = async () => {
     try {
-      const response = await fetch(`http://localhost:7071/api/basicinfo/${meetingId}`)
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:7071'
+      const response = await fetch(`${baseUrl}/basicinfo/${meetingId}`)
       const data = await response.json()
       if (data.success && data.basicInfo) {
         setMeeting(data.basicInfo)

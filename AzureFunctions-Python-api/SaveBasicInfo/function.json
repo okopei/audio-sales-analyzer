@@ -15,5 +15,5 @@
     }
   ],
   "scriptFile": "__init__.py",
-  "entryPoint": "save_basic_info_func"
+  "entryPoint": "main"
 } 

@@ -6,7 +6,7 @@ import { Dot, Pause, Play, ArrowLeft, Mic, Building, User, Calendar } from "luci
 import { useRouter, useSearchParams } from "next/navigation"
 import { useRecording } from "@/hooks/useRecording"
 import { toast } from "sonner"
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef, Suspense } from "react"
 import Link from "next/link"
 import { useAuth } from "@/hooks/useAuth"
 import { uploadToAzureStorage } from "@/lib/utils/azure-storage"
@@ -137,7 +137,8 @@ interface BasicInfoData {
   meeting_datetime: string
 }
 
-export default function RecordingPage() {
+// useSearchParamsを使用するコンポーネント
+function RecordingPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const meetingId = searchParams.get('meetingId')
@@ -619,5 +620,13 @@ export default function RecordingPage() {
         )}
       </div>
     </div>
+  )
+}
+
+export default function RecordingPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <RecordingPageContent />
+    </Suspense>
   )
 }

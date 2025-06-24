@@ -3,7 +3,7 @@
  */
 
 // API のベース URL（ローカル開発用の URL）
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:7071/api';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:7071';
 
 // 初期化時にAPIのベースURLをログに出力
 console.log(`API Base URL configured as: ${API_BASE_URL}`);
