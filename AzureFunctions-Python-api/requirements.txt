@@ -39,10 +39,6 @@ isodate==0.7.2
 jiter==0.8.2
 jsonpatch==1.33
 jsonpointer==3.0.0
-langchain==0.3.13
-langchain-core==0.3.28
-langchain-text-splitters==0.3.4
-langsmith==0.2.6
 libsass==0.23.0
 msal==1.31.1
 msal-extensions==1.2.0
@@ -66,7 +62,6 @@ pyodbc>=5.0.1
 PySocks==1.7.1
 python-dateutil>=2.8.2
 python-dotenv==1.0.1
-pywin32==308
 PyYAML==6.0.2
 rcssmin==1.1.2
 reportlab==4.2.5
