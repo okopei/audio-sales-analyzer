@@ -33,7 +33,7 @@ export function useMembersMeetings() {
       setError(null)
 
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL
-      const url = `${baseUrl}/members-meetings?manager_id=${user.user_id}`
+      const url = `${baseUrl}/api/members-meetings?manager_id=${user.user_id}`
       
       console.log("🔗 Fetching from:", url)
       console.log("✅ useMembersMeetings manager_id:", user.user_id)
