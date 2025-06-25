@@ -147,7 +147,7 @@ def save_basic_info(req: func.HttpRequest) -> func.HttpResponse:
                     f"Missing required field: {field}",
                     status_code=400,
                     headers={
-                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
                         "Access-Control-Allow-Credentials": "true",
                         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
                         "Access-Control-Allow-Headers": "Content-Type"
@@ -217,7 +217,7 @@ def save_basic_info(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json",
                 status_code=201,
                 headers={
-                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
                     "Access-Control-Allow-Credentials": "true",
                     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
                     "Access-Control-Allow-Headers": "Content-Type"
@@ -239,7 +239,7 @@ def save_basic_info(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500,
             headers={
-                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
                 "Access-Control-Allow-Credentials": "true",
                 "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
                 "Access-Control-Allow-Headers": "Content-Type"
