@@ -468,3 +468,126 @@ def get_basic_info_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
 
     except Exception as e:
         return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
+
+# Login（ユーザー認証）
+@app.function_name(name="Login")
+@app.route(route="users/login", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+def login_user(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        data = req.get_json()
+        user_name = data.get("user_name")
+        password = data.get("password")
+
+        if not user_name or not password:
+            return func.HttpResponse("user_name と password は必須です", status_code=400)
+
+        query = """
+            SELECT user_id, user_name, role
+            FROM dbo.Users
+            WHERE user_name = ? AND password = ?
+        """
+        result = execute_query(query, (user_name, password))
+
+        if result:
+            return func.HttpResponse(json.dumps({"success": True, "user": result[0]}, ensure_ascii=False), status_code=200)
+        else:
+            return func.HttpResponse(json.dumps({"success": False, "message": "認証に失敗しました"}, ensure_ascii=False), status_code=401)
+
+    except Exception as e:
+        return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
+
+
+# GetAllBasicInfo（BasicInfo 全件取得）
+@app.function_name(name="GetAllBasicInfo")
+@app.route(route="basicinfo/search", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def get_all_basic_info(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        query = """
+            SELECT *
+            FROM dbo.BasicInfo
+            WHERE deleted_datetime IS NULL
+            ORDER BY inserted_datetime DESC
+        """
+        result = execute_query(query)
+        return func.HttpResponse(json.dumps(result, ensure_ascii=False), mimetype="application/json", status_code=200)
+
+    except Exception as e:
+        return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
+
+
+# GetAllFeedback（全フィードバック取得）
+@app.function_name(name="GetAllFeedback")
+@app.route(route="feedback", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def get_all_feedback(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        query = """
+            SELECT * FROM dbo.Feedback
+            WHERE deleted_datetime IS NULL
+            ORDER BY inserted_datetime DESC
+        """
+        result = execute_query(query)
+        return func.HttpResponse(json.dumps(result, ensure_ascii=False), mimetype="application/json", status_code=200)
+
+    except Exception as e:
+        return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
+
+
+# GetAllMeetings（会議一覧取得）
+@app.function_name(name="GetAllMeetings")
+@app.route(route="meetings", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def get_all_meetings(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        query = """
+            SELECT * FROM dbo.Meetings
+            WHERE deleted_datetime IS NULL
+            ORDER BY meeting_datetime DESC
+        """
+        result = execute_query(query)
+        return func.HttpResponse(json.dumps(result, ensure_ascii=False), mimetype="application/json", status_code=200)
+
+    except Exception as e:
+        return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
+    
+    # GetCommentsByMeetingId（会議単位のコメント一覧取得）
+@app.function_name(name="GetCommentsByMeetingId")
+@app.route(route="comments/by-meeting/{meeting_id}", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
+def get_comments_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        if req.method == "OPTIONS":
+            return func.HttpResponse(status_code=204, headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            })
+
+        meeting_id = req.route_params.get('meeting_id')
+        if not meeting_id:
+            return func.HttpResponse(json.dumps({"error": "meeting_id is required"}, ensure_ascii=False), status_code=400)
+
+        query = """
+            SELECT c.comment_id, c.segment_id, c.meeting_id, c.user_id, c.content,
+                   c.inserted_datetime, c.updated_datetime, u.user_name
+            FROM dbo.Comments c
+            JOIN dbo.Users u ON c.user_id = u.user_id
+            WHERE c.deleted_datetime IS NULL AND c.meeting_id = ?
+            ORDER BY c.inserted_datetime ASC
+        """
+        comments = execute_query(query, (meeting_id,))
+
+        for comment in comments:
+            comment['readers'] = []
+
+        return func.HttpResponse(
+            json.dumps({"success": True, "comments": comments}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=200,
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+
+    except Exception as e:
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500,
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
