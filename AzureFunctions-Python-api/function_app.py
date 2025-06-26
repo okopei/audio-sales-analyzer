@@ -210,7 +210,8 @@ def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
             headers = {
-                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
+                "Access-Control-Allow-Credentials": "true",
                 "Access-Control-Allow-Methods": "POST, OPTIONS",
                 "Access-Control-Allow-Headers": "Content-Type",
             }
@@ -294,7 +295,8 @@ def get_conversation_segments(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
             return func.HttpResponse(status_code=204, headers={
-                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
+                "Access-Control-Allow-Credentials": "true",
                 "Access-Control-Allow-Methods": "GET, OPTIONS",
                 "Access-Control-Allow-Headers": "Content-Type",
             })
@@ -319,14 +321,14 @@ def get_conversation_segments(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps({"success": True, "segments": segments}, ensure_ascii=False),
             mimetype="application/json",
             status_code=200,
-            headers={"Access-Control-Allow-Origin": "*"}
+            headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"}
         )
     except Exception as e:
         return func.HttpResponse(
             json.dumps({"error": str(e)}, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
-            headers={"Access-Control-Allow-Origin": "*"}
+            headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"}
         )
     
 
@@ -337,7 +339,8 @@ def get_segment_comments(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
             return func.HttpResponse(status_code=204, headers={
-                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
+                "Access-Control-Allow-Credentials": "true",
                 "Access-Control-Allow-Methods": "GET, OPTIONS",
                 "Access-Control-Allow-Headers": "Content-Type",
             })
@@ -361,14 +364,14 @@ def get_segment_comments(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps({"success": True, "comments": comments}, ensure_ascii=False),
             mimetype="application/json",
             status_code=200,
-            headers={"Access-Control-Allow-Origin": "*"}
+            headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"}
         )
     except Exception as e:
         return func.HttpResponse(
             json.dumps({"error": str(e)}, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
-            headers={"Access-Control-Allow-Origin": "*"}
+            headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"}
         )
 
 # コメント追加
@@ -378,7 +381,8 @@ def create_comment(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
             return func.HttpResponse(status_code=204, headers={
-                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
+                "Access-Control-Allow-Credentials": "true",
                 "Access-Control-Allow-Methods": "POST, OPTIONS",
                 "Access-Control-Allow-Headers": "Content-Type",
             })
@@ -408,7 +412,7 @@ def create_comment(req: func.HttpRequest) -> func.HttpResponse:
 def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
-            return func.HttpResponse(status_code=204, headers={"Access-Control-Allow-Origin": "*"})
+            return func.HttpResponse(status_code=204, headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"})
 
         data = req.get_json()
         comment_id = data.get('comment_id')
@@ -432,7 +436,7 @@ def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
 def delete_comment(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
-            return func.HttpResponse(status_code=204, headers={"Access-Control-Allow-Origin": "*"})
+            return func.HttpResponse(status_code=204, headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"})
 
         comment_id = req.route_params.get('comment_id')
         update_query = "UPDATE dbo.Comments SET deleted_datetime = GETDATE() WHERE comment_id = ?"
@@ -449,7 +453,7 @@ def delete_comment(req: func.HttpRequest) -> func.HttpResponse:
 def get_basic_info_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
-            return func.HttpResponse(status_code=204, headers={"Access-Control-Allow-Origin": "*"})
+            return func.HttpResponse(status_code=204, headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app"})
 
         meeting_id = req.route_params.get('meeting_id')
         query = """
@@ -555,7 +559,8 @@ def get_comments_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
             return func.HttpResponse(status_code=204, headers={
-                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
+                "Access-Control-Allow-Credentials": "true",
                 "Access-Control-Allow-Methods": "GET, OPTIONS",
                 "Access-Control-Allow-Headers": "Content-Type",
             })
@@ -581,7 +586,7 @@ def get_comments_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps({"success": True, "comments": comments}, ensure_ascii=False),
             mimetype="application/json",
             status_code=200,
-            headers={"Access-Control-Allow-Origin": "*"}
+            headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"}
         )
 
     except Exception as e:
@@ -589,5 +594,5 @@ def get_comments_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps({"error": str(e)}, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
-            headers={"Access-Control-Allow-Origin": "*"}
+            headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"}
         )
