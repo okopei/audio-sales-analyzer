@@ -175,37 +175,6 @@ def get_latest_comments(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("コメント取得エラー:")
         return func.HttpResponse(f"エラー: {str(e)}", status_code=500)
     
-@app.function_name(name="MarkCommentAsRead")
-@app.route(route="comments/read", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
-def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        data = req.get_json()
-        comment_id = data.get("comment_id")
-        reader_id = data.get("user_id")
-
-        if not comment_id or not reader_id:
-            return func.HttpResponse("comment_id と user_id は必須です", status_code=400)
-
-        insert_sql = """
-            INSERT INTO CommentReads (comment_id, reader_id, read_datetime)
-            VALUES (?, ?, GETDATE())
-        """
-
-        try:
-            execute_query(insert_sql, (comment_id, reader_id))
-        except Exception as e:
-            # 既に既読なら無視（PK衝突）
-            if "PRIMARY KEY" in str(e) or "UNIQUE" in str(e):
-                pass
-            else:
-                raise
-
-        return func.HttpResponse("既読としてマークされました", status_code=200)
-
-    except Exception as e:
-        logging.exception("既読マークエラー:")
-        return func.HttpResponse(f"エラー: {str(e)}", status_code=500)
-
 @app.function_name(name="GetMembersMeetings")
 @app.route(route="members-meetings", auth_level=func.AuthLevel.ANONYMOUS)
 def get_members_meetings(req: func.HttpRequest) -> func.HttpResponse:
