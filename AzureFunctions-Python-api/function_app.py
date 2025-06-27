@@ -67,9 +67,7 @@ def get_db_connection():
                 "Authentication=ActiveDirectoryMsi;"
                 "Encrypt=yes;TrustServerCertificate=no;"
             )
-
             conn = pyodbc.connect(conn_str, timeout=10)
-
         logging.info("[DB接続] 成功")
         return conn
 
