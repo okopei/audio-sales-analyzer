@@ -16,7 +16,7 @@ def get_db_connection():
     """
     ローカル：ClientSecretCredential（pyodbc）
     本番環境：Microsoft Entra ID（Managed Identity）を使用して Azure SQL Database に接続する。
-    ODBC Driver 17 for SQL Server + Authentication=ActiveDirectoryMsi を使用。(pypyodbc)
+    ODBC Driver 17 for SQL Server + Authentication=ActiveDirectoryMsi を使用。
     """
     try:
         logging.info("[DB接続] 開始")
@@ -27,7 +27,8 @@ def get_db_connection():
         if not server or not database:
             raise ValueError("SQL_SERVER または SQL_DATABASE の環境変数が設定されていません")
 
-        is_local = not os.getenv("WEBSITE_INSTANCE_ID")  # Azure 上ではこの環境変数が設定される
+        env = os.getenv("AZURE_ENVIRONMENT", "local")  # "local" or "production"
+        is_local = env.lower() != "production"
 
         if is_local:
             # 🔐 ローカル用：ClientSecretCredential + pyodbc + アクセストークン
@@ -70,7 +71,6 @@ def get_db_connection():
             conn = pyodbc.connect(conn_str, timeout=10)
         logging.info("[DB接続] 成功")
         return conn
-
     except Exception as e:
         logging.error("[DB接続] エラー発生")
         logging.exception("詳細:")
