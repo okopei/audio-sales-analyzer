@@ -1,6 +1,5 @@
 import logging
-import os
-import pypyodbc  
+import os  
 import pyodbc
 import traceback
 import azure.functions as func
@@ -69,7 +68,7 @@ def get_db_connection():
                 "Encrypt=yes;TrustServerCertificate=no;"
             )
 
-            conn = pypyodbc.connect(conn_str, timeout=10)
+            conn = pyodbc.connect(conn_str, timeout=10)
 
         logging.info("[DB接続] 成功")
         return conn
