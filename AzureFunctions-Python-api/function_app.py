@@ -12,6 +12,14 @@ import struct
 
 app = FunctionApp()
 
+def build_cors_headers(methods: str = "GET, OPTIONS") -> dict:
+    return {
+        "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": methods,
+        "Access-Control-Allow-Headers": "Content-Type",
+    }
+
 def get_db_connection():
     """
     ローカル：ClientSecretCredential（pyodbc）
@@ -146,6 +154,9 @@ def test_db_connection(req: func.HttpRequest) -> func.HttpResponse:
 @app.function_name(name="GetUserById")
 @app.route(route="users/{user_id}", auth_level=func.AuthLevel.ANONYMOUS)
 def get_user_by_id_func(req: func.HttpRequest) -> func.HttpResponse:
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
+
     try:
         user_id = req.route_params.get("user_id")
         if not user_id:
@@ -158,13 +169,15 @@ def get_user_by_id_func(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(
                 json.dumps(result[0], ensure_ascii=False, default=str),
                 mimetype="application/json",
-                status_code=200
+                status_code=200,
+                headers=build_cors_headers("GET, OPTIONS")
             )
         else:
             return func.HttpResponse(
                 json.dumps({"error": "ユーザーが見つかりません"}, ensure_ascii=False),
                 mimetype="application/json",
-                status_code=404
+                status_code=404,
+                headers=build_cors_headers("GET, OPTIONS")
             )
 
     except Exception as e:
@@ -172,13 +185,17 @@ def get_user_by_id_func(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({"error": str(e)}, ensure_ascii=False),
             mimetype="application/json",
-            status_code=500
+            status_code=500,
+            headers=build_cors_headers("GET, OPTIONS")
         )
 
 
 @app.function_name(name="GetLatestComments")
 @app.route(route="comments-latest", auth_level=func.AuthLevel.ANONYMOUS)
 def get_latest_comments(req: func.HttpRequest) -> func.HttpResponse:
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
+
     try:
         user_id = req.params.get("userId")
         if not user_id:
@@ -210,7 +227,8 @@ def get_latest_comments(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps(result, ensure_ascii=False, default=str), 
             status_code=200, 
-            mimetype="application/json"
+            mimetype="application/json",
+            headers=build_cors_headers("GET, OPTIONS")
         )
 
     except Exception as e:
@@ -220,6 +238,9 @@ def get_latest_comments(req: func.HttpRequest) -> func.HttpResponse:
 @app.function_name(name="GetMembersMeetings")
 @app.route(route="members-meetings", auth_level=func.AuthLevel.ANONYMOUS)
 def get_members_meetings(req: func.HttpRequest) -> func.HttpResponse:
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
+
     try:
         manager_id = req.params.get("manager_id")
         if not manager_id:
@@ -238,7 +259,8 @@ def get_members_meetings(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps(result, ensure_ascii=False, default=str),
             status_code=200,
-            mimetype="application/json"
+            mimetype="application/json",
+            headers=build_cors_headers("GET, OPTIONS")
         )
 
     except Exception as e:
@@ -251,13 +273,7 @@ def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
     """会議の基本情報を保存する（datetime変換を使わない版）"""
     try:
         if req.method == "OPTIONS":
-            headers = {
-                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
-                "Access-Control-Allow-Credentials": "true",
-                "Access-Control-Allow-Methods": "POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type",
-            }
-            return func.HttpResponse(status_code=204, headers=headers)
+            return func.HttpResponse(status_code=204, headers=build_cors_headers("POST, OPTIONS"))
 
         req_body = req.get_json()
         logging.info(f"リクエストボディ: {req_body}")
@@ -319,7 +335,8 @@ def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
                     "meeting_id": int(row[0])
                 }, ensure_ascii=False, default=str),
                 mimetype="application/json",
-                status_code=201
+                status_code=201,
+                headers=build_cors_headers("POST, OPTIONS")
             )
 
     except Exception as e:
@@ -327,7 +344,8 @@ def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({"error": str(e)}, ensure_ascii=False, default=str),
             mimetype="application/json",
-            status_code=500
+            status_code=500,
+            headers=build_cors_headers("POST, OPTIONS")
         )
 
 # 会話セグメント取得エンドポイント
@@ -336,12 +354,7 @@ def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
 def get_conversation_segments_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
-            return func.HttpResponse(status_code=204, headers={
-                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
-                "Access-Control-Allow-Credentials": "true",
-                "Access-Control-Allow-Methods": "GET, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type",
-            })
+            return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
 
         meeting_id_str = req.route_params.get('meeting_id')
         try:
@@ -351,10 +364,7 @@ def get_conversation_segments_by_meeting_id(req: func.HttpRequest) -> func.HttpR
                 json.dumps({"error": "invalid meeting_id"}, ensure_ascii=False),
                 mimetype="application/json",
                 status_code=400,
-                headers={
-                    "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
-                    "Access-Control-Allow-Credentials": "true"
-                }
+                headers=build_cors_headers("GET, OPTIONS")
             )
 
         logging.info(f"[GetConversationSegments] meeting_id = {meeting_id}")
@@ -374,10 +384,7 @@ def get_conversation_segments_by_meeting_id(req: func.HttpRequest) -> func.HttpR
             json.dumps({"success": True, "segments": segments}, ensure_ascii=False),
             mimetype="application/json",
             status_code=200,
-            headers={
-                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
-                "Access-Control-Allow-Credentials": "true"
-            }
+            headers=build_cors_headers("GET, OPTIONS")
         )
     except Exception as e:
         logging.exception("GetConversationSegments エラー:")
@@ -385,10 +392,7 @@ def get_conversation_segments_by_meeting_id(req: func.HttpRequest) -> func.HttpR
             json.dumps({"error": str(e)}, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
-            headers={
-                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
-                "Access-Control-Allow-Credentials": "true"
-            }
+            headers=build_cors_headers("GET, OPTIONS")
         )
     
 
@@ -398,12 +402,7 @@ def get_conversation_segments_by_meeting_id(req: func.HttpRequest) -> func.HttpR
 def get_comments_by_segment_id(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
-            return func.HttpResponse(status_code=204, headers={
-                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
-                "Access-Control-Allow-Credentials": "true",
-                "Access-Control-Allow-Methods": "GET, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type",
-            })
+            return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
 
         segment_id = req.route_params.get('segment_id')
         query = """
@@ -422,14 +421,14 @@ def get_comments_by_segment_id(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps({"success": True, "comments": comments}, ensure_ascii=False),
             mimetype="application/json",
             status_code=200,
-            headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"}
+            headers=build_cors_headers("GET, OPTIONS")
         )
     except Exception as e:
         return func.HttpResponse(
             json.dumps({"error": str(e)}, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
-            headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"}
+            headers=build_cors_headers("GET, OPTIONS")
         )
 
 # コメント追加
@@ -438,12 +437,7 @@ def get_comments_by_segment_id(req: func.HttpRequest) -> func.HttpResponse:
 def create_comment(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
-            return func.HttpResponse(status_code=204, headers={
-                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
-                "Access-Control-Allow-Credentials": "true",
-                "Access-Control-Allow-Methods": "POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type",
-            })
+            return func.HttpResponse(status_code=204, headers=build_cors_headers("POST, OPTIONS"))
 
         data = req.get_json()
         required = ['segment_id', 'meeting_id', 'user_id', 'content']
@@ -470,7 +464,7 @@ def create_comment(req: func.HttpRequest) -> func.HttpResponse:
 def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
-            return func.HttpResponse(status_code=204, headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"})
+            return func.HttpResponse(status_code=204, headers=build_cors_headers("POST, OPTIONS"))
 
         data = req.get_json()
         comment_id = data.get('comment_id')
@@ -494,7 +488,7 @@ def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
 def delete_comment(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
-            return func.HttpResponse(status_code=204, headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"})
+            return func.HttpResponse(status_code=204, headers=build_cors_headers("DELETE, OPTIONS"))
 
         comment_id = req.route_params.get('comment_id')
         update_query = "UPDATE dbo.Comments SET deleted_datetime = GETDATE() WHERE comment_id = ?"
@@ -509,6 +503,9 @@ def delete_comment(req: func.HttpRequest) -> func.HttpResponse:
 @app.function_name(name="Login")
 @app.route(route="users/login", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def login_user(req: func.HttpRequest) -> func.HttpResponse:
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=build_cors_headers("POST, OPTIONS"))
+
     try:
         data = req.get_json()
         user_name = data.get("user_name")
@@ -525,18 +522,33 @@ def login_user(req: func.HttpRequest) -> func.HttpResponse:
         result = execute_query(query, (user_name, password))
 
         if result:
-            return func.HttpResponse(json.dumps({"success": True, "user": result[0]}, ensure_ascii=False), status_code=200)
+            return func.HttpResponse(
+                json.dumps({"success": True, "user": result[0]}, ensure_ascii=False), 
+                status_code=200,
+                headers=build_cors_headers("POST, OPTIONS")
+            )
         else:
-            return func.HttpResponse(json.dumps({"success": False, "message": "認証に失敗しました"}, ensure_ascii=False), status_code=401)
+            return func.HttpResponse(
+                json.dumps({"success": False, "message": "認証に失敗しました"}, ensure_ascii=False), 
+                status_code=401,
+                headers=build_cors_headers("POST, OPTIONS")
+            )
 
     except Exception as e:
-        return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}, ensure_ascii=False), 
+            status_code=500,
+            headers=build_cors_headers("POST, OPTIONS")
+        )
 
 
 # GetAllMeetings（会議一覧取得）
 @app.function_name(name="SearchMeetings")
 @app.route(route="meetings", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def get_all_meetings(req: func.HttpRequest) -> func.HttpResponse:
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
+
     try:
         from_date = req.params.get("fromDate")
         to_date = req.params.get("toDate")
@@ -571,7 +583,8 @@ def get_all_meetings(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps(result, ensure_ascii=False, default=str),
             mimetype="application/json",
-            status_code=200
+            status_code=200,
+            headers=build_cors_headers("GET, OPTIONS")
         )
 
     except Exception as e:
@@ -579,7 +592,8 @@ def get_all_meetings(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("会議一覧取得エラー:")
         return func.HttpResponse(
             json.dumps({"error": str(e)}, ensure_ascii=False),
-            status_code=500
+            status_code=500,
+            headers=build_cors_headers("GET, OPTIONS")
         )    
     # GetCommentsByMeetingId（会議単位のコメント一覧取得）
 @app.function_name(name="GetCommentsByMeetingId")
@@ -587,12 +601,7 @@ def get_all_meetings(req: func.HttpRequest) -> func.HttpResponse:
 def get_comments_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
-            return func.HttpResponse(status_code=204, headers={
-                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
-                "Access-Control-Allow-Credentials": "true",
-                "Access-Control-Allow-Methods": "GET, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type",
-            })
+            return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
 
         meeting_id = req.route_params.get('meeting_id')
         if not meeting_id:
@@ -615,7 +624,7 @@ def get_comments_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps({"success": True, "comments": comments}, ensure_ascii=False),
             mimetype="application/json",
             status_code=200,
-            headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"}
+            headers=build_cors_headers("GET, OPTIONS")
         )
 
     except Exception as e:
@@ -623,12 +632,15 @@ def get_comments_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps({"error": str(e)}, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
-            headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"}
+            headers=build_cors_headers("GET, OPTIONS")
         )
 
 @app.function_name(name="GetAllUsers")
 @app.route(route="users", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def get_all_users(req: func.HttpRequest) -> func.HttpResponse:
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
+
     try:
         query = """
             SELECT user_id,user_name
@@ -642,7 +654,8 @@ def get_all_users(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps(result, ensure_ascii=False, default=str),
             mimetype="application/json",
-            status_code=200
+            status_code=200,
+            headers=build_cors_headers("GET, OPTIONS")
         )
         
     except Exception as e:
@@ -650,7 +663,8 @@ def get_all_users(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({"error": str(e)}, ensure_ascii=False),
             mimetype="application/json",
-            status_code=500
+            status_code=500,
+            headers=build_cors_headers("GET, OPTIONS")
         )
 
 # 会議基本情報取得Add commentMore actions
@@ -659,7 +673,7 @@ def get_all_users(req: func.HttpRequest) -> func.HttpResponse:
 def get_basic_info_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
-            return func.HttpResponse(status_code=204, headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app"})
+            return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
 
         meeting_id = req.route_params.get('meeting_id')
         query = """
@@ -683,13 +697,7 @@ def get_basic_info_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="comment-read-status", methods=["GET", "OPTIONS"])
 def get_comment_read_status(req: func.HttpRequest) -> func.HttpResponse:
     if req.method == "OPTIONS":
-        headers = {
-            "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
-            "Access-Control-Allow-Credentials": "true",
-            "Access-Control-Allow-Methods": "GET, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-        }
-        return func.HttpResponse(status_code=204, headers=headers)
+        return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
 
     try:
         user_id = req.params.get("userId")
@@ -700,10 +708,7 @@ def get_comment_read_status(req: func.HttpRequest) -> func.HttpResponse:
                 json.dumps({"error": "userId and commentId are required"}, ensure_ascii=False),
                 status_code=400,
                 mimetype="application/json",
-                headers={
-                    "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
-                    "Access-Control-Allow-Credentials": "true",
-                }
+                headers=build_cors_headers("GET, OPTIONS")
             )
 
         query = """
@@ -727,10 +732,7 @@ def get_comment_read_status(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps(response, ensure_ascii=False),
             status_code=200,
             mimetype="application/json",
-            headers={
-                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
-                "Access-Control-Allow-Credentials": "true",
-            }
+            headers=build_cors_headers("GET, OPTIONS")
         )
 
     except Exception as e:
@@ -739,8 +741,5 @@ def get_comment_read_status(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
             status_code=500,
             mimetype="application/json",
-            headers={
-                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
-                "Access-Control-Allow-Credentials": "true",
-            }
+            headers=build_cors_headers("GET, OPTIONS")
         )
