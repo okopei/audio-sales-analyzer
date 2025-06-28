@@ -689,3 +689,29 @@ def get_all_users(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500
         )
+
+# 会議基本情報取得Add commentMore actions
+@app.function_name(name="GetBasicInfoByMeetingId")
+@app.route(route="basicinfo/{meeting_id}", methods=["GET", "OPTIONS"])
+def get_basic_info_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        if req.method == "OPTIONS":
+            return func.HttpResponse(status_code=204, headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app"})
+
+        meeting_id = req.route_params.get('meeting_id')
+        query = """
+            SELECT meeting_id, user_id, client_contact_name, client_company_name,
+                   meeting_datetime, duration_seconds, status, transcript_text,
+                   file_name, file_size, error_message
+            FROM dbo.Meetings
+            WHERE meeting_id = ?
+        """
+        results = execute_query(query, (meeting_id,))
+
+        if not results:
+            return func.HttpResponse(json.dumps({"error": "Not found"}, ensure_ascii=False), status_code=404)
+
+        return func.HttpResponse(json.dumps({"success": True, "basicInfo": results[0]}, ensure_ascii=False), status_code=200)
+
+    except Exception as e:
+        return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
