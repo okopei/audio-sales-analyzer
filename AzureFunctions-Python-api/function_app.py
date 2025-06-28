@@ -535,41 +535,6 @@ def login_user(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
 
 
-# GetAllBasicInfo（BasicInfo 全件取得）
-@app.function_name(name="GetAllBasicInfo")
-@app.route(route="basicinfo/search", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
-def get_all_basic_info(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        query = """
-            SELECT *
-            FROM dbo.BasicInfo
-            WHERE deleted_datetime IS NULL
-            ORDER BY inserted_datetime DESC
-        """
-        result = execute_query(query)
-        return func.HttpResponse(json.dumps(result, ensure_ascii=False), mimetype="application/json", status_code=200)
-
-    except Exception as e:
-        return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
-
-
-# GetAllFeedback（全フィードバック取得）
-@app.function_name(name="GetAllFeedback")
-@app.route(route="feedback", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
-def get_all_feedback(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        query = """
-            SELECT * FROM dbo.Feedback
-            WHERE deleted_datetime IS NULL
-            ORDER BY inserted_datetime DESC
-        """
-        result = execute_query(query)
-        return func.HttpResponse(json.dumps(result, ensure_ascii=False), mimetype="application/json", status_code=200)
-
-    except Exception as e:
-        return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
-
-
 # GetAllMeetings（会議一覧取得）
 @app.function_name(name="SearchMeetings")
 @app.route(route="meetings", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
