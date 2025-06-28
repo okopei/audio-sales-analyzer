@@ -416,8 +416,6 @@ def get_comments_by_segment_id(req: func.HttpRequest) -> func.HttpResponse:
         comments = execute_query(query, (segment_id,))
 
         for comment in comments:
-            comment['inserted_datetime'] = comment['inserted_datetime'].isoformat()
-            comment['updated_datetime'] = comment['updated_datetime'].isoformat()
             comment['readers'] = []
 
         return func.HttpResponse(
