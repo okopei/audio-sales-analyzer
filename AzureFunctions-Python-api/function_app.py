@@ -1,47 +1,76 @@
 import logging
-import os
-import pypyodbc  # または pyodbc
+import os  
+import pyodbc
 import traceback
 import azure.functions as func
 from azure.functions import FunctionApp
 import json
 from typing import Optional, Dict, List, Any
-
-
+from azure.identity import DefaultAzureCredential, ClientSecretCredential
+import struct
 
 
 app = FunctionApp()
 
 def get_db_connection():
     """
-    Microsoft Entra ID（Managed Identity）を使用して Azure SQL Database に接続する。
+    ローカル：ClientSecretCredential（pyodbc）
+    本番環境：Microsoft Entra ID（Managed Identity）を使用して Azure SQL Database に接続する。
     ODBC Driver 17 for SQL Server + Authentication=ActiveDirectoryMsi を使用。
     """
     try:
         logging.info("[DB接続] 開始")
 
-        # 環境変数から接続先情報を取得
         server = os.getenv("SQL_SERVER")
         database = os.getenv("SQL_DATABASE")
 
         if not server or not database:
             raise ValueError("SQL_SERVER または SQL_DATABASE の環境変数が設定されていません")
 
-        # 接続文字列の構築（Managed Identity認証）
-        conn_str = (
-            f"Driver={{ODBC Driver 17 for SQL Server}};"
-            f"Server=tcp:{server},1433;"
-            f"Database={database};"
-            "Authentication=ActiveDirectoryMsi;"
-            "Encrypt=yes;TrustServerCertificate=no;"
-        )
+        env = os.getenv("AZURE_ENVIRONMENT", "local")  # "local" or "production"
+        is_local = env.lower() != "production"
 
-        logging.info(f"[DB接続] 接続文字列（masked）: Server={server}, Database={database}")
-        conn = pypyodbc.connect(conn_str, timeout=10)
+        if is_local:
+            # 🔐 ローカル用：ClientSecretCredential + pyodbc + アクセストークン
+            logging.info("[DB接続] ローカル環境（pyodbc + Entra認証トークン）")
 
+            tenant_id = os.getenv("TENANT_ID")
+            client_id = os.getenv("CLIENT_ID")
+            client_secret = os.getenv("CLIENT_SECRET")
+
+            if not all([tenant_id, client_id, client_secret]):
+                raise ValueError("TENANT_ID, CLIENT_ID, CLIENT_SECRET が未設定です")
+
+            credential = ClientSecretCredential(tenant_id, client_id, client_secret)
+            token = credential.get_token("https://database.windows.net/.default")
+
+            token_bytes = bytes(token.token, "utf-8")
+            exptoken = b''.join(bytes((b, 0)) for b in token_bytes)
+            access_token = struct.pack("=i", len(exptoken)) + exptoken
+
+            conn_str = (
+                f"Driver={{ODBC Driver 17 for SQL Server}};"
+                f"Server=tcp:{server},1433;"
+                f"Database={database};"
+                "Encrypt=yes;TrustServerCertificate=no;"
+                "Connection Timeout=30;"
+            )
+
+            conn = pyodbc.connect(conn_str, attrs_before={1256: access_token})
+        else:
+            # ☁️ 本番用：Managed Identity + pypyodbc + MSI認証
+            logging.info("[DB接続] Azure 環境（pypyodbc + MSI）")
+
+            conn_str = (
+                f"Driver={{ODBC Driver 17 for SQL Server}};"
+                f"Server=tcp:{server},1433;"
+                f"Database={database};"
+                "Authentication=ActiveDirectoryMsi;"
+                "Encrypt=yes;TrustServerCertificate=no;"
+            )
+            conn = pyodbc.connect(conn_str, timeout=10)
         logging.info("[DB接続] 成功")
         return conn
-
     except Exception as e:
         logging.error("[DB接続] エラー発生")
         logging.exception("詳細:")

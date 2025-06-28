@@ -1,6 +1,6 @@
 import logging
 import os
-import pypyodbc  # または pyodbc
+import pyodbc  # または pyodbc
 import traceback
 import azure.functions as func
 from azure.functions import FunctionApp
@@ -24,7 +24,7 @@ def test_db_connection(req: func.HttpRequest) -> func.HttpResponse:
             "Encrypt=yes;TrustServerCertificate=no;"
         )
 
-        conn = pypyodbc.connect(conn_str, timeout=10)
+        conn = pyodbc.connect(conn_str, timeout=10)
         logging.info("B: DB接続成功")
         
         cursor = conn.cursor()
