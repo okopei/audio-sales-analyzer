@@ -333,7 +333,7 @@ def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
 # 会話セグメント取得エンドポイント
 @app.function_name(name="GetConversationSegmentsByMeetingId")
 @app.route(route="conversation/segments/{meeting_id}", methods=["GET", "OPTIONS"])
-def get_conversation_segments(req: func.HttpRequest) -> func.HttpResponse:
+def get_conversation_segments_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
             return func.HttpResponse(status_code=204, headers={
@@ -393,9 +393,9 @@ def get_conversation_segments(req: func.HttpRequest) -> func.HttpResponse:
     
 
 # コメント一覧取得
-@app.function_name(name="GetComments")
+@app.function_name(name="GetCommentsBySegmentId")
 @app.route(route="comments/{segment_id}", methods=["GET", "OPTIONS"])
-def get_segment_comments(req: func.HttpRequest) -> func.HttpResponse:
+def get_comments_by_segment_id(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
             return func.HttpResponse(status_code=204, headers={
