@@ -48,6 +48,7 @@ interface Comment {
     reader_id: number
     read_datetime: string
   }>
+  isRead?: boolean
 }
 
 export default function Dashboard() {
@@ -126,11 +127,36 @@ export default function Dashboard() {
         throw new Error(data.message || 'コメントの取得に失敗しました')
       }
 
-      if (Array.isArray(data)) {
-        setComments(data)
-      } else {
+      if (!Array.isArray(data)) {
         throw new Error('コメント形式が不正です')
       }
+
+      // 🧠 各コメントに isRead を付加する
+      const commentsWithReadStatus = await Promise.all(data.map(async (comment: Comment) => {
+        try {
+          const readStatusRes = await fetch(
+            `${process.env.NEXT_PUBLIC_API_BASE_URL}/comment-read-status?userId=${user.user_id}&commentId=${comment.comment_id}`,
+            {
+              method: 'GET',
+              credentials: 'include'
+            }
+          )
+          const readStatus = await readStatusRes.json()
+          return {
+            ...comment,
+            isRead: readStatus?.isRead ?? false
+          }
+        } catch (e) {
+          console.warn("📛 既読ステータス取得失敗:", e)
+          return {
+            ...comment,
+            isRead: false
+          }
+        }
+      }))
+
+      console.log("🧾 コメント一覧 + isRead:", commentsWithReadStatus)
+      setComments(commentsWithReadStatus)
     } catch (error) {
       console.error('[コメント取得] エラー:', error)
       toast.error(error instanceof Error ? error.message : 'コメントの取得に失敗しました')
@@ -314,7 +340,7 @@ export default function Dashboard() {
               ) : (
                 <div className="space-y-4">
                   {comments.map((comment) => {
-                    const isRead = comment.readers?.some(reader => reader.reader_id === user?.user_id) ?? false
+                    const isRead = comment.isRead ?? comment.readers?.some(reader => reader.reader_id === user?.user_id) ?? false
                     const isOwnComment = comment.user_id === user?.user_id
 
                     return (
@@ -328,7 +354,19 @@ export default function Dashboard() {
                             className="flex-1"
                           >
                             <div>
-                              <div className="text-sm font-medium">{comment.user_name}</div>
+                              <div className="text-sm font-medium">
+                                {comment.user_name}
+                                {comment.isRead !== undefined && (
+                                  comment.isRead ? (
+                                    <Badge variant="secondary" className="ml-2">既読済み</Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="ml-2 text-red-500 border-red-300">未読</Badge>
+                                  )
+                                )}
+                                <span className="text-sm text-gray-500 ml-2">
+                                  {format(new Date(comment.inserted_datetime), 'yyyy/MM/dd HH:mm', { locale: ja })}
+                                </span>
+                              </div>
                               <div className="text-sm text-gray-500">
                                 {comment.client_company_name && `${comment.client_company_name} - `}
                                 {comment.client_contact_name || '顧客名なし'}
@@ -345,9 +383,6 @@ export default function Dashboard() {
                                 onRead={handleCommentRead}
                               />
                             )}
-                            <span className="text-sm text-gray-500">
-                              {format(new Date(comment.inserted_datetime), 'yyyy/MM/dd HH:mm', { locale: ja })}
-                            </span>
                           </div>
                         </div>
                       </div>

@@ -678,3 +678,69 @@ def get_basic_info_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
 
     except Exception as e:
         return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
+    
+@app.function_name(name="GetCommentReadStatus")
+@app.route(route="comment-read-status", methods=["GET", "OPTIONS"])
+def get_comment_read_status(req: func.HttpRequest) -> func.HttpResponse:
+    if req.method == "OPTIONS":
+        headers = {
+            "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        }
+        return func.HttpResponse(status_code=204, headers=headers)
+
+    try:
+        user_id = req.params.get("userId")
+        comment_id = req.params.get("commentId")
+
+        if not user_id or not comment_id:
+            return func.HttpResponse(
+                json.dumps({"error": "userId and commentId are required"}, ensure_ascii=False),
+                status_code=400,
+                mimetype="application/json",
+                headers={
+                    "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
+                    "Access-Control-Allow-Credentials": "true",
+                }
+            )
+
+        query = """
+            SELECT read_datetime 
+            FROM dbo.CommentReads 
+            WHERE reader_id = ? AND comment_id = ? 
+        """
+        result = execute_query(query, (user_id, comment_id))
+
+        if result:
+            response = {
+                "isRead": True,
+                "read_at": result[0]['read_datetime']
+            }
+        else:
+            response = {
+                "isRead": False
+            }
+
+        return func.HttpResponse(
+            json.dumps(response, ensure_ascii=False),
+            status_code=200,
+            mimetype="application/json",
+            headers={
+                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+
+    except Exception as e:
+        logging.exception("GetCommentReadStatus エラー:")
+        return func.HttpResponse(
+            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
+            status_code=500,
+            mimetype="application/json",
+            headers={
+                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
