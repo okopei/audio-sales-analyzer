@@ -66,21 +66,33 @@ export default function ManagerDashboard() {
 
   // コメントを取得する関数
   const fetchComments = async () => {
-    if (!user?.user_id) return
+    if (!user?.user_id) {
+      console.warn("⚠️ user_id が無効です:", user)
+      return
+    }
+
+    console.log("✅ fetchComments 実行: user_id =", user.user_id)
 
     setLoadingComments(true)
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/comments-latest?userId=${user.user_id}&isManager=true`)
-      if (!response.ok) throw new Error('コメントの取得に失敗しました')
-      
+      const url = `${process.env.NEXT_PUBLIC_API_BASE_URL}/comments-latest?userId=${user.user_id}&isManager=true`
+      console.log("🔍 リクエストURL:", url)
+
+      const response = await fetch(url)
+
+      console.log("📦 レスポンス status:", response.status)
       const data = await response.json()
-      if (data.success) {
-        setComments(data.comments)
+      console.log("📨 レスポンス JSON:", data)
+
+      if (!response.ok) throw new Error(data.message || 'コメントの取得に失敗しました')
+
+      if (Array.isArray(data)) {
+        setComments(data)
       } else {
-        throw new Error(data.message || 'コメントの取得に失敗しました')
+        throw new Error('コメント形式が不正です')
       }
     } catch (error) {
-      console.error('コメント取得エラー:', error)
+      console.error('❌ コメント取得エラー:', error)
       toast({
         title: 'エラー',
         description: error instanceof Error ? error.message : 'コメントの取得に失敗しました',

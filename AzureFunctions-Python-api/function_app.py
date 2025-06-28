@@ -185,10 +185,23 @@ def get_latest_comments(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse("userId is required", status_code=400)
 
         query = """
-            SELECT c.*
-            FROM Comments c
-            JOIN BasicInfo b ON c.meeting_id = b.meeting_id
+            SELECT 
+            c.comment_id,
+            c.segment_id,
+            c.meeting_id,
+            c.user_id,
+            c.content,
+            c.inserted_datetime,
+            c.updated_datetime,
+            u.user_name,
+            m.client_company_name,
+            m.client_contact_name
+            FROM dbo.Comments c
+            JOIN dbo.BasicInfo b ON c.meeting_id = b.meeting_id
+            JOIN dbo.Users u ON c.user_id = u.user_id
+            JOIN dbo.Meetings m ON c.meeting_id = m.meeting_id
             WHERE b.user_id = ?
+            AND c.deleted_datetime IS NULL
             ORDER BY c.inserted_datetime DESC
         """
 
