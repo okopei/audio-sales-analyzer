@@ -49,14 +49,18 @@ export function ReadButton({ commentId, userId, isRead, onRead }: ReadButtonProp
   }
 
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      disabled={isRead || isLoading}
-      onClick={handleRead}
-      className="text-xs text-muted-foreground hover:text-primary"
-    >
-      {isRead ? '既読済み' : '既読にする'}
-    </Button>
+    <>
+      {!isRead && (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={isLoading}
+          onClick={handleRead}
+          className="text-xs text-muted-foreground hover:text-primary"
+        >
+          {isLoading ? '処理中...' : '既読にする'}
+        </Button>
+      )}
+    </>
   )
 } 

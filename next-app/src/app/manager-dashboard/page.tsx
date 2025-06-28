@@ -30,6 +30,7 @@ interface Comment {
     reader_id: number
     read_datetime: string
   }>
+  isRead?: boolean
 }
 
 export default function ManagerDashboard() {
@@ -85,12 +86,34 @@ export default function ManagerDashboard() {
       console.log("📨 レスポンス JSON:", data)
 
       if (!response.ok) throw new Error(data.message || 'コメントの取得に失敗しました')
+      if (!Array.isArray(data)) throw new Error('コメント形式が不正です')
 
-      if (Array.isArray(data)) {
-        setComments(data)
-      } else {
-        throw new Error('コメント形式が不正です')
-      }
+      // 🧠 各コメントに isRead を付加する
+      const commentsWithReadStatus = await Promise.all(data.map(async (comment: Comment) => {
+        try {
+          const readStatusRes = await fetch(
+            `${process.env.NEXT_PUBLIC_API_BASE_URL}/comment-read-status?userId=${user.user_id}&commentId=${comment.comment_id}`, 
+            {
+              method: 'GET',
+              credentials: 'include'
+            }
+          )
+          const readStatus = await readStatusRes.json()
+          return {
+            ...comment,
+            isRead: readStatus?.isRead ?? false
+          }
+        } catch (e) {
+          console.warn("📛 既読ステータス取得失敗:", e)
+          return {
+            ...comment,
+            isRead: false
+          }
+        }
+      }))
+
+      console.log("🧾 コメント一覧 + isRead:", commentsWithReadStatus)
+      setComments(commentsWithReadStatus)
     } catch (error) {
       console.error('❌ コメント取得エラー:', error)
       toast({

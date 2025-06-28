@@ -48,15 +48,28 @@ export default function MeetingSearch() {
       setIsLoading(true)
       setError(null)
       
+      console.log("📡 API呼び出し開始:", params)
+      
       const response = await searchMeetings({
         ...params,
         userId: params?.userId || undefined
       })
       
+      console.log("📦 APIレスポンス:", {
+        responseType: Array.isArray(response) ? 'array' : typeof response,
+        responseLength: Array.isArray(response) ? response.length : 'N/A',
+        response: response
+      })
+      
       setMeetings(Array.isArray(response) ? response : [])
       
+      console.log("✅ フィルター実行完了:", {
+        params,
+        resultCount: Array.isArray(response) ? response.length : 0
+      })
+      
     } catch (err) {
-      console.error("会議データの取得に失敗:", err)
+      console.error("❌ 会議データの取得に失敗:", err)
       setError("データの取得に失敗しました")
       setMeetings([])
     } finally {
@@ -64,7 +77,13 @@ export default function MeetingSearch() {
     }
   }
 
-  const handleSearch = () => {
+  const handleSearch = async () => {
+    console.log("🔍 フィルター実行:", {
+      fromDate,
+      toDate,
+      selectedUserId
+    })
+    
     const params: MeetingSearchParams = {}
     if (selectedUserId && selectedUserId !== "all") {
       params.userId = selectedUserId
@@ -100,23 +119,18 @@ export default function MeetingSearch() {
           <div className="space-y-3 sm:space-y-4">
             <div className="space-y-1 sm:space-y-2">
               <label className="text-xs sm:text-sm font-medium">営業担当者</label>
-              <Select value={selectedUserId} onValueChange={setSelectedUserId}>
-                <SelectTrigger className="text-xs sm:text-sm truncate">
-                  <SelectValue placeholder="選択してください" />
-                </SelectTrigger>
-                <SelectContent>
-                  <ScrollArea className="h-60">
-                    <SelectItem key="all" value="all">全て</SelectItem>
-                    {users
-                      .filter((user) => user.user_id && user.user_name)
-                      .map((user) => (
-                        <SelectItem key={`user-${user.user_id}`} value={String(user.user_id)}>
-                          {user.user_name}
-                        </SelectItem>
-                      ))}
-                  </ScrollArea>
-                </SelectContent>
-              </Select>
+              <select
+                value={selectedUserId}
+                onChange={(e) => setSelectedUserId(e.target.value)}
+                className="border rounded px-3 py-2 text-sm w-full"
+              >
+                <option value="all">すべての営業担当</option>
+                {users.map((user) => (
+                  <option key={user.user_id} value={user.user_id}>
+                    {user.user_name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="space-y-1 sm:space-y-2">
@@ -181,29 +195,15 @@ export default function MeetingSearch() {
           <ScrollArea className="h-[300px] sm:h-[calc(50vh-100px)]">
             <div className="space-y-3 sm:space-y-4 pr-4">
               {meetings.map((meeting) => (
-                <Link
-                  key={meeting.meeting_id}
-                  href={`/feedback#${meeting.meeting_id}`}
-                  className="block border rounded-lg p-3 sm:p-4 hover:bg-slate-50 transition-colors cursor-pointer"
-                >
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <div className="font-medium text-sm sm:text-base">
-                        {meeting.client_company_name}
-                      </div>
-                      <div className="text-xs sm:text-sm text-gray-500">
-                        担当: {users.find(u => String(u.user_id) === String(meeting.user_id))?.user_name || "不明"}
-                      </div>
-                      <div className="text-xs sm:text-sm text-gray-500">
-                        連絡先: {meeting.client_contact_name}
-                      </div>
-                      <div className="text-xs sm:text-sm text-gray-500">
-                        状態: {meeting.status}
-                      </div>
-                    </div>
-                    <div className="text-xs sm:text-sm text-gray-500">
-                      {new Date(meeting.meeting_datetime).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}
-                    </div>
+                <Link href={`/feedback/${meeting.meeting_id}`} key={meeting.meeting_id}>
+                  <div className="border rounded p-4 sm:p-6 space-y-3 bg-slate-50 w-full max-w-full hover:bg-slate-100 transition-colors cursor-pointer">
+                    <p className="text-sm text-gray-800 font-medium">
+                      会議タイトル：{meeting.client_company_name}　日時:{" "}
+                      {new Date(meeting.meeting_datetime).toLocaleString("ja-JP")}　営業担当者：{users.find(u => String(u.user_id) === String(meeting.user_id))?.user_name || "不明"}
+                    </p>
+                    <p className="text-sm text-gray-700">
+                      顧客会社名: {meeting.client_company_name}　担当者様: {meeting.client_contact_name}
+                    </p>
                   </div>
                 </Link>
               ))}

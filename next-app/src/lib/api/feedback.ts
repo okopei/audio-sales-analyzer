@@ -6,34 +6,14 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:7
 
 // 会話セグメント取得API
 export const getConversationSegments = async (meetingId: string | number) => {
-  try {
-    const response = await fetch(`${API_BASE_URL}/conversation/segments/${meetingId}`)
-    
-    // レスポンスがエラーの場合は空配列を返す
-    if (!response.ok) {
-      console.error(`APIエラー: HTTP ${response.status}`)
-      return []
-    }
-    
-    // 空レスポンス対策
-    const text = await response.text()
-    if (!text) {
-      console.error('APIレスポンスが空です')
-      return []
-    }
-    
-    const data = JSON.parse(text)
-    
-    if (!data.success) {
-      throw new Error(data.message || 'セグメント取得に失敗しました')
-    }
-    
-    return data.segments || []
-  } catch (error) {
-    console.error(`会話セグメント取得エラー (meeting_id=${meetingId}):`, error)
-    // エラー時には空配列を返してUIが崩れないようにする
-    return []
+  const res = await fetch(`${API_BASE_URL}/conversation/segments/${meetingId}`)
+  const data = await res.json()
+
+  if (!data.success || !data.segments) {
+    throw new Error("会話セグメントの取得に失敗しました")
   }
+
+  return data.segments
 }
 
 // コメント取得API
