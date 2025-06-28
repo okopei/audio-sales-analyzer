@@ -579,21 +579,53 @@ def get_all_feedback(req: func.HttpRequest) -> func.HttpResponse:
 
 
 # GetAllMeetings（会議一覧取得）
-@app.function_name(name="GetAllMeetings")
+@app.function_name(name="SearchMeetings")
 @app.route(route="meetings", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def get_all_meetings(req: func.HttpRequest) -> func.HttpResponse:
     try:
-        query = """
-            SELECT * FROM dbo.Meetings
-            WHERE deleted_datetime IS NULL
-            ORDER BY meeting_datetime DESC
+        from_date = req.params.get("fromDate")
+        to_date = req.params.get("toDate")
+        user_id = req.params.get("userId")
+
+        base_query = """
+            SELECT m.*, u.user_name
+            FROM dbo.Meetings m
+            LEFT JOIN dbo.Users u ON m.user_id = u.user_id
+            WHERE m.deleted_datetime IS NULL
         """
-        result = execute_query(query)
-        return func.HttpResponse(json.dumps(result, ensure_ascii=False), mimetype="application/json", status_code=200)
+
+        conditions = []
+        params = []
+
+        if from_date:
+            conditions.append("m.meeting_datetime >= ?")
+            params.append(from_date)
+        if to_date:
+            conditions.append("m.meeting_datetime <= ?")
+            params.append(to_date)
+        if user_id and user_id.isdigit():
+            conditions.append("m.user_id = ?")
+            params.append(int(user_id))
+
+        if conditions:
+            base_query += " AND " + " AND ".join(conditions)
+
+        base_query += " ORDER BY m.meeting_datetime DESC"
+
+        result = execute_query(base_query, tuple(params))
+        return func.HttpResponse(
+            json.dumps(result, ensure_ascii=False, default=str),
+            mimetype="application/json",
+            status_code=200
+        )
 
     except Exception as e:
-        return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
-    
+        import logging
+        logging.exception("会議一覧取得エラー:")
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}, ensure_ascii=False),
+            status_code=500
+        )    
     # GetCommentsByMeetingId（会議単位のコメント一覧取得）
 @app.function_name(name="GetCommentsByMeetingId")
 @app.route(route="comments/by-meeting/{meeting_id}", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
@@ -644,7 +676,7 @@ def get_comments_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
 def get_all_users(req: func.HttpRequest) -> func.HttpResponse:
     try:
         query = """
-            SELECT user_name
+            SELECT user_id,user_name
             FROM dbo.Users
             WHERE deleted_datetime IS NULL
             ORDER BY user_name ASC
