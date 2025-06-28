@@ -638,3 +638,30 @@ def get_comments_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500,
             headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"}
         )
+
+@app.function_name(name="GetAllUsers")
+@app.route(route="users", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def get_all_users(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        query = """
+            SELECT user_name
+            FROM dbo.Users
+            WHERE deleted_datetime IS NULL
+            ORDER BY user_name ASC
+        """
+
+        result = execute_query(query)
+
+        return func.HttpResponse(
+            json.dumps(result, ensure_ascii=False, default=str),
+            mimetype="application/json",
+            status_code=200
+        )
+        
+    except Exception as e:
+        logging.exception("ユーザー一覧取得エラー:")
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500
+        )
