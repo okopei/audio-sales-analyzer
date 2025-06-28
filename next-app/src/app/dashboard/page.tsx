@@ -87,18 +87,15 @@ export default function Dashboard() {
         const userId = user.user_id
         console.log('API呼び出しに使用するuser_id:', userId)
         
-        const comments = await getLatestComments(userId)
-        console.log('取得したコメント一覧:', comments.map((comment: LatestComment) => ({
-          comment_id: comment.comment_id,
-          meeting_id: comment.meeting_id,
-          user_id: comment.user_id,
-          user_name: comment.user_name,
-          client_company_name: comment.client_company_name,
-          client_contact_name: comment.client_contact_name,
-          isRead: comment.isRead
-        })))
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/comments-latest?userId=${userId}`)
+        const data = await response.json()
+        console.log('APIレスポンスデータ:', data)
         
-        setLatestComments(comments)
+        if (Array.isArray(data)) {
+          setLatestComments(data)
+        } else {
+          throw new Error('コメント形式が不正です')
+        }
       } catch (error) {
         console.error('最新コメント取得エラー:', error)
         setLatestComments([])
@@ -129,10 +126,10 @@ export default function Dashboard() {
         throw new Error(data.message || 'コメントの取得に失敗しました')
       }
 
-      if (data.success) {
-        setComments(data.comments)
+      if (Array.isArray(data)) {
+        setComments(data)
       } else {
-        throw new Error(data.message || 'コメントの取得に失敗しました')
+        throw new Error('コメント形式が不正です')
       }
     } catch (error) {
       console.error('[コメント取得] エラー:', error)
