@@ -331,7 +331,7 @@ def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
         )
 
 # 会話セグメント取得エンドポイント
-@app.function_name(name="GetConversationSegments")
+@app.function_name(name="GetConversationSegmentsByMeetingId")
 @app.route(route="conversation/segments/{meeting_id}", methods=["GET", "OPTIONS"])
 def get_conversation_segments(req: func.HttpRequest) -> func.HttpResponse:
     try:
@@ -343,7 +343,22 @@ def get_conversation_segments(req: func.HttpRequest) -> func.HttpResponse:
                 "Access-Control-Allow-Headers": "Content-Type",
             })
 
-        meeting_id = req.route_params.get('meeting_id')
+        meeting_id_str = req.route_params.get('meeting_id')
+        try:
+            meeting_id = int(meeting_id_str)
+        except (TypeError, ValueError):
+            return func.HttpResponse(
+                json.dumps({"error": "invalid meeting_id"}, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=400,
+                headers={
+                    "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
+                    "Access-Control-Allow-Credentials": "true"
+                }
+            )
+
+        logging.info(f"[GetConversationSegments] meeting_id = {meeting_id}")
+
         query = """
             SELECT s.segment_id, s.user_id, s.speaker_id, s.meeting_id, s.content, 
                    s.file_name, s.file_path, s.file_size, s.duration_seconds, s.status, 
@@ -355,22 +370,25 @@ def get_conversation_segments(req: func.HttpRequest) -> func.HttpResponse:
         """
         segments = execute_query(query, (meeting_id,))
 
-        for segment in segments:
-            segment['inserted_datetime'] = segment['inserted_datetime'].isoformat()
-            segment['updated_datetime'] = segment['updated_datetime'].isoformat()
-
         return func.HttpResponse(
             json.dumps({"success": True, "segments": segments}, ensure_ascii=False),
             mimetype="application/json",
             status_code=200,
-            headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"}
+            headers={
+                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
+                "Access-Control-Allow-Credentials": "true"
+            }
         )
     except Exception as e:
+        logging.exception("GetConversationSegments エラー:")
         return func.HttpResponse(
             json.dumps({"error": str(e)}, ensure_ascii=False),
             mimetype="application/json",
             status_code=500,
-            headers={"Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app", "Access-Control-Allow-Credentials": "true"}
+            headers={
+                "Access-Control-Allow-Origin": "https://audio-sales-analyzer.vercel.app",
+                "Access-Control-Allow-Credentials": "true"
+            }
         )
     
 
@@ -620,7 +638,7 @@ def get_all_meetings(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     except Exception as e:
-        import logging
+
         logging.exception("会議一覧取得エラー:")
         return func.HttpResponse(
             json.dumps({"error": str(e)}, ensure_ascii=False),
