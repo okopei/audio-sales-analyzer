@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useEffect, useMemo } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { PlayIcon, PauseIcon } from '@heroicons/react/24/solid'
 
 interface AudioControllerProps {
@@ -13,53 +13,6 @@ export const AudioController: React.FC<AudioControllerProps> = ({ audioPath }) =
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [error, setError] = useState<string | null>(null)
-
-  // オーディオファイルのURLを構築する関数
-  const constructAudioUrl = (audioPath: string): string => {
-    if (!audioPath) {
-      throw new Error('Invalid audio path: path is empty')
-    }
-
-    const storageAccountName = process.env.NEXT_PUBLIC_AZURE_STORAGE_ACCOUNT_NAME
-    const containerName = process.env.NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME
-    const sasToken = process.env.NEXT_PUBLIC_AZURE_STORAGE_SAS_TOKEN
-
-    if (!storageAccountName || !containerName || !sasToken) {
-      throw new Error('Missing required environment variables for Azure Storage')
-    }
-
-    // パスの正規化
-    const normalizedPath = audioPath
-      .replace(/^\/+/, '') // 先頭のスラッシュを削除
-      .replace(/\/+/g, '/') // 連続するスラッシュを1つに
-      .replace(new RegExp(`^${containerName}/`, 'i'), '') // コンテナ名が重複している場合は削除
-
-    // URLの構築
-    const baseUrl = `https://${storageAccountName}.blob.core.windows.net`
-    const containerUrl = `${baseUrl}/${containerName}`
-    const blobUrl = `${containerUrl}/${normalizedPath}`
-
-    // SASトークンの処理
-    const normalizedSasToken = sasToken.startsWith('?') ? sasToken : `?${sasToken}`
-
-    const finalUrl = `${blobUrl}${normalizedSasToken}`
-
-    return finalUrl
-  }
-
-  // オーディオファイルのURLを構築
-  const audioUrl = useMemo(() => {
-    try {
-      return constructAudioUrl(audioPath)
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to construct audio URL'
-      if (process.env.NODE_ENV === 'development') {
-        console.error('Audio URL construction error:', error)
-      }
-      setError(errorMessage)
-      return ''
-    }
-  }, [audioPath])
 
   useEffect(() => {
     const audio = audioRef.current
@@ -142,7 +95,7 @@ export const AudioController: React.FC<AudioControllerProps> = ({ audioPath }) =
       </div>
       <audio
         ref={audioRef}
-        src={audioUrl}
+        src={audioPath}
         onLoadedMetadata={() => {
           if (audioRef.current) {
             setDuration(audioRef.current.duration)

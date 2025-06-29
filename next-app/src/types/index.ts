@@ -6,6 +6,7 @@ export interface ConversationSegment {
   content: string
   file_name: string
   file_path: string
+  audio_path?: string
   file_size: number
   start_time: number
   end_time: number

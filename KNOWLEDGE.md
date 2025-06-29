@@ -1705,3 +1705,140 @@ Speaker2: お願いします。(17.2)
 - `function_app.py`: ConversationSegment挿入処理の修正
 
 ## データベース
+
+### Azure Blob Storage SASトークン付きURL生成機能
+
+#### 実装概要
+プライベートコンテナに設定されたAzure Blob Storageの音声ファイルに、フロントエンドから直接アクセスできるようにSASトークン付きURLを生成する機能を実装。
+
+#### 修正内容
+
+##### 1. バックエンド（Azure Functions Python API）
+**ファイル**: `AzureFunctions-Python-api/function_app.py`
+
+**追加したインポート**:
+```python
+from azure.storage.blob import generate_blob_sas, BlobSasPermissions
+from datetime import datetime, timedelta
+```
+
+**追加した関数**:
+```python
+def generate_sas_url(container_name: str, blob_name: str) -> str:
+    """
+    Blob StorageのSASトークン付きURLを生成する
+    
+    Args:
+        container_name (str): コンテナ名
+        blob_name (str): ブロブ名（ファイルパス）
+        
+    Returns:
+        str: SASトークン付きURL
+    """
+    account_name = "audiosalesanalyzeraudio"
+    account_key = os.environ.get("AZURE_STORAGE_KEY")
+
+    if not account_key:
+        raise Exception("AZURE_STORAGE_KEY is not set")
+
+    sas_token = generate_blob_sas(
+        account_name=account_name,
+        container_name=container_name,
+        blob_name=blob_name,
+        account_key=account_key,
+        permission=BlobSasPermissions(read=True),
+        expiry=datetime.utcnow() + timedelta(hours=1)
+    )
+
+    return f"https://{account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
+```
+
+**修正した関数**: `get_conversation_segments_by_meeting_id`
+- データベースから取得したセグメントに対して、各セグメントの`file_path`を使用してSASトークン付きURLを生成
+- 生成したURLを`audio_path`フィールドとして追加
+
+```python
+# 各セグメントに対して SAS付きURLを生成して追加
+for segment in segments:
+    file_path = segment.get("file_path")
+    if file_path:
+        segment["audio_path"] = generate_sas_url("moc-audio", file_path)
+    else:
+        segment["audio_path"] = ""
+```
+
+**依存関係追加**: `requirements.txt`
+```
+azure-storage-blob
+```
+
+##### 2. フロントエンド（Next.js）
+
+**型定義修正**: `next-app/src/types/index.ts`
+```typescript
+export interface ConversationSegment {
+  // ... existing fields ...
+  audio_path?: string  // SASトークン付きURL
+  // ... existing fields ...
+}
+```
+
+**コンポーネント修正**:
+- `AudioSegmentPlayer.tsx`: 環境変数からURL構築する処理を削除し、`audioPath`を直接使用
+- `AudioController.tsx`: 同様に環境変数からURL構築する処理を削除
+- `ChatMessage.tsx`: `segment.audio_path`を使用するように修正
+- `feedback/[meeting_id]/page.tsx`: `segment.audio_path`を使用するように修正
+
+### APIレスポンス例
+```json
+{
+  "success": true,
+  "segments": [
+    {
+      "segment_id": 1,
+      "file_path": "meeting_88_user_34_2025-05-21T07-18-44-213.wav",
+      "audio_path": "https://audiosalesanalyzeraudio.blob.core.windows.net/moc-audio/meeting_88_user_34_2025-05-21T07-18-44-213.wav?<SAS_TOKEN>",
+      "content": "こんにちは、よろしくお願いします。",
+      "speaker_name": "営業担当",
+      "speaker_role": "Sale",
+      "start_time": 0.0,
+      "end_time": 3.5,
+      "duration_seconds": 3,
+      "status": "completed",
+      "inserted_datetime": "2025-01-21T07:18:44.213Z",
+      "updated_datetime": "2025-01-21T07:18:44.213Z"
+    }
+  ]
+}
+```
+
+### 環境変数設定
+**Azure App Settings**:
+- `AZURE_STORAGE_KEY`: Azure Blob Storageのアカウントキー
+
+**local.settings.json**:
+```json
+{
+  "Values": {
+    "AZURE_STORAGE_KEY": "your-storage-account-key"
+  }
+}
+```
+
+### セキュリティ考慮事項
+1. **SASトークンの有効期限**: 1時間に設定（必要に応じて調整可能）
+2. **権限**: 読み取り専用（`BlobSasPermissions(read=True)`）
+3. **アカウントキー**: 環境変数で管理し、コードにハードコーディングしない
+4. **コンテナ**: プライベートコンテナを使用し、SASトークンでのみアクセス可能
+
+### 利点
+1. **セキュリティ**: プライベートコンテナを維持しながら、一時的なアクセスを提供
+2. **パフォーマンス**: フロントエンドで直接Blob Storageにアクセス可能
+3. **スケーラビリティ**: サーバーを経由せずに音声ファイルを配信
+4. **コスト効率**: サーバーの帯域幅を使用しない
+
+### 注意点
+1. **SASトークンの有効期限管理**: 1時間後に再取得が必要
+2. **エラーハンドリング**: `AZURE_STORAGE_KEY`が未設定の場合の適切なエラー処理
+3. **ファイルパスの存在確認**: `file_path`が空の場合の処理
+4. **フロントエンドの型安全性**: `audio_path`がオプショナルフィールドとして定義
