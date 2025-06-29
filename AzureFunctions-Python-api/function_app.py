@@ -355,7 +355,7 @@ def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
 
 # 会話セグメント取得エンドポイント
 @app.function_name(name="GetConversationSegmentsByMeetingId")
-@app.route(route="conversation/segments/{meeting_id}", methods=["GET", "OPTIONS"])
+@app.route(route="conversation/segments/{meeting_id}", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def get_conversation_segments_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
@@ -403,7 +403,7 @@ def get_conversation_segments_by_meeting_id(req: func.HttpRequest) -> func.HttpR
 
 # コメント一覧取得
 @app.function_name(name="GetCommentsBySegmentId")
-@app.route(route="comments/{segment_id}", methods=["GET", "OPTIONS"])
+@app.route(route="comments/{segment_id}", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def get_comments_by_segment_id(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
@@ -438,7 +438,7 @@ def get_comments_by_segment_id(req: func.HttpRequest) -> func.HttpResponse:
 
 # コメント追加
 @app.function_name(name="AddComment")
-@app.route(route="comments", methods=["POST", "OPTIONS"])
+@app.route(route="comments", methods=["POST", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def create_comment(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
@@ -465,7 +465,7 @@ def create_comment(req: func.HttpRequest) -> func.HttpResponse:
 
 # コメント既読
 @app.function_name(name="MarkCommentAsRead")
-@app.route(route="comments/read", methods=["POST", "OPTIONS"])
+@app.route(route="comments/read", methods=["POST", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
@@ -489,7 +489,7 @@ def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
 
 # コメント削除（論理）
 @app.function_name(name="DeleteComment")
-@app.route(route="comments/{comment_id}", methods=["DELETE", "OPTIONS"])
+@app.route(route="comments/{comment_id}", methods=["DELETE", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def delete_comment(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
