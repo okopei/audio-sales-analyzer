@@ -7,14 +7,12 @@ interface AudioSegmentPlayerProps {
   segmentId: number
   audioPath: string
   startTime?: number
-  endTime?: number
 }
 
 export const AudioSegmentPlayer: React.FC<AudioSegmentPlayerProps> = ({
   segmentId,
   audioPath,
   startTime,
-  endTime,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -84,30 +82,6 @@ export const AudioSegmentPlayer: React.FC<AudioSegmentPlayerProps> = ({
       return ''
     }
   }, [audioPath])
-
-  useEffect(() => {
-    if (!audioRef.current) return
-    
-    if (startTime !== undefined) {
-      audioRef.current.currentTime = startTime
-    }
-    
-    const handleTimeUpdate = () => {
-      if (!audioRef.current) return
-      
-      if (endTime !== undefined && audioRef.current.currentTime >= endTime) {
-        audioRef.current.pause()
-        setIsPlaying(false)
-      }
-    }
-
-    audioRef.current.addEventListener('timeupdate', handleTimeUpdate)
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.removeEventListener('timeupdate', handleTimeUpdate)
-      }
-    }
-  }, [startTime, endTime])
 
   // startTimeの値を検証して変換する関数
   const validateStartTime = (value: unknown): number => {
