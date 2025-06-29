@@ -9,6 +9,7 @@ import { useAuth } from '@/hooks/useAuth'
 import ChatMessage from '@/components/ChatMessage'
 import AudioSegmentPlayer from '@/components/AudioSegmentPlayer'
 import { CommentList } from '@/components/feedback/comment-list'
+import AudioController from '@/components/AudioController'
 
 interface Speaker {
   speaker_id: number
@@ -314,6 +315,7 @@ export default function FeedbackPage() {
                 background-color: #94a3b8;
               }
             `}</style>
+            
             <div className="space-y-3 max-h-[calc(100vh-200px)] overflow-y-auto overflow-x-hidden custom-scrollbar">
               {!segments.length ? (
                 <div className="text-center py-8">
@@ -353,7 +355,6 @@ export default function FeedbackPage() {
                             <AudioSegmentPlayer
                               segmentId={segment.segment_id}
                               startTime={segment.start_time}
-                              endTime={segment.end_time}
                               audioPath={segment.file_path}
                             />
                             <button 
@@ -422,6 +423,13 @@ export default function FeedbackPage() {
                 </div>
               )}
             </div>
+            
+            {/* 全体音声再生コントローラー */}
+            {segments.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                <AudioController audioPath={segments[0].file_path} />
+              </div>
+            )}
           </div>
         </div>
       )}
