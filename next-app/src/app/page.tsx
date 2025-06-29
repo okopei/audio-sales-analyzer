@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import dynamic from 'next/dynamic'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -12,7 +12,7 @@ const TestNavigation = dynamic(() => import('@/components/TestNavigation'), {
   ssr: false
 })
 
-export default function LoginPage() {
+function LoginPageContents() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
@@ -101,5 +101,13 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#1F1F1F] flex items-center justify-center text-white">Loading...</div>}>
+      <LoginPageContents />
+    </Suspense>
   )
 }
