@@ -674,8 +674,8 @@ def get_all_users(req: func.HttpRequest) -> func.HttpResponse:
         )
 
 # 会議基本情報取得Add commentMore actions
-@app.function_name(name="GetBasicInfoByMeetingId", auth_level=func.AuthLevel.ANONYMOUS)
-@app.route(route="basicinfo/{meeting_id}", methods=["GET", "OPTIONS"])
+@app.function_name(name="GetBasicInfoByMeetingId")
+@app.route(route="basicinfo/{meeting_id}", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def get_basic_info_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
     try:
         if req.method == "OPTIONS":
