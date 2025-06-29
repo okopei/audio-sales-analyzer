@@ -8,6 +8,7 @@ import json
 from typing import Optional, Dict, List, Any
 from azure.identity import DefaultAzureCredential, ClientSecretCredential
 import struct
+from urllib.parse import urlparse, parse_qs
 
 
 app = FunctionApp()
@@ -197,7 +198,9 @@ def get_latest_comments(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
 
     try:
-        user_id = req.params.get("userId")
+        query_params = parse_qs(urlparse(req.url).query)
+        user_id = query_params.get("userId", [None])[0]
+        
         if not user_id:
             return func.HttpResponse("userId is required", status_code=400)
 
@@ -242,7 +245,9 @@ def get_members_meetings(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
 
     try:
-        manager_id = req.params.get("manager_id")
+        query_params = parse_qs(urlparse(req.url).query)
+        manager_id = query_params.get("manager_id", [None])[0]
+        
         if not manager_id:
             return func.HttpResponse("manager_id is required", status_code=400)
 
@@ -550,9 +555,10 @@ def get_all_meetings(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
 
     try:
-        from_date = req.params.get("fromDate")
-        to_date = req.params.get("toDate")
-        user_id = req.params.get("userId")
+        query_params = parse_qs(urlparse(req.url).query)
+        from_date = query_params.get("fromDate", [None])[0]
+        to_date = query_params.get("toDate", [None])[0]
+        user_id = query_params.get("userId", [None])[0]
 
         base_query = """
             SELECT m.*, u.user_name
@@ -694,8 +700,9 @@ def get_basic_info_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
     
 @app.function_name(name="GetCommentReadStatus")
-@app.route(route="comment-read-status", methods=["GET", "OPTIONS"])
+@app.route(route="comment-read-status", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def get_comment_read_status(req: func.HttpRequest) -> func.HttpResponse:
+    logging.warning("🚨 GetCommentReadStatus IS RUNNING NOW")
     logging.info("🚀 GetCommentReadStatus 開始")
     logging.info(f"🔍 リクエストクエリ: {req.url}")
     
@@ -703,8 +710,9 @@ def get_comment_read_status(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
 
     try:
-        user_id = req.params.get("userId")
-        comment_id = req.params.get("commentId")
+        query_params = parse_qs(urlparse(req.url).query)
+        user_id = query_params.get("userId", [None])[0]
+        comment_id = query_params.get("commentId", [None])[0]
         
         logging.info(f"👤 user_id: {user_id}, 💬 comment_id: {comment_id}")
 
@@ -751,8 +759,8 @@ def get_comment_read_status(req: func.HttpRequest) -> func.HttpResponse:
     except Exception as e:
         logging.exception("❌ GetCommentReadStatus 処理中に例外発生:")
         return func.HttpResponse(
-            json.dumps({"error": f"Internal server error: {str(e)}", "debug": f"user_id: {user_id}, comment_id: {comment_id}"}, ensure_ascii=False),
-            status_code=500,
-            mimetype="application/json",
-            headers=build_cors_headers("GET, OPTIONS")
+            json.dumps({"error": str(e), "debug": f"userId={user_id}, commentId={comment_id}"}, ensure_ascii=False),
+            status_code=200,  # ← 本番調査用に一時的に200返す
+            headers=build_cors_headers("GET, OPTIONS"),
+            mimetype="application/json"
         )
