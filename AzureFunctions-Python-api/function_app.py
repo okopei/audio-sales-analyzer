@@ -9,6 +9,8 @@ from typing import Optional, Dict, List, Any
 from azure.identity import DefaultAzureCredential, ClientSecretCredential
 import struct
 from urllib.parse import urlparse, parse_qs
+from azure.storage.blob import generate_blob_sas, BlobSasPermissions
+from datetime import datetime, timedelta
 
 
 app = FunctionApp()
@@ -353,18 +355,63 @@ def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
             headers=build_cors_headers("POST, OPTIONS")
         )
 
+def generate_sas_url(container_name: str, blob_name: str) -> str:
+    account_name = "audiosalesanalyzeraudio"
+    account_key = os.environ.get("AZURE_STORAGE_KEY")
+    print('=== generate_sas_url START ===')
+    print('account_key:', account_key)
+    print('container_name:', container_name)
+    print('blob_name:', blob_name)
+
+    if not account_key:
+        raise Exception("AZURE_STORAGE_KEY is not set")
+
+    # file_pathからコンテナ名とblob名を抽出
+    # 例: "moc-audio/meeting_88_user_34_2025-05-21T07-18-44-213.wav"
+    if "/" in blob_name:
+        parts = blob_name.split("/", 1)
+        actual_container = parts[0]
+        actual_blob_name = parts[1]
+        print(f'Extracted container: {actual_container}, blob: {actual_blob_name}')
+    else:
+        actual_container = container_name
+        actual_blob_name = blob_name
+        print(f'Using provided container: {actual_container}, blob: {actual_blob_name}')
+
+    try:
+        sas_token = generate_blob_sas(
+            account_name=account_name,
+            container_name=actual_container,
+            blob_name=actual_blob_name,
+            account_key=account_key,
+            permission=BlobSasPermissions(read=True),
+            expiry=datetime.utcnow() + timedelta(hours=1)
+        )
+        print('sas_token generated successfully')
+        print('=== generate_sas_url SUCCESS ===')
+    except Exception as e:
+        print('=== generate_sas_url ERROR ===')
+        print('generate_blob_sas error:', e)
+        raise
+
+    return f"https://{account_name}.blob.core.windows.net/{actual_container}/{actual_blob_name}?{sas_token}"
+
 # 会話セグメント取得エンドポイント
 @app.function_name(name="GetConversationSegmentsByMeetingId")
 @app.route(route="conversation/segments/{meeting_id}", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def get_conversation_segments_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
+    print("=== GetConversationSegmentsByMeetingId START ===")
     try:
         if req.method == "OPTIONS":
+            print("OPTIONS request - returning 204")
             return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
 
         meeting_id_str = req.route_params.get('meeting_id')
+        print(f"meeting_id_str: {meeting_id_str}")
         try:
             meeting_id = int(meeting_id_str)
         except (TypeError, ValueError):
+            print(f"Invalid meeting_id: {meeting_id_str}")
             return func.HttpResponse(
                 json.dumps({"error": "invalid meeting_id"}, ensure_ascii=False),
                 mimetype="application/json",
@@ -372,7 +419,7 @@ def get_conversation_segments_by_meeting_id(req: func.HttpRequest) -> func.HttpR
                 headers=build_cors_headers("GET, OPTIONS")
             )
 
-        logging.info(f"[GetConversationSegments] meeting_id = {meeting_id}")
+        print(f"[GetConversationSegments] meeting_id = {meeting_id}")
 
         query = """
             SELECT s.segment_id, s.user_id, s.speaker_id, s.meeting_id, s.content, 
@@ -383,8 +430,19 @@ def get_conversation_segments_by_meeting_id(req: func.HttpRequest) -> func.HttpR
             LEFT JOIN dbo.Speakers sp ON s.speaker_id = sp.speaker_id 
             WHERE s.deleted_datetime IS NULL AND s.meeting_id = ?
         """
+        print("Executing query...")
         segments = execute_query(query, (meeting_id,))
+        print(f"Query result: {len(segments)} segments found")
 
+        # 各セグメントに対して SAS付きURLを生成して追加
+        for segment in segments:
+            file_path = segment.get("file_path")
+            if file_path:
+                segment["audio_path"] = generate_sas_url("", file_path)
+            else:
+                segment["audio_path"] = ""
+
+        print("=== GetConversationSegmentsByMeetingId SUCCESS ===")
         return func.HttpResponse(
             json.dumps({"success": True, "segments": segments}, ensure_ascii=False),
             mimetype="application/json",
@@ -392,6 +450,7 @@ def get_conversation_segments_by_meeting_id(req: func.HttpRequest) -> func.HttpR
             headers=build_cors_headers("GET, OPTIONS")
         )
     except Exception as e:
+        print(f"=== GetConversationSegmentsByMeetingId ERROR: {e} ===")
         logging.exception("GetConversationSegments エラー:")
         return func.HttpResponse(
             json.dumps({"error": str(e)}, ensure_ascii=False),

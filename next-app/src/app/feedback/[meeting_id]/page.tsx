@@ -34,6 +34,7 @@ interface ConversationSegment {
   speaker_role?: string
   start_time: number
   end_time: number
+  audio_path?: string
 }
 
 interface CommentReader {
@@ -369,7 +370,7 @@ export default function FeedbackPage() {
                             <AudioSegmentPlayer
                               segmentId={segment.segment_id}
                               startTime={segment.start_time}
-                              audioPath={segment.file_path}
+                              audioPath={segment.audio_path || ''}
                             />
                             <button 
                               className={`flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600 transition-colors ${
@@ -441,7 +442,7 @@ export default function FeedbackPage() {
             {/* 全体音声再生コントローラー */}
             {segments.length > 0 && (
               <div className="mt-2 pt-2 border-t border-gray-200">
-                <AudioController audioPath={segments[0].file_path} />
+                <AudioController audioPath={segments[0].audio_path || ''} />
               </div>
             )}
           </div>

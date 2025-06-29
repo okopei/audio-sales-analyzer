@@ -1,7 +1,7 @@
 'use client'
 
 import { PlayIcon, StopIcon } from '@heroicons/react/24/solid'
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
 interface AudioSegmentPlayerProps {
   segmentId: number
@@ -21,67 +21,6 @@ export const AudioSegmentPlayer: React.FC<AudioSegmentPlayerProps> = ({
   const [isLoaded, setIsLoaded] = useState(false)
   const audioRef = useRef<HTMLAudioElement>(null)
   const validStartTimeRef = useRef<number | null>(null)
-
-  // 環境変数のチェックは開発環境でのみ実行
-  useEffect(() => {
-    if (process.env.NODE_ENV === 'development') {
-      const missingEnvVars = []
-      if (!process.env.NEXT_PUBLIC_AZURE_STORAGE_ACCOUNT_NAME) missingEnvVars.push('ACCOUNT_NAME')
-      if (!process.env.NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME) missingEnvVars.push('CONTAINER_NAME')
-      if (!process.env.NEXT_PUBLIC_AZURE_STORAGE_SAS_TOKEN) missingEnvVars.push('SAS_TOKEN')
-      
-      if (missingEnvVars.length > 0) {
-        console.warn('Missing environment variables:', missingEnvVars.join(', '))
-      }
-    }
-  }, [])
-
-  // オーディオファイルのURLを構築する関数
-  const constructAudioUrl = (audioPath: string): string => {
-    if (!audioPath) {
-      throw new Error('Invalid audio path: path is empty')
-    }
-
-    const storageAccountName = process.env.NEXT_PUBLIC_AZURE_STORAGE_ACCOUNT_NAME
-    const containerName = process.env.NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME
-    const sasToken = process.env.NEXT_PUBLIC_AZURE_STORAGE_SAS_TOKEN
-
-    if (!storageAccountName || !containerName || !sasToken) {
-      throw new Error('Missing required environment variables for Azure Storage')
-    }
-
-    // パスの正規化
-    const normalizedPath = audioPath
-      .replace(/^\/+/, '') // 先頭のスラッシュを削除
-      .replace(/\/+/g, '/') // 連続するスラッシュを1つに
-      .replace(new RegExp(`^${containerName}/`, 'i'), '') // コンテナ名が重複している場合は削除
-
-    // URLの構築
-    const baseUrl = `https://${storageAccountName}.blob.core.windows.net`
-    const containerUrl = `${baseUrl}/${containerName}`
-    const blobUrl = `${containerUrl}/${normalizedPath}`
-
-    // SASトークンの処理
-    const normalizedSasToken = sasToken.startsWith('?') ? sasToken : `?${sasToken}`
-
-    const finalUrl = `${blobUrl}${normalizedSasToken}`
-
-    return finalUrl
-  }
-
-  // オーディオファイルのURLを構築
-  const audioUrl = useMemo(() => {
-    try {
-      return constructAudioUrl(audioPath)
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to construct audio URL'
-      if (process.env.NODE_ENV === 'development') {
-        console.error('Audio URL construction error:', error)
-      }
-      setError(errorMessage)
-      return ''
-    }
-  }, [audioPath])
 
   // startTimeの値を検証して変換する関数
   const validateStartTime = (value: unknown): number => {
@@ -183,7 +122,7 @@ export const AudioSegmentPlayer: React.FC<AudioSegmentPlayerProps> = ({
       </button>
       <audio
         ref={audioRef}
-        src={audioUrl}
+        src={audioPath}
         onLoadedMetadata={handleLoadedMetadata}
         onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
         onError={(e) => {
