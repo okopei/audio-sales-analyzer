@@ -18,11 +18,7 @@ const ChatMessage = ({ segment }: ChatMessageProps) => {
         <AudioSegmentPlayer
           segmentId={segment.segment_id}
           startTime={segment.start_time}
-<<<<<<< HEAD
-          audioPath={segment.file_path}
-=======
           audioPath={segment.audio_path || ''}
->>>>>>> develop
         />
       </div>
 
