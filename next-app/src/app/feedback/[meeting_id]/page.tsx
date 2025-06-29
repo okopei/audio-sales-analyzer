@@ -324,6 +324,18 @@ export default function FeedbackPage() {
               ) : (
                 <div className="flex flex-col gap-3">
                   {segments.map(segment => {
+                    // サマリ表示（user_id === 0）
+                    if (segment.user_id === 0) {
+                      return (
+                        <div key={segment.segment_id} className="my-4 text-center">
+                          <div className="text-sm text-gray-700 bg-slate-50 rounded-md px-4 py-2 whitespace-pre-wrap leading-relaxed">
+                            ──────────{segment.content}──────────
+                          </div>
+                        </div>
+                      )
+                    }
+
+                    // 通常のふきだし表示（user_id !== 0）
                     const isCustomer = segment.speaker_role === 'Cust'
                     const isSales = segment.speaker_role === 'Sale'
                     const speakerName = segment.speaker_name || (isCustomer ? 'お客様' : '営業担当')
@@ -435,4 +447,4 @@ export default function FeedbackPage() {
       )}
     </div>
   )
-} 
+}
