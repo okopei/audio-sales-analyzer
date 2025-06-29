@@ -255,26 +255,28 @@ export default function FeedbackPage() {
     <div className="container mx-auto px-4 py-6 max-w-3xl">
       {meeting && (
         <div className="border border-gray-200 rounded-xl bg-slate-50 shadow-md overflow-hidden">
-          <div className="p-4 border-b border-gray-200 bg-white">
-            <div className="flex items-center gap-4">
+          <div className="p-3 border-b border-gray-200 bg-white">
+            <div className="flex items-center gap-3">
               <Link 
                 href="/dashboard" 
                 className="text-gray-600 hover:text-primary transition-colors"
                 title="ダッシュボードに戻る"
               >
-                <ArrowLeft className="h-5 w-5" />
+                <ArrowLeft className="h-4 w-4" />
               </Link>
               <div>
-                <h1 className="text-lg font-bold">商談：{meeting.client_company_name} 様</h1>
-                <p className="text-sm text-gray-600">
-                  {new Date(meeting.meeting_datetime).toLocaleDateString('ja-JP', { 
-                    year: 'numeric', 
-                    month: '2-digit', 
-                    day: '2-digit',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
-                </p>
+                <h1 className="text-base font-bold">
+                  商談：{meeting.client_company_name} 様
+                  <span className="text-xs text-gray-600 font-normal ml-2">
+                    {new Date(meeting.meeting_datetime).toLocaleDateString('ja-JP', { 
+                      year: 'numeric', 
+                      month: '2-digit', 
+                      day: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </span>
+                </h1>
               </div>
             </div>
           </div>
@@ -327,8 +329,8 @@ export default function FeedbackPage() {
                     // サマリ表示（user_id === 0）
                     if (segment.user_id === 0) {
                       return (
-                        <div key={segment.segment_id} className="my-4 text-center">
-                          <div className="text-sm text-gray-700 bg-slate-50 rounded-md px-4 py-2 whitespace-pre-wrap leading-relaxed">
+                        <div key={segment.segment_id} className="my-1 text-center">
+                          <div className="text-sm text-gray-700 bg-slate-50 rounded px-2 py-0.5 whitespace-pre-wrap leading-tight">
                             ──────────{segment.content}──────────
                           </div>
                         </div>
@@ -346,12 +348,12 @@ export default function FeedbackPage() {
                       <div key={segment.segment_id} className={`flex ${isCustomer ? 'justify-start' : 'justify-end'}`}>
                         <div className={`max-w-[75%] flex flex-col ${isCustomer ? 'items-start' : 'items-end'} break-words`}>
                           {/* メッセージ本体 */}
-                          <div className={`relative px-4 py-2 rounded-2xl shadow-lg w-full ${
+                          <div className={`relative px-3 py-1.5 rounded-2xl shadow-lg w-full ${
                             isCustomer 
                               ? 'bg-blue-100 rounded-tl-none chat-bubble-left' 
                               : 'bg-green-100 rounded-tr-none chat-bubble-right'
                           }`}>
-                            <div className={`flex items-center gap-2 mb-1 ${
+                            <div className={`flex items-center gap-2 mb-0.5 ${
                               isCustomer ? 'justify-start' : 'justify-end'
                             }`}>
                               <div className="font-medium text-sm">{speakerName}</div>
@@ -359,11 +361,11 @@ export default function FeedbackPage() {
                                 {segment.inserted_datetime && formatTime(segment.inserted_datetime)}
                               </span>
                             </div>
-                            <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{displayContent}</p>
+                            <p className="text-sm text-gray-800 whitespace-pre-wrap leading-tight">{displayContent}</p>
                           </div>
 
                           {/* コントロール部分 */}
-                          <div className={`flex items-center gap-2 mt-1 ${isCustomer ? 'justify-start' : 'justify-end'}`}>
+                          <div className={`flex items-center gap-2 mt-0.5 ${isCustomer ? 'justify-start' : 'justify-end'}`}>
                             <AudioSegmentPlayer
                               segmentId={segment.segment_id}
                               startTime={segment.start_time}
@@ -381,7 +383,7 @@ export default function FeedbackPage() {
                           </div>
 
                           {/* コメント一覧と入力フォーム */}
-                          <div id={`comments-list-${segment.segment_id}`} className="mt-2 hidden w-full">
+                          <div id={`comments-list-${segment.segment_id}`} className="mt-1 hidden w-full">
                             {comments[segment.segment_id]?.length > 0 ? (
                               <CommentList
                                 comments={comments[segment.segment_id]}
@@ -404,13 +406,13 @@ export default function FeedbackPage() {
                                 }}
                                 onDeleteComment={(commentId) => handleDeleteComment(commentId, segment.segment_id)}
                               />
-                            ) : <div className="text-sm text-gray-500 mb-3">まだコメントはありません</div>}
+                            ) : <div className="text-sm text-gray-500 mb-2">まだコメントはありません</div>}
                             
                             {/* コメント入力フォーム */}
                             <div className="flex gap-2">
                               <input
                                 type="text"
-                                className="flex-1 px-3 py-1 border rounded-md text-sm"
+                                className="flex-1 px-2 py-1 border rounded-md text-sm"
                                 placeholder="コメントを入力..."
                                 value={newComments[segment.segment_id] || ''}
                                 onChange={(e) => handleCommentChange(segment.segment_id, e.target.value)}
@@ -419,7 +421,7 @@ export default function FeedbackPage() {
                               />
                               <button
                                 disabled={submitting}
-                                className={`px-3 py-1 rounded-md text-sm transition-colors
+                                className={`px-2 py-1 rounded-md text-sm transition-colors
                                   ${submitting ? 'bg-gray-300 cursor-not-allowed' : 'bg-primary text-white hover:bg-primary/90'}
                                 `}
                                 onClick={() => handleAddComment(segment.segment_id)}
@@ -438,7 +440,7 @@ export default function FeedbackPage() {
             
             {/* 全体音声再生コントローラー */}
             {segments.length > 0 && (
-              <div className="mt-4 pt-4 border-t border-gray-200">
+              <div className="mt-2 pt-2 border-t border-gray-200">
                 <AudioController audioPath={segments[0].file_path} />
               </div>
             )}
