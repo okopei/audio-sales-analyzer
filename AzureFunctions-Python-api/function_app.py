@@ -696,16 +696,22 @@ def get_basic_info_by_meeting_id(req: func.HttpRequest) -> func.HttpResponse:
 @app.function_name(name="GetCommentReadStatus")
 @app.route(route="comment-read-status", methods=["GET", "OPTIONS"])
 def get_comment_read_status(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("🚀 GetCommentReadStatus 開始")
+    logging.info(f"🔍 リクエストクエリ: {req.url}")
+    
     if req.method == "OPTIONS":
         return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
 
     try:
         user_id = req.params.get("userId")
         comment_id = req.params.get("commentId")
+        
+        logging.info(f"👤 user_id: {user_id}, 💬 comment_id: {comment_id}")
 
         if not user_id or not comment_id:
+            logging.warning(f"❌ パラメータ不足: user_id={user_id}, comment_id={comment_id}")
             return func.HttpResponse(
-                json.dumps({"error": "userId and commentId are required"}, ensure_ascii=False),
+                json.dumps({"error": "userId and commentId are required", "debug": f"user_id: {user_id}, comment_id: {comment_id}"}, ensure_ascii=False),
                 status_code=400,
                 mimetype="application/json",
                 headers=build_cors_headers("GET, OPTIONS")
@@ -716,18 +722,25 @@ def get_comment_read_status(req: func.HttpRequest) -> func.HttpResponse:
             FROM dbo.CommentReads 
             WHERE reader_id = ? AND comment_id = ? 
         """
+        
+        logging.info(f"🧾 クエリを実行: {query} with params {(user_id, comment_id)}")
         result = execute_query(query, (user_id, comment_id))
+        
+        logging.info(f"✅ クエリ結果: {result}")
 
         if result:
             response = {
                 "isRead": True,
-                "read_at": result[0]['read_datetime']
+                "read_at": result[0]['read_datetime'],
+                "debug": f"user_id: {user_id}, comment_id: {comment_id}"
             }
         else:
             response = {
-                "isRead": False
+                "isRead": False,
+                "debug": f"user_id: {user_id}, comment_id: {comment_id}"
             }
 
+        logging.info(f"📤 レスポンス送信: {response}")
         return func.HttpResponse(
             json.dumps(response, ensure_ascii=False),
             status_code=200,
@@ -736,9 +749,9 @@ def get_comment_read_status(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     except Exception as e:
-        logging.exception("GetCommentReadStatus エラー:")
+        logging.exception("❌ GetCommentReadStatus 処理中に例外発生:")
         return func.HttpResponse(
-            json.dumps({"error": f"Internal server error: {str(e)}"}, ensure_ascii=False),
+            json.dumps({"error": f"Internal server error: {str(e)}", "debug": f"user_id: {user_id}, comment_id: {comment_id}"}, ensure_ascii=False),
             status_code=500,
             mimetype="application/json",
             headers=build_cors_headers("GET, OPTIONS")
