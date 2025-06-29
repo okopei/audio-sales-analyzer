@@ -11,6 +11,7 @@ import struct
 from urllib.parse import urlparse, parse_qs
 from azure.storage.blob import generate_blob_sas, BlobSasPermissions
 from datetime import datetime, timedelta
+import bcrypt 
 
 
 app = FunctionApp()
@@ -154,8 +155,86 @@ def test_db_connection(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500
         )
     
+@app.function_name(name="Login")
+@app.route(route="users/login", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+def login_user(req: func.HttpRequest) -> func.HttpResponse:
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=build_cors_headers("POST, OPTIONS"))
+
+    try:
+        print("=== Login START ===")
+        data = req.get_json()
+        print(f"Request data: {data}")
+        
+        email = data.get("email")
+        password = data.get("password")
+        print(f"Email: {email}, Password: {password}")
+
+        if not email or not password:
+            print("Missing email or password")
+            return func.HttpResponse("email と password は必須です", status_code=400)
+
+        query = """
+            SELECT user_id, user_name, email, password_hash, is_active, account_status, is_manager, manager_id
+            FROM dbo.Users
+            WHERE email = ?
+        """
+        print(f"Query: {query}")
+        print(f"Query params: ({email},)")
+        
+        result = execute_query(query, (email,))
+        print(f"Query result: {result}")
+
+        if not result:
+            print("User not found")
+            return func.HttpResponse(
+                json.dumps({"success": False, "message": "ユーザーが見つかりません"}, ensure_ascii=False), 
+                status_code=401,
+                headers=build_cors_headers("POST, OPTIONS")
+            )
+
+        user = result[0]
+        stored_hash = user.get("password_hash")
+        print(f"User found: {user.get('user_name')}")
+        print(f"Stored hash: {stored_hash}")
+        print(f"Input password: {password}")
+        print(f"Input password encoded: {password.encode()}")
+
+        try:
+            password_check = bcrypt.checkpw(password.encode(), stored_hash.encode())
+            print(f"Password check result: {password_check}")
+        except Exception as bcrypt_error:
+            print(f"Bcrypt error: {bcrypt_error}")
+            raise
+
+        if not password_check:
+            print("Password mismatch")
+            return func.HttpResponse(
+                json.dumps({"success": False, "message": "パスワードが正しくありません"}, ensure_ascii=False), 
+                status_code=401,
+                headers=build_cors_headers("POST, OPTIONS")
+            )
+
+        # 認証成功時のレスポンス
+        user.pop("password_hash", None)  # セキュリティのため返さない
+        print("=== Login SUCCESS ===")
+        return func.HttpResponse(
+            json.dumps({"success": True, "user": user}, ensure_ascii=False), 
+            status_code=200,
+            headers=build_cors_headers("POST, OPTIONS")
+        )
+
+    except Exception as e:
+        print(f"=== Login ERROR: {e} ===")
+        logging.exception("ログイン処理でエラーが発生しました")
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}, ensure_ascii=False), 
+            status_code=500,
+            headers=build_cors_headers("POST, OPTIONS")
+        )
+    
 @app.function_name(name="GetUserById")
-@app.route(route="users/{user_id}", auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="users/id/{user_id}", auth_level=func.AuthLevel.ANONYMOUS)
 def get_user_by_id_func(req: func.HttpRequest) -> func.HttpResponse:
     if req.method == "OPTIONS":
         return func.HttpResponse(status_code=204, headers=build_cors_headers("GET, OPTIONS"))
@@ -562,48 +641,6 @@ def delete_comment(req: func.HttpRequest) -> func.HttpResponse:
 
     except Exception as e:
         return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
-
-# Login（ユーザー認証）
-@app.function_name(name="Login")
-@app.route(route="users/login", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
-def login_user(req: func.HttpRequest) -> func.HttpResponse:
-    if req.method == "OPTIONS":
-        return func.HttpResponse(status_code=204, headers=build_cors_headers("POST, OPTIONS"))
-
-    try:
-        data = req.get_json()
-        user_name = data.get("user_name")
-        password = data.get("password")
-
-        if not user_name or not password:
-            return func.HttpResponse("user_name と password は必須です", status_code=400)
-
-        query = """
-            SELECT user_id, user_name, role
-            FROM dbo.Users
-            WHERE user_name = ? AND password = ?
-        """
-        result = execute_query(query, (user_name, password))
-
-        if result:
-            return func.HttpResponse(
-                json.dumps({"success": True, "user": result[0]}, ensure_ascii=False), 
-                status_code=200,
-                headers=build_cors_headers("POST, OPTIONS")
-            )
-        else:
-            return func.HttpResponse(
-                json.dumps({"success": False, "message": "認証に失敗しました"}, ensure_ascii=False), 
-                status_code=401,
-                headers=build_cors_headers("POST, OPTIONS")
-            )
-
-    except Exception as e:
-        return func.HttpResponse(
-            json.dumps({"error": str(e)}, ensure_ascii=False), 
-            status_code=500,
-            headers=build_cors_headers("POST, OPTIONS")
-        )
 
 
 # GetAllMeetings（会議一覧取得）

@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { useAuth } from '@/hooks/use-auth'
+import { useAuth } from '@/hooks/useAuth'
 import { ReadButton } from '@/components/feedback/read-button'
 import { Badge } from '@/components/ui/badge'
 import { format } from 'date-fns'
