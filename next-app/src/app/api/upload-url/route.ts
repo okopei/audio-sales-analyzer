@@ -6,9 +6,9 @@ import {
   SASProtocol
 } from "@azure/storage-blob"
 
-const accountName = process.env.NEXT_PUBLIC_AZURE_STORAGE_ACCOUNT_NAME!
+const accountName = process.env.AZURE_STORAGE_ACCOUNT_NAME!
 const accountKey = process.env.AZURE_STORAGE_ACCOUNT_KEY!
-const containerName = process.env.NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME || "moc-audio"
+const containerName = "moc-audio"
 
 export async function GET(req: NextRequest) {
   try {
@@ -23,10 +23,10 @@ export async function GET(req: NextRequest) {
     const sas = generateBlobSASQueryParameters({
       containerName,
       blobName: fileName,
-      permissions: BlobSASPermissions.parse("cw"),
+      permissions: BlobSASPermissions.parse("cw"), // create + write
       startsOn: new Date(),
-      expiresOn: new Date(new Date().valueOf() + 10 * 60 * 1000),
-      protocol: SASProtocol.Https
+      expiresOn: new Date(Date.now() + 10 * 60 * 1000), // 10分有効
+      protocol: SASProtocol.Https,
     }, sharedKeyCredential).toString()
 
     const url = `https://${accountName}.blob.core.windows.net/${containerName}/${fileName}?${sas}`
@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
       headers: { "Content-Type": "application/json" }
     })
   } catch (err) {
-    console.error("SAS URL発行エラー:", err)
+    console.error("SAS発行エラー:", err)
     return new Response(JSON.stringify({ error: "Internal Server Error" }), { status: 500 })
   }
 } 
