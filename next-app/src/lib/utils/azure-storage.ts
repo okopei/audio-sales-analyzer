@@ -12,7 +12,7 @@ export async function uploadToAzureStorage(file: File, fileName?: string): Promi
   try {
     console.log('アップロード開始:', fileName || file.name, `(${file.size} bytes)`)
     
-    const accountName = process.env.AZURE_STORAGE_ACCOUNT_NAME
+    const accountName = process.env.AZURE_STORAGE_ACCOUNT_NAME || 'audiosalesanalyzeraudio'
     const containerName = process.env.AZURE_STORAGE_CONTAINER_NAME || 'moc-audio'
     const blobName = fileName || file.name
     
