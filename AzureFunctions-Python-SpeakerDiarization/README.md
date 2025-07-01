@@ -1,6 +1,15 @@
-# Azure Functions Python Speaker Diarization
+# Azure Functions Python v2 Speaker Diarization
 
-Azure Speech Servicesを使用した音声文字起こしと話者分離機能を提供するAzure Functionsアプリケーションです。
+Azure Speech Servicesを使用した音声文字起こしと話者分離機能を提供するAzure Functions v2アプリケーションです。
+
+## 🚀 Azure Functions v2対応
+
+このプロジェクトはAzure Functions Python SDK v2形式に完全移行しています：
+
+- **FunctionAppインスタンス**: 単一の`app`インスタンスで全関数を管理
+- **デコレータ形式**: `@app.function_name()`と`@app.event_grid_trigger()`を使用
+- **型ヒント**: 完全な型ヒント対応
+- **エラーハンドリング**: 強化されたエラーハンドリングとログ機能
 
 ## ディレクトリ構成
 
@@ -30,7 +39,7 @@ AzureFunctions-Python-SpeakerDiarization/
 
 ## セットアップ
 
-### 1. Azure Functions用の依存関係をインストール
+### 1. Azure Functions v2用の依存関係をインストール
 
 ```bash
 pip install -r requirements.txt
@@ -48,10 +57,25 @@ cd ..
 
 `local.settings.json`を`local.settings.template.json`を参考に作成し、必要な環境変数を設定してください。
 
-### 4. Azure Functionsの起動
+**必須環境変数:**
+- `AzureWebJobsStorage`: Azure Storage接続文字列
+- `SPEECH_KEY`: Azure Speech Services APIキー
+- `SPEECH_REGION`: Azure Speech Servicesリージョン
+- `TRANSCRIPTION_CALLBACK_URL`: コールバックURL
+- `APPLICATIONINSIGHTS_CONNECTION_STRING`: Application Insights接続文字列（推奨）
+
+### 4. Azure Functions v2の起動
 
 ```bash
+# Azure Functions Core Tools v4以降が必要
 func start
+```
+
+### 5. デプロイ
+
+```bash
+# Azure Functions v2形式でのデプロイ
+func azure functionapp publish YOUR_FUNCTION_APP_NAME
 ```
 
 ## 機能
@@ -60,11 +84,13 @@ func start
 - Blobストレージへの音声ファイルアップロードを検知
 - Azure Speech Servicesで非同期文字起こしジョブを作成
 - 話者分離機能付きで文字起こしを実行
+- **v2対応**: 型ヒント付きのEventGridEvent処理
 
 ### HTTPトリガー（TranscriptionCallback）
 - Azure Speech Servicesからの文字起こし完了通知を受信
 - 文字起こし結果をデータベースに保存
 - OpenAI APIを使用した会話の自動整形処理
+- **v2対応**: 強化されたHTTPリクエスト処理とエラーハンドリング
 
 ## テスト
 

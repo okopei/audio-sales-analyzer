@@ -21,8 +21,25 @@ import base64
 from azure.eventgrid import EventGridEvent
 from pathlib import Path
 import isodate
+
+# パスを追加してopenai_processingモジュールをインポート
 sys.path.append(str(Path(__file__).parent))
 from openai_processing import clean_and_complete_conversation, load_transcript_segments
+
+# デバッグログの設定
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Azure Functions v2 - FunctionAppインスタンスの生成
+app = func.FunctionApp(
+    http_auth_level=func.AuthLevel.ANONYMOUS,
+    # v2形式での追加設定
+    enable_http_logging=True,
+    enable_application_insights=True
+)
 
 # Base64デコード用のヘルパー関数
 def safe_base64_decode(data: str) -> bytes:
@@ -38,16 +55,6 @@ def safe_base64_decode(data: str) -> bytes:
     # パディングを補正
     padding = '=' * (4 - len(data) % 4)
     return base64.b64decode(data + padding)
-
-# デバッグログの設定
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-# FunctionAppインスタンスの生成（1回のみ）
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 def convert_to_wav(input_path: str) -> str:
     """
@@ -92,11 +99,19 @@ def convert_to_wav(input_path: str) -> str:
     else:
         raise ValueError(f"サポートされていない音声形式です: {ext}")
 
-# 本番用エンドポイント
+# Azure Functions v2 - Event Grid Trigger
 @app.function_name(name="TriggerTranscriptionJob")
 @app.event_grid_trigger(arg_name="event")
-def trigger_transcription_job(event: func.EventGridEvent):
-    """Blobアップロード完了時に発火し、Speech-to-Text非同期ジョブを作成する関数"""
+def trigger_transcription_job(event: func.EventGridEvent) -> None:
+    """
+    Blobアップロード完了時に発火し、Speech-to-Text非同期ジョブを作成する関数
+    
+    Args:
+        event (func.EventGridEvent): Event Gridイベント
+        
+    Returns:
+        None: Event Grid Trigger関数は値を返さない
+    """
     try:
         logger.info("=== Transcription Job Trigger Start ===")
         
@@ -579,12 +594,19 @@ def get_audio_duration(file_path: str) -> float:
         logger.error(f"Error details: {traceback.format_exc()}")
         raise
 
+# Azure Functions v2 - HTTP Trigger
 @app.function_name(name="TranscriptionCallback")
 @app.route(route="transcription-callback", methods=["POST"])
 def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
     """
     Speech Service から transcription 完了通知を受け取る
     結果 JSON のダウンロード → 話者分離結果を整形 → Meetings テーブルに保存
+    
+    Args:
+        req (func.HttpRequest): HTTPリクエストオブジェクト
+        
+    Returns:
+        func.HttpResponse: 処理結果のHTTPレスポンス
     """
     meeting_id = None  # 関数の先頭で初期化
     user_id = None     # user_idも初期化

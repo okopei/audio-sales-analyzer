@@ -2,8 +2,8 @@
 # このファイルは requirements-func.txt と同じ内容です
 # OpenAI処理用の依存関係は openai_processing/requirements.txt を参照してください
 
-# Azure Functions Core Dependencies
-azure-functions==1.23.0
+# Azure Functions v2 Core Dependencies
+azure-functions>=1.25.0
 azure-eventgrid==4.9.0
 
 # Azure Services
