@@ -6,7 +6,7 @@ import {
   SASProtocol
 } from "@azure/storage-blob"
 
-const accountName = process.env.AZURE_STORAGE_ACCOUNT_NAME!
+const accountName = "audiosalesanalyzeraudio"
 const accountKey = process.env.AZURE_STORAGE_ACCOUNT_KEY!
 const containerName = "moc-audio"
 
