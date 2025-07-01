@@ -60,8 +60,8 @@ export async function POST(request: NextRequest) {
     }
     
     // 環境変数からストレージアカウント情報を取得
-    const accountName = process.env.NEXT_PUBLIC_AZURE_STORAGE_ACCOUNT_NAME
-    const containerName = process.env.NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME || 'moc-audio'
+    const accountName = process.env.AZURE_STORAGE_ACCOUNT_NAME
+    const containerName = process.env.AZURE_STORAGE_CONTAINER_NAME || 'moc-audio'
     
     if (!accountName) {
       console.error('ストレージアカウント名が設定されていません')

@@ -8,9 +8,9 @@ export async function GET() {
   try {
     console.log('SASトークン生成開始')
     
-    const accountName = process.env.NEXT_PUBLIC_AZURE_STORAGE_ACCOUNT_NAME
+    const accountName = process.env.AZURE_STORAGE_ACCOUNT_NAME
     const accountKey = process.env.AZURE_STORAGE_ACCOUNT_KEY
-    const containerName = process.env.NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME || 'moc-audio'
+    const containerName = process.env.AZURE_STORAGE_CONTAINER_NAME || 'moc-audio'
     
     console.log('環境変数詳細:', { 
       accountName: accountName || '未設定', 

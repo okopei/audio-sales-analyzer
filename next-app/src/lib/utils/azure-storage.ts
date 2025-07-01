@@ -12,8 +12,8 @@ export async function uploadToAzureStorage(file: File, fileName?: string): Promi
   try {
     console.log('アップロード開始:', fileName || file.name, `(${file.size} bytes)`)
     
-    const accountName = process.env.NEXT_PUBLIC_AZURE_STORAGE_ACCOUNT_NAME
-    const containerName = process.env.NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME || 'moc-audio'
+    const accountName = process.env.AZURE_STORAGE_ACCOUNT_NAME
+    const containerName = process.env.AZURE_STORAGE_CONTAINER_NAME || 'moc-audio'
     const blobName = fileName || file.name
     
     console.log('環境変数確認:', { 
@@ -112,8 +112,8 @@ export async function uploadToAzureStorage(file: File, fileName?: string): Promi
  */
 export async function getAzureStorageDownloadUrl(blobName: string): Promise<string> {
   try {
-    const accountName = process.env.NEXT_PUBLIC_AZURE_STORAGE_ACCOUNT_NAME
-    const containerName = process.env.NEXT_PUBLIC_AZURE_STORAGE_CONTAINER_NAME || 'moc-audio'
+    const accountName = process.env.AZURE_STORAGE_ACCOUNT_NAME
+    const containerName = process.env.AZURE_STORAGE_CONTAINER_NAME || 'moc-audio'
     
     // SASトークンを取得するAPIエンドポイント
     const sasResponse = await fetch('/api/azure/get-sas-token', {
