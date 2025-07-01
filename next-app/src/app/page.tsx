@@ -1,16 +1,10 @@
 "use client"
 
 import { useState, useEffect, Suspense } from 'react'
-import dynamic from 'next/dynamic'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useSearchParams } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
-
-// テスト用ナビゲーションコンポーネント（要削除）
-const TestNavigation = dynamic(() => import('@/components/TestNavigation'), {
-  ssr: false
-})
 
 function LoginPageContents() {
   const [email, setEmail] = useState("")
@@ -42,9 +36,6 @@ function LoginPageContents() {
 
   return (
     <div className="min-h-screen bg-[#1F1F1F] flex items-center justify-center p-4 relative">
-      {/* テスト用ナビゲーション（要削除） */}
-      <TestNavigation />
-
       <div className="w-full max-w-sm space-y-6">
         <h1 className="text-2xl font-bold text-center text-white">ログイン</h1>
         
