@@ -1110,6 +1110,32 @@ at handlePlay (AudioSegmentPlayer.tsx:109:35)
 - 音声ファイルのパスが正しく設定されていることを確認
 - ブラウザの互換性を考慮した実装
 
+### データベース接続関数の更新（2024年12月19日）
+
+AzureFunctions-Python-apiの実装を参考にして、データベース接続関数を更新：
+
+1. **get_db_connection関数の改善**
+   - 環境変数による設定（`SQL_SERVER`, `SQL_DATABASE`）
+   - ローカル/本番環境の自動判別
+   - ローカル環境：ClientSecretCredential + pyodbc
+   - 本番環境：Managed Identity + MSI認証
+
+2. **execute_query関数の簡素化**
+   - `with`文による自動接続管理
+   - `skip_trigger_log`パラメータの削除
+   - より簡潔で保守しやすい実装
+
+3. **環境変数の追加**
+   - `SQL_SERVER`: SQL Serverのホスト名
+   - `SQL_DATABASE`: データベース名
+   - `AZURE_ENVIRONMENT`: 環境判別（"local" or "production"）
+   - `TENANT_ID`, `CLIENT_ID`, `CLIENT_SECRET`: ローカル環境用認証情報
+
+4. **利点**
+   - 環境に応じた適切な認証方式の選択
+   - 設定の外部化による柔軟性向上
+   - コードの簡素化と保守性向上
+
 ## FunctionAppの要件と責務
 
 ### AzureFunctions-Python-api

@@ -6,7 +6,7 @@ import uuid
 import time
 import re
 from datetime import datetime, timezone, timedelta
-from azure.identity import DefaultAzureCredential
+from azure.identity import DefaultAzureCredential, ClientSecretCredential
 import traceback
 from azure.storage.blob import BlobServiceClient, BlobClient, BlobSasPermissions, generate_blob_sas
 import subprocess
@@ -37,8 +37,7 @@ logger = logging.getLogger(__name__)
 app = func.FunctionApp(
     http_auth_level=func.AuthLevel.ANONYMOUS,
     # v2形式での追加設定
-    enable_http_logging=True,
-    enable_application_insights=True
+    enable_http_logging=True
 )
 
 # Base64デコード用のヘルパー関数
@@ -370,35 +369,66 @@ def insert_trigger_log(meeting_id: Optional[int], event_type: str, additional_in
 
 def get_db_connection():
     """
-    Entra ID認証を使用してAzure SQL Databaseに接続する
-    
-    Returns:
-        pyodbc.Connection: データベース接続オブジェクト
-        
-    Raises:
-        Exception: 接続に失敗した場合
+    ローカル：ClientSecretCredential（pyodbc）
+    本番環境：Microsoft Entra ID（Managed Identity）を使用して Azure SQL Database に接続する。
+    ODBC Driver 17 for SQL Server + Authentication=ActiveDirectoryMsi を使用。
     """
     try:
-        credential = DefaultAzureCredential()
-        token = credential.get_token("https://database.windows.net/.default")
-        token_bytes = bytes(token.token, 'utf-8')
-        exptoken = b''.join(bytes((b, 0)) for b in token_bytes)
-        access_token = struct.pack('=i', len(exptoken)) + exptoken
+        logger.info("[DB接続] 開始")
 
-        conn_str = (
-            f"Driver={{ODBC Driver 17 for SQL Server}};"
-            f"Server=tcp:w-paas-salesanalyzer-sqlserver.database.windows.net,1433;"
-            f"Database=w-paas-salesanalyzer-sql;"
-            f"Encrypt=yes;"
-            f"TrustServerCertificate=no;"
-            f"Connection Timeout=30;"
-        )
+        server = os.getenv("SQL_SERVER")
+        database = os.getenv("SQL_DATABASE")
 
-        logger.info("Connecting to database with ODBC Driver 17 for SQL Server")
-        return pyodbc.connect(conn_str, attrs_before={1256: access_token})
+        if not server or not database:
+            raise ValueError("SQL_SERVER または SQL_DATABASE の環境変数が設定されていません")
+
+        env = os.getenv("AZURE_ENVIRONMENT", "local")  # "local" or "production"
+        is_local = env.lower() != "production"
+
+        if is_local:
+            # 🔐 ローカル用：ClientSecretCredential + pyodbc + アクセストークン
+            logger.info("[DB接続] ローカル環境（pyodbc + Entra認証トークン）")
+
+            tenant_id = os.getenv("TENANT_ID")
+            client_id = os.getenv("CLIENT_ID")
+            client_secret = os.getenv("CLIENT_SECRET")
+
+            if not all([tenant_id, client_id, client_secret]):
+                raise ValueError("TENANT_ID, CLIENT_ID, CLIENT_SECRET が未設定です")
+
+            credential = ClientSecretCredential(tenant_id, client_id, client_secret)
+            token = credential.get_token("https://database.windows.net/.default")
+
+            token_bytes = bytes(token.token, "utf-8")
+            exptoken = b''.join(bytes((b, 0)) for b in token_bytes)
+            access_token = struct.pack("=i", len(exptoken)) + exptoken
+
+            conn_str = (
+                f"Driver={{ODBC Driver 17 for SQL Server}};"
+                f"Server=tcp:{server},1433;"
+                f"Database={database};"
+                "Encrypt=yes;TrustServerCertificate=no;"
+                "Connection Timeout=30;"
+            )
+
+            conn = pyodbc.connect(conn_str, attrs_before={1256: access_token})
+        else:
+            # ☁️ 本番用：Managed Identity + pyodbc + MSI認証
+            logger.info("[DB接続] Azure 環境（pyodbc + MSI）")
+
+            conn_str = (
+                f"Driver={{ODBC Driver 17 for SQL Server}};"
+                f"Server=tcp:{server},1433;"
+                f"Database={database};"
+                "Authentication=ActiveDirectoryMsi;"
+                "Encrypt=yes;TrustServerCertificate=no;"
+            )
+            conn = pyodbc.connect(conn_str, timeout=10)
+        logger.info("[DB接続] 成功")
+        return conn
     except Exception as e:
-        logger.error(f"❌ DB接続失敗: {str(e)}")
-        logger.error(f"Connection string (masked): {conn_str.replace('w-paas-salesanalyzer-sqlserver.database.windows.net', '***').replace('w-paas-salesanalyzer-sql', '***')}")
+        logger.error("[DB接続] エラー発生")
+        logger.exception("詳細:")
         raise
 
 def get_client_info(meeting_id: int) -> Dict[str, Optional[str]]:
@@ -412,20 +442,16 @@ def get_client_info(meeting_id: int) -> Dict[str, Optional[str]]:
         Dict[str, Optional[str]]: クライアント情報（企業名と担当者名）を含む辞書
         エラー時やデータが存在しない場合は、Noneを含む辞書を返す
     """
-    conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
+        result = execute_query(
             "SELECT client_company_name, client_contact_name FROM dbo.BasicInfo WHERE meeting_id = ?",
             (meeting_id,)
         )
-        row = cursor.fetchone()
         
-        if row and row[0] is not None and row[1] is not None:
+        if result and result[0]["client_company_name"] is not None and result[0]["client_contact_name"] is not None:
             return {
-                "client_company_name": str(row[0]).strip(),
-                "client_contact_name": str(row[1]).strip()
+                "client_company_name": str(result[0]["client_company_name"]).strip(),
+                "client_contact_name": str(result[0]["client_contact_name"]).strip()
             }
         else:
             logger.warning(f"⚠ No client info found for meeting_id: {meeting_id}")
@@ -441,59 +467,31 @@ def get_client_info(meeting_id: int) -> Dict[str, Optional[str]]:
             "client_company_name": None,
             "client_contact_name": None
         }
-    finally:
-        if conn:
-            try:
-                conn.close()
-                logger.debug("Database connection closed in get_client_info")
-            except Exception as e:
-                logger.warning(f"⚠ Failed to close database connection in get_client_info: {str(e)}")
 
-def execute_query(query: str, params: Optional[Union[Dict[str, Any], Tuple[Any, ...]]] = None, skip_trigger_log: bool = False) -> List[Dict[str, Any]]:
+def execute_query(query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """
-    SQLクエリを実行し、結果を返します
+    SQLクエリを実行し、結果を返します。
     
     Args:
         query (str): 実行するSQLクエリ
-        params (Optional[Union[Dict[str, Any], Tuple[Any, ...]]]): 
-            クエリパラメータ。辞書型（名前付きパラメータ）または
-            タプル型（位置パラメータ）で指定可能
-        skip_trigger_log (bool): TriggerLogへの自動ログ記録をスキップするかどうか
+        params (Optional[Dict[str, Any]]): クエリパラメータ
         
     Returns:
-        List[Dict[str, Any]]: クエリ結果のリスト（SELECTまたはOUTPUT句を含むクエリの場合）
+        List[Dict[str, Any]]: クエリ結果のリスト
     """
-    conn = None
     try:
-        conn = get_db_connection()
-        logger.info(f"クエリを実行: {query[:100]}...")  # クエリの最初の100文字のみ表示
-        
-        cursor = conn.cursor()
-        
-        # クエリの実行前に、TriggerLogへの挿入を制御
-        if skip_trigger_log:
-            logger.debug("TriggerLogへの自動ログ記録をスキップします")
-            cursor.execute("""
-                BEGIN TRY
-                    ALTER TABLE dbo.TriggerLog DISABLE TRIGGER ALL;
-                END TRY
-                BEGIN CATCH
-                    IF ERROR_NUMBER() <> 3701
-                        THROW;
-                END CATCH
-            """)
-        
-        try:
+        with get_db_connection() as conn:
+            logger.info(f"クエリを実行: {query}")
             if params:
-                if isinstance(params, dict):
-                    cursor.execute(query, params)
-                else:
-                    cursor.execute(query, params)
+                logger.info(f"パラメータ: {params}")
+            
+            cursor = conn.cursor()
+            if params:
+                cursor.execute(query, params)
             else:
                 cursor.execute(query)
             
-            # 結果セットの取得（SELECTまたはOUTPUT句を含むクエリの場合）
-            if cursor.description:
+            if query.strip().upper().startswith("SELECT"):
                 columns = [column[0] for column in cursor.description]
                 rows = cursor.fetchall()
                 results = [dict(zip(columns, row)) for row in rows]
@@ -504,43 +502,14 @@ def execute_query(query: str, params: Optional[Union[Dict[str, Any], Tuple[Any, 
                         if hasattr(value, 'isoformat'):
                             row[key] = value.isoformat()
 
-                conn.commit()
                 return results
             else:
                 conn.commit()
-                logger.info("コミット完了")
                 return []
                 
-        finally:
-            # TriggerLogテーブルを再度有効化
-            if skip_trigger_log:
-                cursor.execute("""
-                    BEGIN TRY
-                        ALTER TABLE dbo.TriggerLog ENABLE TRIGGER ALL;
-                    END TRY
-                    BEGIN CATCH
-                        IF ERROR_NUMBER() <> 3701
-                            THROW;
-                    END CATCH
-                """)
-    
     except Exception as e:
-        if conn:
-            try:
-                conn.rollback()
-                logger.warning("ロールバックを実行しました")
-            except Exception as rollback_error:
-                logger.warning(f"ロールバックに失敗: {str(rollback_error)}")
-        
         logger.error(f"クエリ実行エラー: {str(e)}")
-        logger.error(f"エラーの種類: {type(e)}")
         raise
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception as e:
-                logger.warning(f"データベース接続のクローズに失敗: {str(e)}")
 
 def get_current_time():
     """現在時刻をUTCで取得し、SQLサーバー互換の形式で返す"""
@@ -884,8 +853,8 @@ def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
                 logger.debug(f"[DEBUG] MERGE INTO実行 - meeting_id: {meeting_id}, user_id: {user_id}")
                 logger.debug(f"[DEBUG] パラメータ数: {len(merge_params)} (inserted_datetimeはGETDATE()で設定)")
                 
-                # merge_sql実行時にTriggerLogへの自動ログ記録をスキップ
-                execute_query(merge_sql, merge_params, skip_trigger_log=True)
+                # merge_sql実行
+                execute_query(merge_sql, merge_params)
                 logger.info(f"✅ Successfully updated transcript_text for meeting_id: {meeting_id}, user_id: {user_id}, title: {title}, file: {file_name}, duration: {duration_seconds}秒")
                 
                 # 成功ログを手動で記録（record_idを明示的に指定）
