@@ -5,3 +5,6 @@
 azure-functions
 pyodbc
 azure-identity
+requests
+azure-storage-blob
+isodate
