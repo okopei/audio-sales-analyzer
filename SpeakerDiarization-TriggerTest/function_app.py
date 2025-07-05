@@ -140,7 +140,7 @@ def get_db_connection():
 #             client_company_name,
 #             client_contact_name,
 #             meeting_datetime,
-#             datetime.utcnow()
+#             datetime.now(timezone.utc)
 #         ))
 
 #         conn.commit()
@@ -156,26 +156,57 @@ def trigger_transcription_job(event: func.EventGridEvent):
     try:
         logging.info("=== Transcription Job Trigger Start ===")
 
+        # イベントから Blob URL を取得
         event_json = event.get_json()
-        logging.info(f"Full event JSON: {event_json}")
-
         blob_url = event_json.get("url")
         if not blob_url:
-            raise ValueError("イベントデータから Blob URL を取得できません")
-
+            raise ValueError("イベントデータに Blob URL が含まれていません")
         logging.info(f"Blob URL: {blob_url}")
 
+        # ファイル名とコンテナ名を抽出
         path_parts = blob_url.split('/')
         container_name = path_parts[-2]
         blob_name = path_parts[-1]
 
+        # .wav 以外はスキップ
         if not blob_name.lower().endswith('.wav'):
             logging.warning(f"❌ 非WAVファイルが検知されました: {blob_name} → スキップします")
             return
 
-        account_name = os.environ["ACCOUNT_NAME"]
-        account_key = os.environ["ACCOUNT_KEY"].strip().replace('\n', '')
+        # ファイル名から meeting_id, user_id を抽出
+        match = re.match(r"meeting_(\d+)_user_(\d+)_.*", blob_name)
+        if not match:
+            raise ValueError("ファイル名から meeting_id, user_id を抽出できません")
+        meeting_id = int(match.group(1))
+        user_id = int(match.group(2))
+        logging.info(f"🎯 Extracted meeting_id={meeting_id}, user_id={user_id}")
 
+        # DB接続
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # BasicInfo 取得
+        cursor.execute("""
+            SELECT client_company_name, client_contact_name, meeting_datetime
+            FROM dbo.BasicInfo
+            WHERE meeting_id = ?
+        """, (meeting_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise Exception(f"meeting_id={meeting_id} に該当する BasicInfo が存在しません")
+        client_company_name, client_contact_name, meeting_datetime = row
+
+        # 既存レコードの確認
+        cursor.execute("""
+            SELECT COUNT(*) FROM dbo.Meetings WHERE meeting_id = ? AND user_id = ?
+        """, (meeting_id, user_id))
+        if cursor.fetchone()[0] > 0:
+            logging.info(f"🔁 会議レコードが既に存在するためスキップ (meeting_id={meeting_id}, user_id={user_id})")
+            return
+
+        # SAS URL生成
+        account_name = os.environ["ACCOUNT_NAME"]
+        account_key = os.environ["ACCOUNT_KEY"]
         sas_token = generate_blob_sas(
             account_name=account_name,
             container_name=container_name,
@@ -185,8 +216,9 @@ def trigger_transcription_job(event: func.EventGridEvent):
             expiry=datetime.now(timezone.utc) + timedelta(hours=1)
         )
         sas_url = f"https://{account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
-        logging.info(f"Generated SAS URL: {sas_url}")
+        logging.info(f"✅ SAS URL 生成成功: {sas_url}")
 
+        # Speech-to-Text transcription job
         speech_key = os.environ["SPEECH_KEY"]
         region = os.environ["SPEECH_REGION"]
         callback_url = os.environ["TRANSCRIPTION_CALLBACK_URL"]
@@ -194,7 +226,7 @@ def trigger_transcription_job(event: func.EventGridEvent):
         payload = {
             "contentUrls": [sas_url],
             "locale": "ja-JP",
-            "displayName": f"transcription-{uuid.uuid4()}",
+            "displayName": f"transcription-{meeting_id}-{user_id}",
             "properties": {
                 "diarizationEnabled": True,
                 "wordLevelTimestampsEnabled": True,
@@ -203,118 +235,256 @@ def trigger_transcription_job(event: func.EventGridEvent):
                 "callbackUrl": callback_url
             }
         }
+
         headers = {
             "Ocp-Apim-Subscription-Key": speech_key,
             "Content-Type": "application/json"
         }
+
         endpoint = f"https://{region}.api.cognitive.microsoft.com/speechtotext/v3.0/transcriptions"
         response = requests.post(endpoint, headers=headers, json=payload)
         response.raise_for_status()
-
         result = response.json()
-        logging.info(f"✅ Transcription job submitted successfully.")
-        logging.info(f"🎯 Job self URL: {result.get('self')}")
-        
         job_url = result.get("self")
-        job_id = job_url.split("/")[-1] if job_url else "N/A"
+        job_id = job_url.split("/")[-1] if job_url else None
         logging.info(f"🆔 Transcription Job ID: {job_id}")
 
+        # Meetings テーブルに挿入
+        insert_query = """
+            INSERT INTO dbo.Meetings (
+                meeting_id, user_id, title, file_name, file_path, file_size,
+                duration_seconds, status, transcript_text, error_message,
+                client_company_name, client_contact_name, meeting_datetime,
+                start_datetime, inserted_datetime, updated_datetime, end_datetime, deleted_datetime
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE(), NULL, NULL)
+        """
+        cursor.execute(insert_query, (
+            meeting_id,
+            user_id,
+            "Auto generated meeting",
+            blob_name,
+            job_id,
+            0,  # file_size
+            0,  # duration_seconds
+            "processing",
+            None,
+            None,
+            client_company_name,
+            client_contact_name,
+            meeting_datetime,
+            datetime.now(timezone.utc)
+        ))
+        conn.commit()
+        logging.info("✅ Meetings テーブルにレコード挿入完了")
+
     except Exception as e:
-        logging.error(f"❌ Trigger error: {str(e)}")
+        logging.exception("❌ TriggerTranscriptionJob エラー:")
 
 
 
 
-@app.function_name(name="TranscriptionCallback")
-@app.route(route="transcription-callback", methods=["POST"])
-def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
+
+# @app.function_name(name="TranscriptionCallback")
+# @app.route(route="transcription-callback", methods=["POST"])
+# def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
+#     try:
+#         data = req.get_json()
+#         transcription_url = data["self"]
+#         content_urls = data["contentUrls"]
+#         results_url = data["resultsUrls"].get("channel_0")
+#         if not results_url:
+#             return func.HttpResponse("Missing resultsUrl", status_code=400)
+
+#         file_name = content_urls[0].split("/")[-1]
+#         match = re.search(r"meeting_(\d+)_user_(\d+)", file_name)
+#         if not match:
+#             return func.HttpResponse("Invalid file name format", status_code=400)
+
+#         meeting_id = int(match.group(1))
+#         user_id = int(match.group(2))
+
+#         headers = {"Ocp-Apim-Subscription-Key": os.environ["SPEECH_KEY"]}
+#         status_resp = requests.get(transcription_url, headers=headers)
+#         if status_resp.json()["status"] != "Succeeded":
+#             return func.HttpResponse("Not ready", status_code=202)
+
+#         response = requests.get(results_url, headers=headers)
+#         result_json = response.json()
+
+#         transcript = []
+#         for phrase in result_json["recognizedPhrases"]:
+#             speaker = phrase.get("speaker", "Unknown")
+#             text = phrase["nBest"][0]["display"]
+#             offset = phrase.get("offset", "PT0S")
+#             try:
+#                 offset_seconds = round(isodate.parse_duration(offset).total_seconds(), 1)
+#             except:
+#                 offset_seconds = 0.0
+#             transcript.append(f"(Speaker{speaker})[{text}]({offset_seconds})")
+
+#         transcript_text = " ".join(transcript)
+
+#         conn = get_db_connection()
+#         cursor = conn.cursor()
+
+#         # BasicInfoから情報取得
+#         cursor.execute("""
+#             SELECT client_company_name, client_contact_name, meeting_datetime
+#             FROM dbo.BasicInfo
+#             WHERE meeting_id = ?
+#         """, meeting_id)
+#         row = cursor.fetchone()
+#         if not row:
+#             return func.HttpResponse(f"BasicInfo に meeting_id={meeting_id} が見つかりません", status_code=400)
+
+#         client_company_name, client_contact_name, meeting_datetime = row
+
+#         # 既存のレコードがないことを確認
+#         cursor.execute("""
+#             SELECT COUNT(*) FROM dbo.Meetings WHERE meeting_id = ? AND user_id = ?
+#         """, meeting_id, user_id)
+#         existing = cursor.fetchone()[0]
+#         if existing > 0:
+#             return func.HttpResponse(f"Meetings に meeting_id={meeting_id}, user_id={user_id} のレコードが既に存在しています", status_code=400)
+
+#         # INSERT
+#         title = "Auto generated meeting"
+#         file_path = content_urls[0]
+#         file_size = 0
+#         duration_seconds = 0
+
+#         insert_sql = """
+#         INSERT INTO dbo.Meetings (
+#             meeting_id, user_id, title, file_name, file_path,
+#             file_size, duration_seconds, status,
+#             client_company_name, client_contact_name,
+#             meeting_datetime, start_datetime, inserted_datetime,
+#             updated_datetime, transcript_text
+#         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE(), ?)
+#         """
+#         insert_params = (
+#             meeting_id, user_id, title, file_name, file_path,
+#             file_size, duration_seconds, 'completed',
+#             client_company_name, client_contact_name,
+#             meeting_datetime, meeting_datetime, transcript_text
+#         )
+
+#         cursor.execute(insert_sql, insert_params)
+#         conn.commit()
+
+#         return func.HttpResponse("OK", status_code=200)
+
+#     except Exception as e:
+#         logging.error(f"Callback error: {str(e)}")
+#         return func.HttpResponse("Error", status_code=500)
+
+@app.function_name(name="PollingTranscriptionResults")
+@app.schedule(schedule="0 */5 * * * *", arg_name="timer", run_on_startup=False, use_monitor=False)
+def polling_transcription_results(timer: func.TimerRequest) -> None:
     try:
-        data = req.get_json()
-        transcription_url = data["self"]
-        content_urls = data["contentUrls"]
-        results_url = data["resultsUrls"].get("channel_0")
-        if not results_url:
-            return func.HttpResponse("Missing resultsUrl", status_code=400)
-
-        file_name = content_urls[0].split("/")[-1]
-        match = re.search(r"meeting_(\d+)_user_(\d+)", file_name)
-        if not match:
-            return func.HttpResponse("Invalid file name format", status_code=400)
-
-        meeting_id = int(match.group(1))
-        user_id = int(match.group(2))
-
-        headers = {"Ocp-Apim-Subscription-Key": os.environ["SPEECH_KEY"]}
-        status_resp = requests.get(transcription_url, headers=headers)
-        if status_resp.json()["status"] != "Succeeded":
-            return func.HttpResponse("Not ready", status_code=202)
-
-        response = requests.get(results_url, headers=headers)
-        result_json = response.json()
-
-        transcript = []
-        for phrase in result_json["recognizedPhrases"]:
-            speaker = phrase.get("speaker", "Unknown")
-            text = phrase["nBest"][0]["display"]
-            offset = phrase.get("offset", "PT0S")
-            try:
-                offset_seconds = round(isodate.parse_duration(offset).total_seconds(), 1)
-            except:
-                offset_seconds = 0.0
-            transcript.append(f"(Speaker{speaker})[{text}]({offset_seconds})")
-
-        transcript_text = " ".join(transcript)
+        logging.info("🕓 PollingTranscriptionResults 開始")
 
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # BasicInfoから情報取得
+        # ステータスが processing のものを対象に取得
         cursor.execute("""
-            SELECT client_company_name, client_contact_name, meeting_datetime
-            FROM dbo.BasicInfo
-            WHERE meeting_id = ?
-        """, meeting_id)
-        row = cursor.fetchone()
-        if not row:
-            return func.HttpResponse(f"BasicInfo に meeting_id={meeting_id} が見つかりません", status_code=400)
+            SELECT meeting_id, user_id, file_path
+            FROM dbo.Meetings
+            WHERE status = 'processing'
+        """)
+        rows = cursor.fetchall()
 
-        client_company_name, client_contact_name, meeting_datetime = row
+        if not rows:
+            logging.info("🎯 対象レコードなし（status = 'processing'）")
+            return
 
-        # 既存のレコードがないことを確認
-        cursor.execute("""
-            SELECT COUNT(*) FROM dbo.Meetings WHERE meeting_id = ? AND user_id = ?
-        """, meeting_id, user_id)
-        existing = cursor.fetchone()[0]
-        if existing > 0:
-            return func.HttpResponse(f"Meetings に meeting_id={meeting_id}, user_id={user_id} のレコードが既に存在しています", status_code=400)
+        # 環境変数から設定を取得
+        speech_key = os.environ["SPEECH_KEY"]
+        region = os.environ["SPEECH_REGION"]
+        headers = {
+            "Ocp-Apim-Subscription-Key": speech_key,
+            "Content-Type": "application/json"
+        }
 
-        # INSERT
-        title = "Auto generated meeting"
-        file_path = content_urls[0]
-        file_size = 0
-        duration_seconds = 0
+        for meeting_id, user_id, file_path in rows:
+            try:
+                job_id = file_path.strip().split("/")[-1]
+                transcription_url = f"https://{region}.api.cognitive.microsoft.com/speechtotext/v3.0/transcriptions/{job_id}"
 
-        insert_sql = """
-        INSERT INTO dbo.Meetings (
-            meeting_id, user_id, title, file_name, file_path,
-            file_size, duration_seconds, status,
-            client_company_name, client_contact_name,
-            meeting_datetime, start_datetime, inserted_datetime,
-            updated_datetime, transcript_text
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE(), ?)
-        """
-        insert_params = (
-            meeting_id, user_id, title, file_name, file_path,
-            file_size, duration_seconds, 'completed',
-            client_company_name, client_contact_name,
-            meeting_datetime, meeting_datetime, transcript_text
-        )
+                # ジョブのステータス確認
+                resp = requests.get(transcription_url, headers=headers)
+                resp.raise_for_status()
+                job_data = resp.json()
+                job_status = job_data.get("status")
+                logging.info(f"🎯 JobID={job_id} のステータス: {job_status}")
 
-        cursor.execute(insert_sql, insert_params)
+                if job_status == "Succeeded":
+                    # files API を使って contenturl_0.json を探す
+                    files_url = f"https://{region}.api.cognitive.microsoft.com/speechtotext/v3.0/transcriptions/{job_id}/files"
+                    files_resp = requests.get(files_url, headers=headers)
+                    files_resp.raise_for_status()
+                    files_data = files_resp.json()
+
+                    transcription_files = [
+                        f for f in files_data["values"]
+                        if f.get("kind") == "Transcription" and f.get("name", "").startswith("contenturl_0")
+                    ]
+                    if not transcription_files:
+                        cursor.execute("""
+                            UPDATE dbo.Meetings
+                            SET status = 'noresult', updated_datetime = GETDATE(), end_datetime = GETDATE(), error_message = ?
+                            WHERE meeting_id = ? AND user_id = ?
+                        """, ("No transcription file (contenturl_0.json) found", meeting_id, user_id))
+                        logging.warning(f"⚠️ Transcription ファイルが見つかりません (job_id={job_id}) → 'noresult' に更新")
+                        continue
+
+                    results_url = transcription_files[0]["links"]["contentUrl"]
+
+                    # transcription 結果を取得
+                    result_resp = requests.get(results_url, headers=headers)
+                    result_json = result_resp.json()
+
+                    # transcript_text を構成
+                    transcript = []
+                    for phrase in result_json["recognizedPhrases"]:
+                        speaker = phrase.get("speaker", "Unknown")
+                        text = phrase["nBest"][0]["display"]
+                        offset = phrase.get("offset", "PT0S")
+                        try:
+                            offset_seconds = round(isodate.parse_duration(offset).total_seconds(), 1)
+                        except:
+                            offset_seconds = 0.0
+                        transcript.append(f"(Speaker{speaker})[{text}]({offset_seconds})")
+                    transcript_text = " ".join(transcript)
+
+                    # レコードを更新
+                    cursor.execute("""
+                        UPDATE dbo.Meetings
+                        SET transcript_text = ?, status = 'completed', updated_datetime = GETDATE(), end_datetime = GETDATE()
+                        WHERE meeting_id = ? AND user_id = ?
+                    """, (transcript_text, meeting_id, user_id))
+                    logging.info(f"✅ transcription 成功 → DB更新完了 (meeting_id={meeting_id})")
+
+                elif job_status in ["Failed", "Canceled"]:
+                    # エラーとしてステータス更新
+                    cursor.execute("""
+                        UPDATE dbo.Meetings
+                        SET status = 'failed', updated_datetime = GETDATE(), end_datetime = GETDATE(), error_message = ?
+                        WHERE meeting_id = ? AND user_id = ?
+                    """, (f"Speech job {job_status}", meeting_id, user_id))
+                    logging.warning(f"❌ transcription 失敗 → status=failed に更新 (meeting_id={meeting_id})")
+
+                else:
+                    logging.info(f"🕒 transcription 未完了のためスキップ (meeting_id={meeting_id})")
+
+            except Exception as inner_e:
+                logging.exception(f"⚠️ 個別処理エラー (meeting_id={meeting_id}): {inner_e}")
+
         conn.commit()
-
-        return func.HttpResponse("OK", status_code=200)
+        logging.info("🔁 Polling 処理完了")
 
     except Exception as e:
-        logging.error(f"Callback error: {str(e)}")
-        return func.HttpResponse("Error", status_code=500)
+        logging.exception("❌ PollingTranscriptionResults 関数全体でエラーが発生")
+
