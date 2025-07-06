@@ -229,7 +229,7 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
         cursor.execute("""
             SELECT meeting_id, user_id, file_path, transcript_text, status
             FROM dbo.Meetings
-            WHERE status IN ('processing', 'transcribed','step1_completed','step2_completed','step3_completed')
+            WHERE status IN ('processing', 'transcribed','step1_completed','step2_completed','step3_completed','step4_completed','step5_completed')
         """)
         rows = cursor.fetchall()
 
@@ -475,6 +475,19 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                 # function_app.py の PollingTranscriptionResults 関数内、step3 完了直後に追加
 
                 elif current_status == 'step3_completed':
+                # ConversationMergedSegments に既にデータがあればスキップ
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM dbo.ConversationMergedSegments WHERE meeting_id = ?
+                    """, (meeting_id,))
+                    if cursor.fetchone()[0] > 0:
+                        logging.info(f"🔁 ステップ4スキップ（既にConversationMergedSegmentsあり）meeting_id={meeting_id}")
+                        cursor.execute("""
+                            UPDATE dbo.Meetings
+                            SET status = 'step4_completed', updated_datetime = GETDATE()
+                            WHERE meeting_id = ?
+                        """, (meeting_id,))
+                        continue
+                    # ステップ4: step3_completed の会議に対して ConversationMergedSegments を生成      
                     cursor.execute("""
                         SELECT line_no, speaker, transcript_text_segment, revised_text_segment, offset_seconds
                         FROM dbo.ConversationEnrichmentSegments
@@ -530,6 +543,63 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                     """, (meeting_id,))
                     logging.info(f"✅ ステップ4完了 → status=step4_completed に更新 (meeting_id={meeting_id})")
 
+                 # ステップ5: step4_completed の会議に対して 同一話者セグメントを統合し ConversationFinalSegments に挿入
+                elif current_status == 'step4_completed':
+                  # ConversationFinalSegments に既にデータがあればスキップ
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM dbo.ConversationFinalSegments WHERE meeting_id = ?
+                    """, (meeting_id,))
+                    if cursor.fetchone()[0] > 0:
+                        logging.info(f"🔁 ステップ5スキップ（既にConversationFinalSegmentsあり）meeting_id={meeting_id}")
+                        cursor.execute("""
+                            UPDATE dbo.Meetings
+                            SET status = 'step5_completed', updated_datetime = GETDATE()
+                            WHERE meeting_id = ?
+                        """, (meeting_id,))
+                        continue
+                    cursor.execute("""
+                        SELECT speaker, merged_text, offset_seconds
+                        FROM dbo.ConversationMergedSegments
+                        WHERE meeting_id = ?
+                        ORDER BY offset_seconds
+                    """, (meeting_id,))
+                    merged_segments = cursor.fetchall()
+
+                    # セグメントを1件ずつ結合（同一話者が連続している場合）
+                    final_segments = []
+                    current_speaker = None
+                    current_text = ""
+                    current_offset = None
+
+                    for speaker, text, offset in merged_segments:
+                        if speaker == current_speaker:
+                            current_text += " " + text
+                        else:
+                            if current_speaker is not None:
+                                final_segments.append((meeting_id, current_speaker, current_text.strip(), current_offset))
+                            current_speaker = speaker
+                            current_text = text
+                            current_offset = offset
+
+                    # 最後の発言も保存
+                    if current_speaker is not None:
+                        final_segments.append((meeting_id, current_speaker, current_text.strip(), current_offset))
+
+                    # ConversationFinalSegments に INSERT
+                    for seg in final_segments:
+                        cursor.execute("""
+                            INSERT INTO dbo.ConversationFinalSegments (
+                                meeting_id, speaker, merged_text, offset_seconds, inserted_datetime, updated_datetime
+                            ) VALUES (?, ?, ?, ?, GETDATE(), GETDATE())
+                        """, seg)
+
+                    # ステータス更新
+                    cursor.execute("""
+                        UPDATE dbo.Meetings
+                        SET status = 'step5_completed', updated_datetime = GETDATE()
+                        WHERE meeting_id = ?
+                    """, (meeting_id,))
+                    logging.info(f"✅ ステップ5完了 → status=step5_completed に更新 (meeting_id={meeting_id})")
 
 
 
