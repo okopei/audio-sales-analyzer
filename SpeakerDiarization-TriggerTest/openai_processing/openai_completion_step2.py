@@ -610,18 +610,24 @@ def evaluate_connection_naturalness_sentence(front_sentence: str, bracket_text: 
             "back_score": 0.5
         }
 
-def evaluate_connection_naturalness_no_period(front_sentence: str, bracket_text: str, back_sentence: str) -> dict:
+def evaluate_connection_naturalness_no_period(front_text: str, bracket_text: str, back_text: str) -> dict:
     """
     括弧内発話の前後接続の自然さをスコアリング評価する（句点削除・自然接続判定）
-    
+
     Args:
-        front_sentence (str): 前の文（句点なし）
+        front_text (str): 前の文（句点なし）
         bracket_text (str): 括弧内の発話（句点なし）
-        back_sentence (str): 後の文（句点なし）
-        
+        back_text (str): 後の文（句点なし）
+
     Returns:
         dict: 前接続スコアと後接続スコアを含む辞書
     """
+    import os
+    import logging
+    from .openai_completion_core import client, log_token_usage, _parse_gpt_response
+
+    logger = logging.getLogger(__name__)
+
     system_message = """
 あなたは会話の自然さを判定する日本語特化の言語モデルです。
 2つの文の自然さを比較し、それぞれスコア（0.0〜1.0）で評価してください。
@@ -644,12 +650,13 @@ def evaluate_connection_naturalness_no_period(front_sentence: str, bracket_text:
 {
   "front_score": 0.0-1.0,
   "back_score": 0.0-1.0
-}"""
+}
+"""
 
     user_message = f"""次の2つの文を比較してください：
 
-1. 前文接続: {front_sentence}{bracket_text}
-2. 後文接続: {bracket_text}{back_sentence}
+1. 前文接続: {front_text}{bracket_text}
+2. 後文接続: {bracket_text}{back_text}
 
 各文について自然さを評価し、以下の形式で出力してください：
 {{
@@ -667,18 +674,10 @@ def evaluate_connection_naturalness_no_period(front_sentence: str, bracket_text:
             temperature=0.1,
             max_tokens=200
         )
-        
-        # トークン使用量のデバッグ出力
-        total_tokens = response.usage.total_tokens
-        prompt_tokens = response.usage.prompt_tokens
-        completion_tokens = response.usage.completion_tokens
-        
-        logger.debug(f"🧾 Step2 No Period Scoring Token Usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}")
-        
+
         result = response.choices[0].message.content.strip()
         log_token_usage(response.usage.total_tokens, "step2_no_period_scoring_evaluation")
-        
-        # JSONパース
+
         parsed_result = _parse_gpt_response(result)
         if parsed_result:
             return {
@@ -686,15 +685,8 @@ def evaluate_connection_naturalness_no_period(front_sentence: str, bracket_text:
                 "back_score": float(parsed_result.get("back_score", 0.0))
             }
         else:
-            # パース失敗時はデフォルトスコア
-            return {
-                "front_score": 0.5,
-                "back_score": 0.5
-            }
-            
+            return {"front_score": 0.5, "back_score": 0.5}
+
     except Exception as e:
         logger.error(f"句点削除版スコアリング評価エラー: {e}")
-        return {
-            "front_score": 0.5,
-            "back_score": 0.5
-        } 
+        return {"front_score": 0.5, "back_score": 0.5}

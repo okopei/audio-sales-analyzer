@@ -16,6 +16,7 @@ from pathlib import Path
 # openai_processing モジュールを import できるように sys.path を調整
 sys.path.append(str(Path(__file__).parent))
 from openai_processing.openai_completion_step1 import step1_process_transcript
+from openai_processing.openai_completion_step2 import evaluate_connection_naturalness_no_period
 # from openai_processing.openai_completion_core import clean_and_complete_conversation
 
 
@@ -228,7 +229,7 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
         cursor.execute("""
             SELECT meeting_id, user_id, file_path, transcript_text, status
             FROM dbo.Meetings
-            WHERE status IN ('processing', 'transcribed')
+            WHERE status IN ('processing', 'transcribed','step1_completed','step2_completed')
         """)
         rows = cursor.fetchall()
 
@@ -344,6 +345,59 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                         WHERE meeting_id = ?
                     """, (meeting_id,))
                     logging.info(f"✅ ステップ1完了 → status=step1_completed に更新 (meeting_id={meeting_id})")
+                     # ステップ2: Meetings.status='step1_completed' のデータを対象にスコアリング
+                elif current_status == 'step1_completed':
+                    cursor.execute("""
+                        SELECT line_no, transcript_text_segment
+                        FROM dbo.ConversationEnrichmentSegments
+                        WHERE meeting_id = ? AND is_filler = 1
+                        ORDER BY line_no
+                    """, (meeting_id,))
+                    filler_segments = cursor.fetchall()
+
+                    if not filler_segments:
+                        logging.info(f"🟡 filler セグメントなし → スキップ (meeting_id={meeting_id})")
+                        continue
+
+                    for (line_no, text) in filler_segments:
+                        # 前後のセグメントを取得
+                        cursor.execute("""
+                            SELECT transcript_text_segment FROM dbo.ConversationEnrichmentSegments
+                            WHERE meeting_id = ? AND line_no = ?
+                        """, (meeting_id, line_no - 1))
+                        prev_row = cursor.fetchone()
+                        prev_text = prev_row[0] if prev_row else ""
+
+                        cursor.execute("""
+                            SELECT transcript_text_segment FROM dbo.ConversationEnrichmentSegments
+                            WHERE meeting_id = ? AND line_no = ?
+                        """, (meeting_id, line_no + 1))
+                        next_row = cursor.fetchone()
+                        next_text = next_row[0] if next_row else ""
+
+                        front_text = prev_text.strip("。")
+                        back_text = next_text.strip("。")
+                        bracket_text = text.strip("（）")
+
+                        scores = evaluate_connection_naturalness_no_period(front_text, bracket_text, back_text)
+                        front_score = scores.get("front_score", 0.0)
+                        back_score = scores.get("back_score", 0.0)
+
+                        # DB更新
+                        cursor.execute("""
+                            UPDATE dbo.ConversationEnrichmentSegments
+                            SET front_score = ?, after_score = ?, updated_datetime = GETDATE()
+                            WHERE meeting_id = ? AND line_no = ?
+                        """, (front_score, back_score, meeting_id, line_no))
+
+                    # ステータス更新
+                    cursor.execute("""
+                        UPDATE dbo.Meetings
+                        SET status = 'step2_completed', updated_datetime = GETDATE()
+                        WHERE meeting_id = ?
+                    """, (meeting_id,))
+                    logging.info(f"✅ ステップ2完了 → status=step2_completed に更新 (meeting_id={meeting_id})")
+
 
             except Exception as inner_e:
                 logging.exception(f"⚠️ 個別処理エラー (meeting_id={meeting_id}): {inner_e}")
