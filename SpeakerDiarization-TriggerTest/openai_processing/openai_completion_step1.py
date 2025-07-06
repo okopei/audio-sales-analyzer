@@ -66,9 +66,15 @@ def process_transcript(transcript_text: str) -> Optional[str]:
     result = "\n".join(formatted_lines)
     return result
 
-if __name__ == "__main__":
-    sample_text = "(Speaker1)[えっと、40分。はい、大丈夫です。](0.4)(Speaker2)[ありがとうございます。](2.0)"
-    result = process_transcript(sample_text)
-    if result:
-        print("処理結果:")
-        print(result) 
+def step1_preprocess_transcript(segments: List[Dict[str, any]]) -> List[Dict[str, any]]:
+    """
+    ステップ1用の形式でセグメントを整形する（10文字未満は括弧でくくる）
+    """
+    if not segments:
+        return []
+
+    for seg in segments:
+        text = seg["text"].strip()
+        if len(text) < 10:
+            seg["text"] = f"（{text}）"
+    return segments

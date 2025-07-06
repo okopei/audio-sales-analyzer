@@ -8,3 +8,5 @@ azure-identity
 requests
 azure-storage-blob
 isodate
+demjson3
+openai

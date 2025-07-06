@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import demjson3
 import traceback
+import logging
+
 
 # ロギング設定を追加
 logging.basicConfig(
@@ -274,32 +276,66 @@ def _parse_gpt_response(response_text: str) -> Optional[Dict[str, Any]]:
 
 def clean_and_complete_conversation(meeting_id: int) -> bool:
     """
-    会話データを段階的にクリーンアップ・補完する
+    会話データを段階的にクリーンアップ・補完する（ステップ1〜8）
     """
-    try:
-        from pathlib import Path
-        import logging
-        logger = logging.getLogger(__name__)
+    import logging
+    import traceback
+    from .openai_completion_step1 import step1_preprocess_transcript
+    from .openai_completion_step2 import step2_complete_incomplete_sentences 
+    from .openai_completion_step3 import step3_finalize_completion
+    from .openai_completion_step4 import step4_merge_backchannel_with_next
+    from .openai_completion_step5 import step5_merge_same_speaker_segments
+    from .openai_completion_step6 import step6_remove_fillers
+    from .openai_completion_step7 import step7_summarize_conversation
+    from .openai_completion_step8 import step8_insert_conversation_segments
+    from .openai_completion_core import load_transcript_segments
 
-        logger.info("ステップ8のみの実行を開始（ステップ1〜7は一時停止）")
-        
-        # ステップ8: ConversationSegmentテーブルへの挿入
-        from .openai_completion_step8 import step8_insert_conversation_segments
-        step8_success = step8_insert_conversation_segments(meeting_id)
-        
-        if step8_success:
-            logger.info("✅ ステップ8処理が完了しました")
-        else:
-            logger.error("❌ ステップ8処理が失敗しました")
+    logger = logging.getLogger(__name__)
+
+    try:
+        logger.info(f"🟢 clean_and_complete_conversation 開始: meeting_id={meeting_id}")
+
+        segments = load_transcript_segments(meeting_id)
+        if not segments:
+            logger.warning(f"⚠️ transcript が空のため中断: meeting_id={meeting_id}")
             return False
-        
-        logger.info("✅ ステップ8の処理が完了しました")
-        return True
-        
+
+        logger.info("✅ ステップ1: 前処理")
+        segments = step1_preprocess_transcript(segments)
+
+        logger.info("✅ ステップ2: クラスタリングとクリーン")
+        segments = step2_complete_incomplete_sentences(segments)
+
+        logger.info("✅ ステップ3: 短文フィルタ")
+        segments = step3_finalize_completion(segments)
+
+        logger.info("✅ ステップ4: 無音トークン挿入")
+        segments = step4_merge_backchannel_with_next(segments)
+
+        logger.info("✅ ステップ5: 応答候補生成")
+        segments = step5_merge_same_speaker_segments(segments)
+
+        logger.info("✅ ステップ6: 応答候補統合")
+        segments = step6_remove_fillers(segments)
+
+        logger.info("✅ ステップ7: 会話整形")
+        segments = step7_summarize_conversation(segments)
+
+        logger.info("✅ ステップ8: ConversationSegmentテーブルへの挿入")
+        success = step8_insert_conversation_segments(meeting_id, segments)
+
+        if success:
+            logger.info(f"✅ 全ステップ成功: meeting_id={meeting_id}")
+            return True
+        else:
+            logger.warning(f"⚠️ ステップ8で挿入失敗: meeting_id={meeting_id}")
+            return False
+
     except Exception as e:
-        logger.error(f"会話データの処理中にエラーが発生: meeting_id={meeting_id}, error={e}")
+        logger.error(f"❌ 処理中にエラー: meeting_id={meeting_id}, error={e}")
         logger.error(traceback.format_exc())
         return False
+
 
 def load_transcript_segments(meeting_id: Optional[int] = None) -> List[Dict[str, Any]]:
     """DBからtranscript_textを読み込み、セグメントリストに変換する

@@ -10,6 +10,13 @@ from datetime import datetime, timezone, timedelta
 from azure.identity import ClientSecretCredential
 from azure.storage.blob import BlobServiceClient, BlobSasPermissions, generate_blob_sas
 import isodate
+import sys
+from pathlib import Path
+
+# openai_processing モジュールを import できるように sys.path を調整
+sys.path.append(str(Path(__file__).parent))
+
+from openai_processing.openai_completion_core import clean_and_complete_conversation
 
 app = func.FunctionApp()
 
@@ -208,6 +215,123 @@ def trigger_transcription_job(event: func.EventGridEvent):
     except Exception as e:
         logging.exception("❌ TriggerTranscriptionJob エラー:")
 
+@app.function_name(name="PollingTranscriptionResults")
+@app.schedule(schedule="0 */5 * * * *", arg_name="timer", run_on_startup=False, use_monitor=False)
+def polling_transcription_results(timer: func.TimerRequest) -> None:
+    try:
+        logging.info("🕓 PollingTranscriptionResults 開始")
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT meeting_id, user_id, file_path, transcript_text, status
+            FROM dbo.Meetings
+            WHERE status IN ('processing', 'transcribed')
+        """)
+        rows = cursor.fetchall()
+
+        if not rows:
+            logging.info("🎯 対象レコードなし（status = 'processing' または 'transcribed'）")
+            return
+
+        speech_key = os.environ["SPEECH_KEY"]
+        region = os.environ["SPEECH_REGION"]
+        headers = {
+            "Ocp-Apim-Subscription-Key": speech_key,
+            "Content-Type": "application/json"
+        }
+
+
+        for meeting_id, user_id, file_path, transcript_text, current_status in rows:
+            try:
+                if current_status == "processing":
+                    job_id = file_path.strip().split("/")[-1]
+                    transcription_url = f"https://{region}.api.cognitive.microsoft.com/speechtotext/v3.0/transcriptions/{job_id}"
+
+                    resp = requests.get(transcription_url, headers=headers)
+                    resp.raise_for_status()
+                    job_data = resp.json()
+                    job_status = job_data.get("status")
+                    logging.info(f"🎯 JobID={job_id} のステータス: {job_status}")
+
+                    if job_status == "Succeeded":
+                        files_url = f"https://{region}.api.cognitive.microsoft.com/speechtotext/v3.0/transcriptions/{job_id}/files"
+                        files_resp = requests.get(files_url, headers=headers)
+                        files_resp.raise_for_status()
+                        files_data = files_resp.json()
+
+                        transcription_files = [
+                            f for f in files_data["values"]
+                            if f.get("kind") == "Transcription" and f.get("name", "").startswith("contenturl_0")
+                        ]
+                        if not transcription_files:
+                            cursor.execute("""
+                                UPDATE dbo.Meetings
+                                SET status = 'noresult', updated_datetime = GETDATE(), end_datetime = GETDATE(), error_message = ?
+                                WHERE meeting_id = ? AND user_id = ?
+                            """, ("No transcription file (contenturl_0.json) found", meeting_id, user_id))
+                            logging.warning(f"⚠️ Transcription ファイルが見つかりません (job_id={job_id}) → 'noresult' に更新")
+                            continue
+
+                        results_url = transcription_files[0]["links"]["contentUrl"]
+                        result_resp = requests.get(results_url, headers=headers)
+                        result_json = result_resp.json()
+
+                        transcript = []
+                        for phrase in result_json["recognizedPhrases"]:
+                            speaker = phrase.get("speaker", "Unknown")
+                            text = phrase["nBest"][0]["display"]
+                            offset = phrase.get("offset", "PT0S")
+                            try:
+                                offset_seconds = round(isodate.parse_duration(offset).total_seconds(), 1)
+                            except:
+                                offset_seconds = 0.0
+                            transcript.append(f"(Speaker{speaker})[{text}]({offset_seconds})")
+                        transcript_text = " ".join(transcript)
+
+                        # Meetings に transcribed として反映（completed にはしない）
+                        cursor.execute("""
+                            UPDATE dbo.Meetings
+                            SET transcript_text = ?, status = 'transcribed',
+                                updated_datetime = GETDATE(), end_datetime = GETDATE()
+                            WHERE meeting_id = ? AND user_id = ?
+                        """, (transcript_text, meeting_id, user_id))
+                        conn.commit()
+
+                    elif job_status in ["Failed", "Canceled"]:
+                        cursor.execute("""
+                            UPDATE dbo.Meetings
+                            SET status = 'failed', updated_datetime = GETDATE(),
+                                end_datetime = GETDATE(), error_message = ?
+                            WHERE meeting_id = ? AND user_id = ?
+                        """, (f"Speech job {job_status}", meeting_id, user_id))
+                        logging.warning(f"❌ transcription 失敗 → status=failed (meeting_id={meeting_id})")
+                        continue
+
+                    else:
+                        logging.info(f"🕒 transcription 未完了 → スキップ (meeting_id={meeting_id})")
+                        continue
+
+                # status == 'transcribed' か、'processing' からの続き
+                clean_and_complete_conversation(meeting_id)
+
+                cursor.execute("""
+                    UPDATE dbo.Meetings
+                    SET status = 'completed', updated_datetime = GETDATE()
+                    WHERE meeting_id = ? 
+                """, (meeting_id))
+                logging.info(f"✅ transcript 整形＆ConversationSegments挿入 完了 → status=completed (meeting_id={meeting_id})")
+
+            except Exception as inner_e:
+                logging.exception(f"⚠️ 個別処理エラー (meeting_id={meeting_id}): {inner_e}")
+
+        conn.commit()
+        logging.info("🔁 Polling 処理完了")
+
+    except Exception as e:
+        logging.exception("❌ PollingTranscriptionResults 関数全体でエラーが発生")
+
 
 
 
@@ -306,112 +430,6 @@ def trigger_transcription_job(event: func.EventGridEvent):
 #         logging.error(f"Callback error: {str(e)}")
 #         return func.HttpResponse("Error", status_code=500)
 
-@app.function_name(name="PollingTranscriptionResults")
-@app.schedule(schedule="0 */5 * * * *", arg_name="timer", run_on_startup=False, use_monitor=False)
-def polling_transcription_results(timer: func.TimerRequest) -> None:
-    try:
-        logging.info("🕓 PollingTranscriptionResults 開始")
 
-        conn = get_db_connection()
-        cursor = conn.cursor()
 
-        # ステータスが processing のものを対象に取得
-        cursor.execute("""
-            SELECT meeting_id, user_id, file_path
-            FROM dbo.Meetings
-            WHERE status = 'processing'
-        """)
-        rows = cursor.fetchall()
-
-        if not rows:
-            logging.info("🎯 対象レコードなし（status = 'processing'）")
-            return
-
-        # 環境変数から設定を取得
-        speech_key = os.environ["SPEECH_KEY"]
-        region = os.environ["SPEECH_REGION"]
-        headers = {
-            "Ocp-Apim-Subscription-Key": speech_key,
-            "Content-Type": "application/json"
-        }
-
-        for meeting_id, user_id, file_path in rows:
-            try:
-                job_id = file_path.strip().split("/")[-1]
-                transcription_url = f"https://{region}.api.cognitive.microsoft.com/speechtotext/v3.0/transcriptions/{job_id}"
-
-                # ジョブのステータス確認
-                resp = requests.get(transcription_url, headers=headers)
-                resp.raise_for_status()
-                job_data = resp.json()
-                job_status = job_data.get("status")
-                logging.info(f"🎯 JobID={job_id} のステータス: {job_status}")
-
-                if job_status == "Succeeded":
-                    # files API を使って contenturl_0.json を探す
-                    files_url = f"https://{region}.api.cognitive.microsoft.com/speechtotext/v3.0/transcriptions/{job_id}/files"
-                    files_resp = requests.get(files_url, headers=headers)
-                    files_resp.raise_for_status()
-                    files_data = files_resp.json()
-
-                    transcription_files = [
-                        f for f in files_data["values"]
-                        if f.get("kind") == "Transcription" and f.get("name", "").startswith("contenturl_0")
-                    ]
-                    if not transcription_files:
-                        cursor.execute("""
-                            UPDATE dbo.Meetings
-                            SET status = 'noresult', updated_datetime = GETDATE(), end_datetime = GETDATE(), error_message = ?
-                            WHERE meeting_id = ? AND user_id = ?
-                        """, ("No transcription file (contenturl_0.json) found", meeting_id, user_id))
-                        logging.warning(f"⚠️ Transcription ファイルが見つかりません (job_id={job_id}) → 'noresult' に更新")
-                        continue
-
-                    results_url = transcription_files[0]["links"]["contentUrl"]
-
-                    # transcription 結果を取得
-                    result_resp = requests.get(results_url, headers=headers)
-                    result_json = result_resp.json()
-
-                    # transcript_text を構成
-                    transcript = []
-                    for phrase in result_json["recognizedPhrases"]:
-                        speaker = phrase.get("speaker", "Unknown")
-                        text = phrase["nBest"][0]["display"]
-                        offset = phrase.get("offset", "PT0S")
-                        try:
-                            offset_seconds = round(isodate.parse_duration(offset).total_seconds(), 1)
-                        except:
-                            offset_seconds = 0.0
-                        transcript.append(f"(Speaker{speaker})[{text}]({offset_seconds})")
-                    transcript_text = " ".join(transcript)
-
-                    # レコードを更新
-                    cursor.execute("""
-                        UPDATE dbo.Meetings
-                        SET transcript_text = ?, status = 'completed', updated_datetime = GETDATE(), end_datetime = GETDATE()
-                        WHERE meeting_id = ? AND user_id = ?
-                    """, (transcript_text, meeting_id, user_id))
-                    logging.info(f"✅ transcription 成功 → DB更新完了 (meeting_id={meeting_id})")
-
-                elif job_status in ["Failed", "Canceled"]:
-                    # エラーとしてステータス更新
-                    cursor.execute("""
-                        UPDATE dbo.Meetings
-                        SET status = 'failed', updated_datetime = GETDATE(), end_datetime = GETDATE(), error_message = ?
-                        WHERE meeting_id = ? AND user_id = ?
-                    """, (f"Speech job {job_status}", meeting_id, user_id))
-                    logging.warning(f"❌ transcription 失敗 → status=failed に更新 (meeting_id={meeting_id})")
-
-                else:
-                    logging.info(f"🕒 transcription 未完了のためスキップ (meeting_id={meeting_id})")
-
-            except Exception as inner_e:
-                logging.exception(f"⚠️ 個別処理エラー (meeting_id={meeting_id}): {inner_e}")
-
-        conn.commit()
-        logging.info("🔁 Polling 処理完了")
-
-    except Exception as e:
-        logging.exception("❌ PollingTranscriptionResults 関数全体でエラーが発生")
 
