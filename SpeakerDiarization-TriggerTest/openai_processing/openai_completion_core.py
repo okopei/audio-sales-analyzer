@@ -280,7 +280,7 @@ def clean_and_complete_conversation(meeting_id: int) -> bool:
     """
     import logging
     import traceback
-    from .openai_completion_step1 import step1_preprocess_transcript
+    from .openai_completion_step1 import step1_process_transcript
     from .openai_completion_step2 import step2_complete_incomplete_sentences 
     from .openai_completion_step3 import step3_finalize_completion
     from .openai_completion_step4 import step4_merge_backchannel_with_next
@@ -301,7 +301,7 @@ def clean_and_complete_conversation(meeting_id: int) -> bool:
             return False
 
         logger.info("✅ ステップ1: 前処理")
-        segments = step1_preprocess_transcript(segments)
+        segments = step1_process_transcript(segments)
 
         logger.info("✅ ステップ2: クラスタリングとクリーン")
         segments = step2_complete_incomplete_sentences(segments)

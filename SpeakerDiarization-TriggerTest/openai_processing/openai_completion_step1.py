@@ -1,80 +1,53 @@
+import logging
+from typing import List, Dict, Optional, Any
 import re
-from pathlib import Path
-from typing import List, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 def parse_transcript(text: str) -> List[Dict[str, any]]:
-    """
-    transcript_textから厳密な形式で会話セグメントを抽出して辞書のリストに変換します。
-    
-    Args:
-        text (str): 入力テキスト
-        
-    Returns:
-        List[Dict[str, any]]: パースされたセグメントのリスト
-    """
-    pattern = re.compile(r"Speaker(\d+):\s*(.*?)\s*(?:\(([\d.]+)\))?$")
+    pattern = re.compile(r"\(Speaker(\d+)\)\[(.*?)\]\(([\d.]+)\)")
     segments = []
-    for line in text.splitlines():
-        match = pattern.match(line.strip())
-        if match:
-            speaker = int(match.group(1))
-            segment_text = match.group(2).strip()
-            offset = float(match.group(3)) if match.group(3) is not None else 0.0
-            segments.append({
-                "speaker": speaker,
-                "text": segment_text,
-                "offset": offset
-            })
+    for match in pattern.finditer(text):
+        speaker = int(match.group(1))
+        seg_text = match.group(2).strip()
+        offset = float(match.group(3))
+        segments.append({
+            "speaker": speaker,
+            "text": seg_text,
+            "offset": offset
+        })
     return segments
 
 def process_segments(segments: List[Dict[str, any]]) -> List[str]:
-    """
-    セグメントを1つずつ処理し、10文字未満の発話だけ括弧でくくって出力
-    発話のマージは一切しない
-    """
-    if not segments:
-        return []
-
     formatted_lines = []
     for seg in segments:
         text = seg["text"].strip()
-        if len(text) < 10:  # 10文字未満は括弧
+        if len(text) < 10:
             text = f'（{text}）'
         line = f'Speaker{seg["speaker"]}: {text}({seg["offset"]})'
         formatted_lines.append(line)
-
     return formatted_lines
 
-def process_transcript(transcript_text: str) -> Optional[str]:
-    """
-    トランスクリプトを処理してフォーマットされたテキストを生成します
-    
-    Args:
-        transcript_text (str): 入力トランスクリプト
-        
-    Returns:
-        Optional[str]: フォーマットされたテキスト、エラー時はNone
-    """
-    if not transcript_text:
-        return None
-        
-    segments = parse_transcript(transcript_text)
+def step1_process_transcript(segments: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
     if not segments:
+        logger.warning("⚠️ ステップ1：空のセグメントを受信しました")
         return None
     
-    formatted_lines = process_segments(segments)
-    result = "\n".join(formatted_lines)
-    return result
-
-def step1_preprocess_transcript(segments: List[Dict[str, any]]) -> List[Dict[str, any]]:
-    """
-    ステップ1用の形式でセグメントを整形する（10文字未満は括弧でくくる）
-    """
-    if not segments:
-        return []
-
+    # セグメントを整形して返す
+    formatted_segments = []
     for seg in segments:
-        text = seg["text"].strip()
+        text = seg.get("text", "").strip()
         if len(text) < 10:
-            seg["text"] = f"（{text}）"
-    return segments
+            text = f'（{text}）'
+        
+        formatted_segments.append({
+            "speaker": seg.get("speaker", 1),
+            "text": text,
+            "offset": seg.get("offset", 0.0)
+        })
+    
+    logger.info("✅ ステップ1：整形結果（最初の5セグメント）:")
+    for seg in formatted_segments[:5]:
+        logger.info(f"    Speaker{seg['speaker']}: {seg['text']}({seg['offset']})")
+
+    return formatted_segments
