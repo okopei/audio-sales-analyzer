@@ -162,6 +162,8 @@ CREATE TABLE dbo.ConversationEnrichmentSegments (
 
     inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),  -- 登録日時
     updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),   -- 更新日時
+    revised_text_segment NVARCHAR(MAX) NULL,                -- ステップ2で修正された発話テキスト
+    delete_candidate_word NVARCHAR(MAX) NULL,               -- ステップ2で削除候補の単語
 
     CONSTRAINT FK_ConversationEnrichmentSegments_Meetings
         FOREIGN KEY (meeting_id) REFERENCES dbo.Meetings(meeting_id)

@@ -397,6 +397,79 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                         WHERE meeting_id = ?
                     """, (meeting_id,))
                     logging.info(f"✅ ステップ2完了 → status=step2_completed に更新 (meeting_id={meeting_id})")
+                 # ステップ3: Meetings.status='step2_completed' のデータを対象に補完処理
+                elif current_status == 'step2_completed':
+                    cursor.execute("""
+                        SELECT line_no, transcript_text_segment, front_score, after_score
+                        FROM dbo.ConversationEnrichmentSegments
+                        WHERE meeting_id = ? AND is_filler = 1
+                        ORDER BY line_no
+                    """, (meeting_id,))
+                    filler_segments = cursor.fetchall()
+
+                    if not filler_segments:
+                        logging.info(f"🟡 ステップ3: filler セグメントなし → スキップ (meeting_id={meeting_id})")
+                        continue
+
+                    for line_no, text, front_score, after_score in filler_segments:
+                        bracket_text = text.strip("（）")
+                        revised_text = None
+                        delete_candidate = None
+                        delete_target_line = None  
+
+                        if front_score >= after_score:
+                            # 前のセグメントから「最後の文」を取得
+                            cursor.execute("""
+                                SELECT transcript_text_segment FROM dbo.ConversationEnrichmentSegments
+                                WHERE meeting_id = ? AND line_no = ?
+                            """, (meeting_id, line_no - 1))
+                            prev_row = cursor.fetchone()
+                            prev_text = prev_row[0] if prev_row else ""
+
+                            sentences = [s for s in prev_text.strip().split("。") if s]
+                            if sentences:
+                                selected = sentences[-1].strip() + "。"
+                                revised_text = (selected + bracket_text).replace("。", "")
+                                delete_candidate = selected
+                                delete_target_line = line_no - 1
+                        else:
+                            # 後のセグメントから最初の文を取得
+                            cursor.execute("""
+                                SELECT transcript_text_segment FROM dbo.ConversationEnrichmentSegments
+                                WHERE meeting_id = ? AND line_no = ?
+                            """, (meeting_id, line_no + 1))
+                            next_row = cursor.fetchone()
+                            next_text = next_row[0] if next_row else ""
+
+                            sentences = [s for s in next_text.strip().split("。") if s]
+                            if sentences:
+                                selected = sentences[0].strip() + "。"
+                                revised_text = (selected + bracket_text).replace("。", "")
+                                delete_candidate = selected
+                                delete_target_line = line_no + 1
+
+                        # filler 行に revised_text を更新
+                        cursor.execute("""
+                            UPDATE dbo.ConversationEnrichmentSegments
+                            SET revised_text_segment = ?, updated_datetime = GETDATE()
+                            WHERE meeting_id = ? AND line_no = ?
+                        """, (revised_text, meeting_id, line_no))
+
+                        # delete 対象行に delete_candidate_word を更新
+                        if delete_target_line is not None:
+                            cursor.execute("""
+                                UPDATE dbo.ConversationEnrichmentSegments
+                                SET delete_candidate_word = ?, updated_datetime = GETDATE()
+                                WHERE meeting_id = ? AND line_no = ?
+                            """, (delete_candidate, meeting_id, delete_target_line))
+
+                    # ステータス更新
+                    cursor.execute("""
+                        UPDATE dbo.Meetings
+                        SET status = 'step3_completed', updated_datetime = GETDATE()
+                        WHERE meeting_id = ?
+                    """, (meeting_id,))
+                    logging.info(f"✅ ステップ3完了 → status=step3_completed に更新 (meeting_id={meeting_id})")
 
 
             except Exception as inner_e:
