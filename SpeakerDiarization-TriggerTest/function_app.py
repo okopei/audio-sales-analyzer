@@ -337,6 +337,13 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                             meeting_id, line_no, speaker, text,
                             offset, is_filler
                         ))
+                    # ✅ ステップ1完了 → Meetingsテーブルのステータス更新
+                    cursor.execute("""
+                        UPDATE dbo.Meetings
+                        SET status = 'step1_completed', updated_datetime = GETDATE()
+                        WHERE meeting_id = ?
+                    """, (meeting_id,))
+                    logging.info(f"✅ ステップ1完了 → status=step1_completed に更新 (meeting_id={meeting_id})")
 
             except Exception as inner_e:
                 logging.exception(f"⚠️ 個別処理エラー (meeting_id={meeting_id}): {inner_e}")
