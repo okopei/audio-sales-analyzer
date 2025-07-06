@@ -169,6 +169,34 @@ CREATE TABLE dbo.ConversationEnrichmentSegments (
         FOREIGN KEY (meeting_id) REFERENCES dbo.Meetings(meeting_id)
 )
 
+CREATE TABLE dbo.ConversationMergedSegments (
+    id INT IDENTITY(1,1) PRIMARY KEY,              -- 自動採番主キー
+    meeting_id INT NOT NULL,                       -- 会議ID（外部キー）
+    line_no INT NOT NULL,                          -- 対象行番号
+
+    speaker INT NOT NULL,                          -- 話者番号
+    original_text NVARCHAR(MAX) NOT NULL,          -- 元のtranscript_text_segment
+    merged_text NVARCHAR(MAX) NOT NULL,            -- delete_candidate除去＋revised_text追加済みの最終文
+
+    source_segment_ids NVARCHAR(100) NULL,         -- 元データの line_no（例: "12,13"）
+
+    inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),  -- 作成日時
+    updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),   -- 更新日時
+
+    CONSTRAINT FK_ConversationMergedSegments_Meetings
+        FOREIGN KEY (meeting_id) REFERENCES dbo.Meetings(meeting_id)
+);
+
+CREATE TABLE dbo.ConversationFinalSegments (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    meeting_id INT NOT NULL,
+    speaker INT NOT NULL,
+    merged_text NVARCHAR(MAX) NOT NULL,
+    offset_seconds FLOAT NULL,
+    inserted_datetime DATETIME DEFAULT GETDATE(),
+    updated_datetime DATETIME DEFAULT GETDATE()
+);
+
 -- インデックス
 CREATE INDEX idx_users_email ON Users(email)                            -- メールアドレスによる検索用
 

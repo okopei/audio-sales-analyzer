@@ -229,7 +229,7 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
         cursor.execute("""
             SELECT meeting_id, user_id, file_path, transcript_text, status
             FROM dbo.Meetings
-            WHERE status IN ('processing', 'transcribed','step1_completed','step2_completed')
+            WHERE status IN ('processing', 'transcribed','step1_completed','step2_completed','step3_completed')
         """)
         rows = cursor.fetchall()
 
@@ -470,6 +470,68 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                         WHERE meeting_id = ?
                     """, (meeting_id,))
                     logging.info(f"✅ ステップ3完了 → status=step3_completed に更新 (meeting_id={meeting_id})")
+
+               # ステップ4: step3_completed の会議に対して ConversationMergedSegments を生成
+                # function_app.py の PollingTranscriptionResults 関数内、step3 完了直後に追加
+
+                elif current_status == 'step3_completed':
+                    cursor.execute("""
+                        SELECT line_no, speaker, transcript_text_segment, revised_text_segment, offset_seconds
+                        FROM dbo.ConversationEnrichmentSegments
+                        WHERE meeting_id = ?
+                        ORDER BY line_no
+                    """, (meeting_id,))
+                    segments = cursor.fetchall()
+
+                    for idx, (line_no, speaker, transcript_text, revised_text, offset_seconds) in enumerate(segments):
+                        # filler（補完先）はスキップ（merged_textは前の行で構成する）
+                        if revised_text:
+                            continue
+
+                        # delete_candidate_word を取得
+                        cursor.execute("""
+                            SELECT delete_candidate_word FROM dbo.ConversationEnrichmentSegments
+                            WHERE meeting_id = ? AND line_no = ?
+                        """, (meeting_id, line_no))
+                        del_row = cursor.fetchone()
+                        delete_word = del_row[0] if del_row else None
+
+                        # 1行先の revised_text_segment を取得（存在すれば）
+                        next_revised = None
+                        if idx + 1 < len(segments):
+                            next_revised = segments[idx + 1][3]  # revised_text_segment
+
+                        # delete_word を除去し、merged_text を構成
+                        cleaned_text = transcript_text.replace(delete_word or "", "")
+                        merged_text = cleaned_text
+                        if next_revised:
+                            merged_text += f"({next_revised})"
+
+                        # INSERT 実行
+                        cursor.execute("""
+                            INSERT INTO dbo.ConversationMergedSegments (
+                                meeting_id, line_no, speaker, offset_seconds, original_text, merged_text,
+                                source_segment_ids, inserted_datetime, updated_datetime
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
+                        """, (
+                            meeting_id,
+                            line_no,
+                            speaker,
+                            offset_seconds,
+                            transcript_text,
+                            merged_text,
+                            f"{line_no},{line_no + 1}" if next_revised else f"{line_no}"
+                        ))
+
+                    cursor.execute("""
+                        UPDATE dbo.Meetings
+                        SET status = 'step4_completed', updated_datetime = GETDATE()
+                        WHERE meeting_id = ?
+                    """, (meeting_id,))
+                    logging.info(f"✅ ステップ4完了 → status=step4_completed に更新 (meeting_id={meeting_id})")
+
+
+
 
 
             except Exception as inner_e:
