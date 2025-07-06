@@ -28,11 +28,16 @@ def process_segments(segments: List[Dict[str, any]]) -> List[str]:
         formatted_lines.append(line)
     return formatted_lines
 
-def step1_process_transcript(segments: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
-    if not segments:
-        logger.warning("⚠️ ステップ1：空のセグメントを受信しました")
+def step1_process_transcript(transcript_text: str) -> Optional[List[Dict[str, Any]]]:
+    if not transcript_text:
+        logger.warning("⚠️ ステップ1：空のトランスクリプトを受信しました")
         return None
     
+    segments = parse_transcript(transcript_text)
+    if not segments:
+        logger.warning("⚠️ ステップ1：セグメントの抽出に失敗しました")
+        return None
+
     # セグメントを整形して返す
     formatted_segments = []
     for seg in segments:

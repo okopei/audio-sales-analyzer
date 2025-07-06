@@ -147,6 +147,26 @@ CREATE TABLE CommentReads (
         FOREIGN KEY (reader_id) REFERENCES Users(user_id)
 )
 
+CREATE TABLE dbo.ConversationEnrichmentSegments (
+    id INT IDENTITY(1,1) PRIMARY KEY,              -- 自動採番の主キー
+    meeting_id INT NOT NULL,                       -- 会議ID（外部キー）
+    line_no INT NOT NULL,                          -- セグメント行番号（ステップ1で付与）
+
+    speaker INT NOT NULL,                          -- 話者番号
+    transcript_text_segment NVARCHAR(MAX) NOT NULL,-- ステップ1で分割された発話テキスト
+
+    is_filler BIT NOT NULL DEFAULT 0,              -- 「10文字未満の発話」か（True=つなぎ表現）
+
+    front_score FLOAT NULL,                        -- ステップ2：前の発話との接続自然度スコア
+    after_score FLOAT NULL,                        -- ステップ2：後の発話との接続自然度スコア
+
+    inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),  -- 登録日時
+    updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),   -- 更新日時
+
+    CONSTRAINT FK_ConversationEnrichmentSegments_Meetings
+        FOREIGN KEY (meeting_id) REFERENCES dbo.Meetings(meeting_id)
+)
+
 -- インデックス
 CREATE INDEX idx_users_email ON Users(email)                            -- メールアドレスによる検索用
 

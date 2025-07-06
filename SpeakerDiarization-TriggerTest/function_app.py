@@ -15,8 +15,9 @@ from pathlib import Path
 
 # openai_processing モジュールを import できるように sys.path を調整
 sys.path.append(str(Path(__file__).parent))
+from openai_processing.openai_completion_step1 import step1_process_transcript
+# from openai_processing.openai_completion_core import clean_and_complete_conversation
 
-from openai_processing.openai_completion_core import clean_and_complete_conversation
 
 app = func.FunctionApp()
 
@@ -242,7 +243,6 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
             "Content-Type": "application/json"
         }
 
-
         for meeting_id, user_id, file_path, transcript_text, current_status in rows:
             try:
                 if current_status == "processing":
@@ -290,7 +290,6 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                             transcript.append(f"(Speaker{speaker})[{text}]({offset_seconds})")
                         transcript_text = " ".join(transcript)
 
-                        # Meetings に transcribed として反映（completed にはしない）
                         cursor.execute("""
                             UPDATE dbo.Meetings
                             SET transcript_text = ?, status = 'transcribed',
@@ -308,20 +307,36 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                         """, (f"Speech job {job_status}", meeting_id, user_id))
                         logging.warning(f"❌ transcription 失敗 → status=failed (meeting_id={meeting_id})")
                         continue
-
                     else:
                         logging.info(f"🕒 transcription 未完了 → スキップ (meeting_id={meeting_id})")
                         continue
 
-                # status == 'transcribed' か、'processing' からの続き
-                clean_and_complete_conversation(meeting_id)
+                # ステップ1だけを実行してConversationEnrichmentSegmentsへINSERT
+                if current_status == 'transcribed':
+                    segments = step1_process_transcript(transcript_text)
 
-                cursor.execute("""
-                    UPDATE dbo.Meetings
-                    SET status = 'completed', updated_datetime = GETDATE()
-                    WHERE meeting_id = ? 
-                """, (meeting_id))
-                logging.info(f"✅ transcript 整形＆ConversationSegments挿入 完了 → status=completed (meeting_id={meeting_id})")
+                    if not segments:
+                        logging.warning(f"⚠️ ステップ1の出力が空です (meeting_id={meeting_id})")
+                        continue
+
+                    for line_no, seg in enumerate(segments, start=1):
+                        speaker = seg["speaker"]
+                        text = seg["text"]
+                        offset = seg["offset"]
+                        is_filler = 1 if len(text.strip("（）")) < 10 else 0
+
+                        cursor.execute("""
+                            INSERT INTO dbo.ConversationEnrichmentSegments (
+                                meeting_id, line_no, speaker, transcript_text_segment,
+                                offset_seconds, is_filler,
+                                front_score, after_score,
+                                inserted_datetime, updated_datetime
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, GETDATE(), GETDATE())
+                        """, (
+                            meeting_id, line_no, speaker, text,
+                            offset, is_filler
+                        ))
 
             except Exception as inner_e:
                 logging.exception(f"⚠️ 個別処理エラー (meeting_id={meeting_id}): {inner_e}")
@@ -331,7 +346,6 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
 
     except Exception as e:
         logging.exception("❌ PollingTranscriptionResults 関数全体でエラーが発生")
-
 
 
 

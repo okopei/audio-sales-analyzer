@@ -167,9 +167,9 @@ def step2_complete_incomplete_sentences(segments: list) -> list:
     processed_count = 0
     bracket_count = 0
     
-    # 出力ファイルの準備
-    output_path = Path("outputs/completion_result_step2.txt")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    # # 出力ファイルの準備
+    # output_path = Path("outputs/completion_result_step2.txt")
+    # output_path.parent.mkdir(parents=True, exist_ok=True)
     
     for i, segment in enumerate(segments):
         if not isinstance(segment, str) or not segment.strip():
@@ -180,7 +180,7 @@ def step2_complete_incomplete_sentences(segments: list) -> list:
         logger.debug(f"処理中: {i+1}/{len(segments)} - {segment}")
         
         # 括弧内発話かどうかを最初にチェック
-        if segment.startswith("Speaker") and "（" in segment and "）" in segment:
+        if segment.startswith("Speaker") and any(b in segment for b in ["（", "("]) and any(b in segment for b in ["）", ")"]):
             bracket_count += 1
             logger.info(f"括弧内発話を発見: {segment}")
             
@@ -232,9 +232,9 @@ def step2_complete_incomplete_sentences(segments: list) -> list:
                 result_segments.append(scored_segment)
                 processed_count += 1
                 
-                # ファイルに追記出力
-                with open(output_path, "a", encoding="utf-8") as f:
-                    f.write(scored_segment + "\n")
+                # # ファイルに追記出力
+                # with open(output_path, "a", encoding="utf-8") as f:
+                #     f.write(scored_segment + "\n")
                 
                 logger.info(f"スコアリング完了: {segment} → {scored_segment}")
                 
@@ -253,6 +253,11 @@ def step2_complete_incomplete_sentences(segments: list) -> list:
     from .openai_completion_core import total_tokens_used
     logger.info(f"🧾 Step2 Total Token Usage: {total_tokens_used}")
     
+    # ステップ2の最終結果をログ出力（最初の5行だけ）
+    logger.info("📝 ステップ2の出力例（最初の5行）:")
+    for i, line in enumerate(result_segments[:5]):
+      logger.info(f"{i+1}: {line}")
+
     return result_segments
 
 def complete_utterance_with_openai(text: str) -> str:
