@@ -545,7 +545,7 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
 
                  # ステップ5: step4_completed の会議に対して 同一話者セグメントを統合し ConversationFinalSegments に挿入
                 elif current_status == 'step4_completed':
-                  # ConversationFinalSegments に既にデータがあればスキップ
+                    # ConversationFinalSegments に既にデータがあればスキップ
                     cursor.execute("""
                         SELECT COUNT(*) FROM dbo.ConversationFinalSegments WHERE meeting_id = ?
                     """, (meeting_id,))
@@ -557,6 +557,8 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                             WHERE meeting_id = ?
                         """, (meeting_id,))
                         continue
+
+                    # ConversationMergedSegments 取得
                     cursor.execute("""
                         SELECT speaker, merged_text, offset_seconds
                         FROM dbo.ConversationMergedSegments
@@ -565,25 +567,36 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                     """, (meeting_id,))
                     merged_segments = cursor.fetchall()
 
-                    # セグメントを1件ずつ結合（同一話者が連続している場合）
+                    # 同一話者ごとに文をマージ（重複を除去）
                     final_segments = []
                     current_speaker = None
-                    current_text = ""
                     current_offset = None
+                    sentence_set = set()
+                    sentence_list = []
 
                     for speaker, text, offset in merged_segments:
+                        # 文単位に分割（「。」で区切り）
+                        sentences = [s.strip() + "。" for s in text.split("。") if s.strip()]
+
                         if speaker == current_speaker:
-                            current_text += " " + text
+                            for sentence in sentences:
+                                if sentence not in sentence_set:
+                                    sentence_set.add(sentence)
+                                    sentence_list.append(sentence)
                         else:
                             if current_speaker is not None:
-                                final_segments.append((meeting_id, current_speaker, current_text.strip(), current_offset))
-                            current_speaker = speaker
-                            current_text = text
-                            current_offset = offset
+                                combined_text = " ".join(sentence_list).strip()
+                                final_segments.append((meeting_id, current_speaker, combined_text, current_offset))
 
-                    # 最後の発言も保存
-                    if current_speaker is not None:
-                        final_segments.append((meeting_id, current_speaker, current_text.strip(), current_offset))
+                            current_speaker = speaker
+                            current_offset = offset
+                            sentence_set = set(sentences)
+                            sentence_list = sentences.copy()
+
+                    # 最後のセグメントも保存
+                    if current_speaker is not None and sentence_list:
+                        combined_text = " ".join(sentence_list).strip()
+                        final_segments.append((meeting_id, current_speaker, combined_text, current_offset))
 
                     # ConversationFinalSegments に INSERT
                     for seg in final_segments:
@@ -599,7 +612,8 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                         SET status = 'step5_completed', updated_datetime = GETDATE()
                         WHERE meeting_id = ?
                     """, (meeting_id,))
-                    logging.info(f"✅ ステップ5完了 → status=step5_completed に更新 (meeting_id={meeting_id})")
+                    logging.info(f"✅ ステップ5完了（重複文排除版）→ status=step5_completed に更新 (meeting_id={meeting_id})")
+
 
                 # ステップ6: step5_completed の会議に対して フィラー削除処理を実施
                 elif current_status == 'step5_completed':
