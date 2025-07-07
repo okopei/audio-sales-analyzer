@@ -713,6 +713,7 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                         WHERE meeting_id = ?
                     """, (meeting_id,))
                     logging.info(f"✅ ステップ7完了 → status=step7_completed に更新 (meeting_id={meeting_id})")
+                 # ステップ8: step7_completed の会議に対して ConversationSegments にデータを移行
                 elif current_status == 'step7_completed':
                     # ConversationFinalSegments を取得
                     cursor.execute("""
@@ -732,6 +733,7 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                         """, (meeting_id,))
                         continue
 
+                    # Meetingsテーブルからユーザー・音声情報を取得
                     cursor.execute("""
                         SELECT user_id, file_name, file_path, file_size, duration_seconds
                         FROM dbo.Meetings
