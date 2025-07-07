@@ -229,7 +229,7 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
         cursor.execute("""
             SELECT meeting_id, user_id, file_path, transcript_text, status
             FROM dbo.Meetings
-            WHERE status IN ('processing', 'transcribed','step1_completed','step2_completed','step3_completed','step4_completed','step5_completed')
+            WHERE status IN ('processing', 'transcribed','step1_completed','step2_completed','step3_completed','step4_completed','step5_completed','step6_completed')
         """)
         rows = cursor.fetchall()
 
@@ -641,7 +641,78 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                         WHERE meeting_id = ?
                     """, (meeting_id,))
                     logging.info(f"✅ ステップ6完了 → status=step6_completed に更新 (meeting_id={meeting_id})")
+                 # ステップ7: step6_completed の会議に対して タイトル要約生成を実行
+                elif current_status == 'step6_completed':
+                    cursor.execute("""
+                        SELECT id, speaker, cleaned_text, offset_seconds
+                        FROM dbo.ConversationFinalSegments
+                        WHERE meeting_id = ?
+                        ORDER BY offset_seconds
+                    """, (meeting_id,))
+                    rows = cursor.fetchall()
 
+                    if not rows:
+                        logging.warning(f"⚠ ステップ7スキップ（データなし）meeting_id={meeting_id}")
+                        cursor.execute("""
+                            UPDATE dbo.Meetings
+                            SET status = 'step7_completed', updated_datetime = GETDATE()
+                            WHERE meeting_id = ?
+                        """, (meeting_id,))
+                        continue
+
+                    # openai_completion_step7 から処理関数をインポート
+                    from openai_processing.openai_completion_step7 import generate_summary_title, extract_offset_from_line
+
+                    # テキスト形式に変換してブロック化処理用に準備
+                    lines = []
+                    for row in rows:
+                        segment_id, speaker, text, offset = row
+                        if text:
+                            lines.append((segment_id, f"Speaker{speaker}: {text}({offset})"))
+
+                    # ブロック化（300秒単位）
+                    blocks = []
+                    current_block = {
+                        "lines": [],
+                        "block_index": 0,
+                        "start_offset": 0.0
+                    }
+                    for seg_id, line in lines:
+                        body, offset = extract_offset_from_line(line)
+                        if offset is None:
+                            continue
+                        block_index = int(offset // 300)
+                        if block_index != current_block["block_index"]:
+                            if current_block["lines"]:
+                                blocks.append(current_block.copy())
+                            current_block = {
+                                "lines": [],
+                                "block_index": block_index,
+                                "start_offset": offset
+                            }
+                        current_block["lines"].append((seg_id, line))
+                    if current_block["lines"]:
+                        blocks.append(current_block)
+
+                    # 各ブロックに対してタイトルを生成し、先頭のsummaryにだけ挿入
+                    for i, block in enumerate(blocks):
+                        lines_only = [line for _, line in block["lines"]]
+                        conversation_text = "\n".join(lines_only)
+                        title = generate_summary_title(conversation_text, i, len(blocks))
+                        first_seg_id = block["lines"][0][0]
+                        cursor.execute("""
+                            UPDATE dbo.ConversationFinalSegments
+                            SET summary = ?, updated_datetime = GETDATE()
+                            WHERE id = ?
+                        """, (title, first_seg_id))
+
+                    # ステータス更新
+                    cursor.execute("""
+                        UPDATE dbo.Meetings
+                        SET status = 'step7_completed', updated_datetime = GETDATE()
+                        WHERE meeting_id = ?
+                    """, (meeting_id,))
+                    logging.info(f"✅ ステップ7完了 → status=step7_completed に更新 (meeting_id={meeting_id})")
 
             except Exception as inner_e:
                 logging.exception(f"⚠️ 個別処理エラー (meeting_id={meeting_id}): {inner_e}")
