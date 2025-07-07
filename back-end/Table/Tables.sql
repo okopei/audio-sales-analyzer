@@ -182,7 +182,8 @@ CREATE TABLE dbo.ConversationMergedSegments (
 
     inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),  -- 作成日時
     updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),   -- 更新日時
-
+    cleaned_text NVARCHAR(MAX) NULL,                       -- フィラー削除後のテキスト
+    summary NVARCHAR(MAX) NULL,                       -- 要約タイトル
     CONSTRAINT FK_ConversationMergedSegments_Meetings
         FOREIGN KEY (meeting_id) REFERENCES dbo.Meetings(meeting_id)
 );

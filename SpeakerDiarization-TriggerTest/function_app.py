@@ -229,7 +229,7 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
         cursor.execute("""
             SELECT meeting_id, user_id, file_path, transcript_text, status
             FROM dbo.Meetings
-            WHERE status IN ('processing', 'transcribed','step1_completed','step2_completed','step3_completed','step4_completed','step5_completed','step6_completed')
+            WHERE status IN ('processing', 'transcribed','step1_completed','step2_completed','step3_completed','step4_completed','step5_completed','step6_completed','step7_completed')
         """)
         rows = cursor.fetchall()
 
@@ -713,6 +713,84 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                         WHERE meeting_id = ?
                     """, (meeting_id,))
                     logging.info(f"✅ ステップ7完了 → status=step7_completed に更新 (meeting_id={meeting_id})")
+                elif current_status == 'step7_completed':
+                    # ConversationFinalSegments を取得
+                    cursor.execute("""
+                        SELECT id, speaker, meeting_id, cleaned_text, summary, offset_seconds
+                        FROM dbo.ConversationFinalSegments
+                        WHERE meeting_id = ?
+                        ORDER BY offset_seconds
+                    """, (meeting_id,))
+                    final_segments = cursor.fetchall()
+
+                    if not final_segments:
+                        logging.warning(f"⚠ ステップ8スキップ（ConversationFinalSegmentsなし）meeting_id={meeting_id}")
+                        cursor.execute("""
+                            UPDATE dbo.Meetings
+                            SET status = 'step8_completed', updated_datetime = GETDATE()
+                            WHERE meeting_id = ?
+                        """, (meeting_id,))
+                        continue
+
+                    cursor.execute("""
+                        SELECT user_id, file_name, file_path, file_size, duration_seconds
+                        FROM dbo.Meetings
+                        WHERE meeting_id = ?
+                    """, (meeting_id,))
+                    meeting_row = cursor.fetchone()
+                    if not meeting_row:
+                        logging.warning(f"⚠ ミーティング情報取得失敗 meeting_id={meeting_id}")
+                        continue
+
+                    meeting_user_id, file_name, file_path, file_size, duration_seconds = meeting_row
+
+                    for segment_id, speaker_raw, _, cleaned_text, summary, offset in final_segments:
+                        speaker_name = f"Speaker{speaker_raw}"
+
+                        # speaker_id を取得
+                        cursor.execute("""
+                            SELECT speaker_id FROM dbo.Speakers
+                            WHERE meeting_id = ? AND speaker_name = ?
+                        """, (meeting_id, speaker_name))
+                        speaker_row = cursor.fetchone()
+                        speaker_id = speaker_row[0] if speaker_row else 0
+
+                        # サマリがある場合：1行目に summary を挿入（user_id=0, speaker_id=0）
+                        if summary:
+                            cursor.execute("""
+                                INSERT INTO dbo.ConversationSegments (
+                                    user_id, speaker_id, meeting_id, content, file_name, file_path, file_size,
+                                    duration_seconds, status, inserted_datetime, updated_datetime,
+                                    start_time, end_time
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', GETDATE(), GETDATE(), ?, NULL)
+                            """, (
+                                0, 0, meeting_id, summary,
+                                file_name, file_path, file_size,
+                                duration_seconds,
+                                offset
+                            ))
+
+                        # cleaned_text を挿入（常に1回だけ）
+                        cursor.execute("""
+                            INSERT INTO dbo.ConversationSegments (
+                                user_id, speaker_id, meeting_id, content, file_name, file_path, file_size,
+                                duration_seconds, status, inserted_datetime, updated_datetime,
+                                start_time, end_time
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', GETDATE(), GETDATE(), ?, NULL)
+                        """, (
+                            meeting_user_id, speaker_id, meeting_id, cleaned_text,
+                            file_name, file_path, file_size,
+                            duration_seconds,
+                            offset
+                        ))
+
+                    # ステータス更新
+                    cursor.execute("""
+                        UPDATE dbo.Meetings
+                        SET status = 'step8_completed', updated_datetime = GETDATE()
+                        WHERE meeting_id = ?
+                    """, (meeting_id,))
+                    logging.info(f"✅ ステップ8完了 → status=step8_completed に更新 (meeting_id={meeting_id})")
 
             except Exception as inner_e:
                 logging.exception(f"⚠️ 個別処理エラー (meeting_id={meeting_id}): {inner_e}")
