@@ -147,6 +147,57 @@ CREATE TABLE CommentReads (
         FOREIGN KEY (reader_id) REFERENCES Users(user_id)
 )
 
+CREATE TABLE dbo.ConversationEnrichmentSegments (
+    id INT IDENTITY(1,1) PRIMARY KEY,              -- 自動採番の主キー
+    meeting_id INT NOT NULL,                       -- 会議ID（外部キー）
+    line_no INT NOT NULL,                          -- セグメント行番号（ステップ1で付与）
+
+    speaker INT NOT NULL,                          -- 話者番号
+    transcript_text_segment NVARCHAR(MAX) NOT NULL,-- ステップ1で分割された発話テキスト
+
+    is_filler BIT NOT NULL DEFAULT 0,              -- 「10文字未満の発話」か（True=つなぎ表現）
+
+    front_score FLOAT NULL,                        -- ステップ2：前の発話との接続自然度スコア
+    after_score FLOAT NULL,                        -- ステップ2：後の発話との接続自然度スコア
+
+    inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),  -- 登録日時
+    updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),   -- 更新日時
+    revised_text_segment NVARCHAR(MAX) NULL,                -- ステップ2で修正された発話テキスト
+    delete_candidate_word NVARCHAR(MAX) NULL,               -- ステップ2で削除候補の単語
+
+    CONSTRAINT FK_ConversationEnrichmentSegments_Meetings
+        FOREIGN KEY (meeting_id) REFERENCES dbo.Meetings(meeting_id)
+)
+
+CREATE TABLE dbo.ConversationMergedSegments (
+    id INT IDENTITY(1,1) PRIMARY KEY,              -- 自動採番主キー
+    meeting_id INT NOT NULL,                       -- 会議ID（外部キー）
+    line_no INT NOT NULL,                          -- 対象行番号
+
+    speaker INT NOT NULL,                          -- 話者番号
+    original_text NVARCHAR(MAX) NOT NULL,          -- 元のtranscript_text_segment
+    merged_text NVARCHAR(MAX) NOT NULL,            -- delete_candidate除去＋revised_text追加済みの最終文
+
+    source_segment_ids NVARCHAR(100) NULL,         -- 元データの line_no（例: "12,13"）
+
+    inserted_datetime DATETIME NOT NULL DEFAULT GETDATE(),  -- 作成日時
+    updated_datetime DATETIME NOT NULL DEFAULT GETDATE(),   -- 更新日時
+    cleaned_text NVARCHAR(MAX) NULL,                       -- フィラー削除後のテキスト
+    summary NVARCHAR(MAX) NULL,                       -- 要約タイトル
+    CONSTRAINT FK_ConversationMergedSegments_Meetings
+        FOREIGN KEY (meeting_id) REFERENCES dbo.Meetings(meeting_id)
+);
+
+CREATE TABLE dbo.ConversationFinalSegments (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    meeting_id INT NOT NULL,
+    speaker INT NOT NULL,
+    merged_text NVARCHAR(MAX) NOT NULL,
+    offset_seconds FLOAT NULL,
+    inserted_datetime DATETIME DEFAULT GETDATE(),
+    updated_datetime DATETIME DEFAULT GETDATE()
+);
+
 -- インデックス
 CREATE INDEX idx_users_email ON Users(email)                            -- メールアドレスによる検索用
 

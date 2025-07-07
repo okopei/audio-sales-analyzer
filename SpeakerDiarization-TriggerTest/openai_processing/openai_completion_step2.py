@@ -147,139 +147,6 @@ def extract_first_sentence_no_period(text: str) -> str:
         # 句点がない場合は全体を返す
         return text
 
-# def process_segment_connection(prev_text: str, bracket_text: str, next_text: str) -> dict:
-#     """
-#     括弧内発話の接続先を判定し、補完と削除材料を決定する
-#     
-#     Args:
-#         prev_text (str): 前の発話
-#         bracket_text (str): 括弧内の発話
-#         next_text (str): 次の発話
-#         
-#     Returns:
-#         dict: 接続先、補完テキスト、削除材料を含む辞書
-#     """
-#     system_message = """
-# あなたは会話補完のエキスパートです。以下の条件で括弧内の短い発話（相槌）を、会話の前後どちらかに自然に接続してください。
-
-# 1. 括弧内の発話は、前の発話または次の発話と意味が通るように補完してください。
-# 2. 前後どちらと接続した方が自然かを比較し、適切な語句で補完してください。
-# 3. 補完に使った語（たとえば「大丈。」など）は元の発話から削除してください。
-# 4. 文脈上不要な単語や破綻した言葉（例：「すですよね」「あわ。」など）は削除してください。
-# 5. 同じ表現の繰り返しを避け、多様で自然な言葉遣いを使ってください。
-# 6. 括弧内の形式（「（〇〇です。）」）は維持してください。
-
-# 出力は補完された括弧内のテキストのみで構いません。
-
-# 出力形式（JSON）:
-# {
-#   "connect_to": "前" or "後",
-#   "corrected_text": "補完後の括弧内テキスト",
-#   "remove_fragment": "削除すべき語尾・語句（例：大丈。）"
-# }"""
-
-#     user_message = f"""以下の括弧内発話「{bracket_text}」は、文法的に前後どちらの文脈に接続するのが自然ですか？
-
-# - 前文：{prev_text}
-# - 後文：{next_text}
-
-# 接続先（前 or 後）と、自然な形に補完した括弧内発話、および削除すべき語句（例：「大丈。」）を返してください。
-
-# 出力形式：
-# {{
-#   "connect_to": "前",
-#   "corrected_text": "大丈夫です。",
-#   "remove_fragment": "大丈。"
-# }}"""
-
-#     try:
-#         response = client.chat.completions.create(
-#             model=os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
-#             messages=[
-#                 {"role": "system", "content": system_message},
-#                 {"role": "user", "content": user_message}
-#             ],
-#             temperature=0.1,
-#             max_tokens=300
-#         )
-        
-#         # トークン使用量のデバッグ出力
-#         total_tokens = response.usage.total_tokens
-#         prompt_tokens = response.usage.prompt_tokens
-#         completion_tokens = response.usage.completion_tokens
-        
-#         logger.debug(f"🧾 Step2 Token Usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}")
-        
-#         result = response.choices[0].message.content.strip()
-#         log_token_usage(response.usage.total_tokens, "step2_connection_analysis")
-        
-#         # JSONパース
-#         parsed_result = _parse_gpt_response(result)
-#         if parsed_result:
-#             return {
-#                 "connect_to": parsed_result.get("connect_to", "前"),
-#                 "corrected_text": parsed_result.get("corrected_text", bracket_text),
-#                 "remove_fragment": parsed_result.get("remove_fragment", "")
-#             }
-#         else:
-#             # パース失敗時は元の内容を保持
-#             return {
-#                 "connect_to": "前",
-#                 "corrected_text": bracket_text,
-#                 "remove_fragment": ""
-#             }
-            
-#     except Exception as e:
-#         logger.error(f"接続分析エラー: {e}")
-#         return {
-#             "connect_to": "前",
-#             "corrected_text": bracket_text,
-#             "remove_fragment": ""
-#         }
-
-# def remove_fragment_from_text(text: str, fragment: str) -> str:
-#     """
-#     テキストから指定されたフラグメントを削除し、フィラーや断片語も自動削除する
-#     
-#     Args:
-#         text (str): 元のテキスト
-#         fragment (str): 削除するフラグメント
-#         
-#     Returns:
-#         str: フラグメントを削除したテキスト
-#     """
-#     if not text:
-#         return text
-    
-#     # 指定されたフラグメントを削除
-#     if fragment:
-#         # フラグメントを削除（末尾から検索）
-#         if text.endswith(fragment):
-#             text = text[:-len(fragment)].rstrip()
-#         else:
-#             # フラグメントが含まれている場合は削除
-#             text = text.replace(fragment, "").strip()
-    
-#     # フィラー候補を削除
-#     fillers = ["えっと", "あの", "うーん", "なんか"]
-#     for filler in fillers:
-#         # 文頭のフィラーを削除
-#         if text.startswith(filler):
-#             text = text[len(filler):].strip()
-#         # 文末のフィラーを削除
-#         if text.endswith(filler):
-#             text = text[:-len(filler)].rstrip()
-    
-#     # 断片候補（2文字以下のひらがな文節で終わる）を削除
-#     import re
-#     # 末尾の2文字以下のひらがな文節を検出
-#     fragment_pattern = r'[あ-ん]{1,2}。$'
-#     if re.search(fragment_pattern, text):
-#         # 末尾の断片を削除
-#         text = re.sub(fragment_pattern, '', text).rstrip()
-    
-#     return text
-
 def step2_complete_incomplete_sentences(segments: list) -> list:
     """
     ステップ2: 括弧内発話の前後接続自然さスコアリング評価（句点削除・自然接続判定）
@@ -300,9 +167,9 @@ def step2_complete_incomplete_sentences(segments: list) -> list:
     processed_count = 0
     bracket_count = 0
     
-    # 出力ファイルの準備
-    output_path = Path("outputs/completion_result_step2.txt")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    # # 出力ファイルの準備
+    # output_path = Path("outputs/completion_result_step2.txt")
+    # output_path.parent.mkdir(parents=True, exist_ok=True)
     
     for i, segment in enumerate(segments):
         if not isinstance(segment, str) or not segment.strip():
@@ -313,7 +180,7 @@ def step2_complete_incomplete_sentences(segments: list) -> list:
         logger.debug(f"処理中: {i+1}/{len(segments)} - {segment}")
         
         # 括弧内発話かどうかを最初にチェック
-        if segment.startswith("Speaker") and "（" in segment and "）" in segment:
+        if segment.startswith("Speaker") and any(b in segment for b in ["（", "("]) and any(b in segment for b in ["）", ")"]):
             bracket_count += 1
             logger.info(f"括弧内発話を発見: {segment}")
             
@@ -365,9 +232,9 @@ def step2_complete_incomplete_sentences(segments: list) -> list:
                 result_segments.append(scored_segment)
                 processed_count += 1
                 
-                # ファイルに追記出力
-                with open(output_path, "a", encoding="utf-8") as f:
-                    f.write(scored_segment + "\n")
+                # # ファイルに追記出力
+                # with open(output_path, "a", encoding="utf-8") as f:
+                #     f.write(scored_segment + "\n")
                 
                 logger.info(f"スコアリング完了: {segment} → {scored_segment}")
                 
@@ -386,6 +253,11 @@ def step2_complete_incomplete_sentences(segments: list) -> list:
     from .openai_completion_core import total_tokens_used
     logger.info(f"🧾 Step2 Total Token Usage: {total_tokens_used}")
     
+    # ステップ2の最終結果をログ出力（最初の5行だけ）
+    logger.info("📝 ステップ2の出力例（最初の5行）:")
+    for i, line in enumerate(result_segments[:5]):
+      logger.info(f"{i+1}: {line}")
+
     return result_segments
 
 def complete_utterance_with_openai(text: str) -> str:
@@ -738,18 +610,24 @@ def evaluate_connection_naturalness_sentence(front_sentence: str, bracket_text: 
             "back_score": 0.5
         }
 
-def evaluate_connection_naturalness_no_period(front_sentence: str, bracket_text: str, back_sentence: str) -> dict:
+def evaluate_connection_naturalness_no_period(front_text: str, bracket_text: str, back_text: str) -> dict:
     """
     括弧内発話の前後接続の自然さをスコアリング評価する（句点削除・自然接続判定）
-    
+
     Args:
-        front_sentence (str): 前の文（句点なし）
+        front_text (str): 前の文（句点なし）
         bracket_text (str): 括弧内の発話（句点なし）
-        back_sentence (str): 後の文（句点なし）
-        
+        back_text (str): 後の文（句点なし）
+
     Returns:
         dict: 前接続スコアと後接続スコアを含む辞書
     """
+    import os
+    import logging
+    from .openai_completion_core import client, log_token_usage, _parse_gpt_response
+
+    logger = logging.getLogger(__name__)
+
     system_message = """
 あなたは会話の自然さを判定する日本語特化の言語モデルです。
 2つの文の自然さを比較し、それぞれスコア（0.0〜1.0）で評価してください。
@@ -772,12 +650,13 @@ def evaluate_connection_naturalness_no_period(front_sentence: str, bracket_text:
 {
   "front_score": 0.0-1.0,
   "back_score": 0.0-1.0
-}"""
+}
+"""
 
     user_message = f"""次の2つの文を比較してください：
 
-1. 前文接続: {front_sentence}{bracket_text}
-2. 後文接続: {bracket_text}{back_sentence}
+1. 前文接続: {front_text}{bracket_text}
+2. 後文接続: {bracket_text}{back_text}
 
 各文について自然さを評価し、以下の形式で出力してください：
 {{
@@ -795,18 +674,10 @@ def evaluate_connection_naturalness_no_period(front_sentence: str, bracket_text:
             temperature=0.1,
             max_tokens=200
         )
-        
-        # トークン使用量のデバッグ出力
-        total_tokens = response.usage.total_tokens
-        prompt_tokens = response.usage.prompt_tokens
-        completion_tokens = response.usage.completion_tokens
-        
-        logger.debug(f"🧾 Step2 No Period Scoring Token Usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}")
-        
+
         result = response.choices[0].message.content.strip()
         log_token_usage(response.usage.total_tokens, "step2_no_period_scoring_evaluation")
-        
-        # JSONパース
+
         parsed_result = _parse_gpt_response(result)
         if parsed_result:
             return {
@@ -814,15 +685,8 @@ def evaluate_connection_naturalness_no_period(front_sentence: str, bracket_text:
                 "back_score": float(parsed_result.get("back_score", 0.0))
             }
         else:
-            # パース失敗時はデフォルトスコア
-            return {
-                "front_score": 0.5,
-                "back_score": 0.5
-            }
-            
+            return {"front_score": 0.5, "back_score": 0.5}
+
     except Exception as e:
         logger.error(f"句点削除版スコアリング評価エラー: {e}")
-        return {
-            "front_score": 0.5,
-            "back_score": 0.5
-        } 
+        return {"front_score": 0.5, "back_score": 0.5}

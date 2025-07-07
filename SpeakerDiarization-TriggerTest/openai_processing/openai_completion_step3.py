@@ -102,141 +102,69 @@ def get_back_sentence(lines: list, current_index: int, current_speaker: str) -> 
     
     return ""
 
-def step3_finalize_completion(meeting_id: int) -> bool:
+def step3_finalize_completion(segments: List[str]) -> List[str]:
     """
-    ステップ3: 会話補完の確定処理
-    completion_result_step2.txtを読み込み、スコアに基づいて補完処理を行い、completion_result_step3.txtに出力
+    ステップ3: 会話補完の確定処理（ファイル保存なし／ログ出力のみ）
     
     Args:
-        meeting_id (int): 会議ID
+        segments (List[str]): ステップ2で整形されたセグメント文字列リスト
         
     Returns:
-        bool: 処理成功時True
+        List[str]: 処理後の最終セグメント
     """
     try:
-        # ベースディレクトリの設定
-        BASE_DIR = Path(__file__).resolve().parent
-        
-        # 入力ファイルのパス
-        input_path = BASE_DIR / "outputs" / "completion_result_step2.txt"
-        output_path = BASE_DIR / "outputs" / "completion_result_step3.txt"
-        
-        # 入力ファイルの存在確認
-        if not input_path.exists():
-            logger.error(f"❌ 入力ファイルが見つかりません: {input_path}")
-            return False
-            
-        # 出力ディレクトリの準備
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # 入力ファイルを読み込み
-        with open(input_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        
         result_lines = []
         processed_count = 0
-        
-        for i, line in enumerate(lines):
+
+        for i, line in enumerate(segments):
             line = line.strip()
             if not line:
                 continue
-                
-            # スコア付きの行かどうかをチェック
-            # 例: Speaker2: （夫です。）(15.2) [前:0.8 後:0.3]
+
             score_match = re.search(r'\[前:([0-9.]+) 後:([0-9.]+)\]$', line)
-            
+
             if score_match:
-                # スコアを抽出
                 front_score = float(score_match.group(1))
                 back_score = float(score_match.group(2))
-                
-                # スコア部分を除去して元の行を取得
                 original_line = line[:line.find('[')].strip()
-                
-                # 括弧内発話の抽出
+
                 bracket_match = re.search(r'Speaker(\d+): （(.+?)）\(([0-9.]+)\)', original_line)
-                
+
                 if bracket_match:
                     speaker = bracket_match.group(1)
                     bracket_content = bracket_match.group(2)
                     offset = bracket_match.group(3)
-                    
-                    # 前後の行を取得して補完材料を探す
-                    prev_line = lines[i - 1] if i > 0 else ""
-                    next_line = lines[i + 1] if i < len(lines) - 1 else ""
-                    
-                    # 定義ルールに従って前後文を抽出
+
                     current_speaker = f"Speaker{speaker}"
-                    front_sentence = get_front_sentence(lines, i, current_speaker)
-                    back_sentence = get_back_sentence(lines, i, current_speaker)
-                    
-                    # スコアに基づいて補完処理
+                    front_sentence = get_front_sentence(segments, i, current_speaker)
+                    back_sentence = get_back_sentence(segments, i, current_speaker)
+
                     if front_score > back_score:
-                        # 前接続を選択
-                        
-                        # 括弧内を補完語で更新（前の文を使用）
                         completed_text = get_completed_bracket(bracket_content, front_sentence, back_sentence, "front")
-                        
-                        # 前の発話から補完材料を削除
-                        if front_sentence:
-                            original_prev_body, prev_offset = extract_offset_from_line(prev_line)
-                            deletion_target = front_sentence.strip("。、，")
-                            updated_prev_body = original_prev_body.replace(deletion_target, "", 1)
-
-                            # 最終出力に反映させる
-                            lines[i - 1] = f"{updated_prev_body}{prev_offset}"
-                        
-                        result_line = f"Speaker{speaker}: （{completed_text}）({offset})"
                     else:
-                        # 後接続を選択
-                        
-                        # 括弧内を補完語で更新（後ろの文を使用）
                         completed_text = get_completed_bracket(bracket_content, front_sentence, back_sentence, "back")
-                        
-                        # 後の発話から補完材料を削除
-                        if back_sentence:
-                            original_next_body, next_offset = extract_offset_from_line(next_line)
-                            deletion_target = back_sentence.strip("。、，")
-                            updated_next_body = original_next_body.replace(deletion_target, "", 1)
 
-                            # 🔧 文頭の句点除去（テキスト部分のみ）
-                            speaker_part = extract_speaker_from_line(updated_next_body)
-                            text_part = extract_text_part(updated_next_body)
-                            text_part = text_part.lstrip("。．，,、")
-                            updated_next_body = f"{speaker_part}: {text_part}"
-                            
-                            lines[i + 1] = f"{updated_next_body}{next_offset}"
-                        
-                        result_line = f"Speaker{speaker}: （{completed_text}）({offset})"
-                    
+                    result_line = f"Speaker{speaker}: （{completed_text}）({offset})"
                     result_lines.append(result_line)
                     processed_count += 1
-                    
                 else:
-                    # 括弧内発話でない場合はそのまま
                     result_lines.append(original_line)
             else:
-                # スコア付きでない行はそのまま
                 result_lines.append(line)
-        
-        # 結果を出力ファイルに保存
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(result_lines))
-        
-        # 出力確認
-        if output_path.exists():
-            with open(output_path, "r", encoding="utf-8") as f:
-                line_count = sum(1 for _ in f)
-        else:
-            logger.error(f"❌ completion_result_step3.txt の出力が見つかりません: {output_path}")
-        
-        return True
-        
+
+        logger.info(f"✅ ステップ3完了: {processed_count} 件の括弧内発話を補完しました")
+        logger.info("📝 ステップ3の出力例（最初の5行）:")
+        for idx, line in enumerate(result_lines[:5]):
+            logger.info(f"{idx+1}: {line}")
+
+        return result_lines
+
     except Exception as e:
         logger.error(f"ステップ3処理中にエラーが発生: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        return False 
+        return []
+
 
 def get_completed_bracket(original_bracket: str, prev_body: str, next_body: str, connection_type: str) -> str:
     """
