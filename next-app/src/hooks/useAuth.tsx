@@ -11,7 +11,7 @@ interface User {
   user_name: string
   account_status: string
   is_active: boolean
-  role?: string
+  is_manager?: boolean 
 }
 
 // 認証コンテキストの型定義
@@ -41,8 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // ユーザーがマネージャーかどうかを判定する関数
   const checkIsManager = (userData: User): boolean => {
-    // account_statusが'ACTIVE'でroleが'manager'の場合はマネージャー
-    return userData.account_status === 'ACTIVE' && userData.role === 'manager'
+    return userData.is_manager === true
   }
 
   // 初期化時にCookieとローカルストレージからユーザー情報を取得
@@ -70,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const parsedUser = JSON.parse(storedUser)
             
             // ユーザーデータにaccount_statusがない場合、roleから設定
-            if (parsedUser.role === 'manager' && parsedUser.account_status !== 'ACTIVE') {
+            if (parsedUser.is_manager === true && parsedUser.account_status !== 'ACTIVE') {
               parsedUser.account_status = 'ACTIVE'
             }
             
@@ -109,63 +108,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [router])
 
   // ログイン処理
-  const login = async (email: string, password: string) => {
-    setLoading(true)
-    
-    try {
-      console.log(`Attempting login for ${email}`)
-      
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/users/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      })
-      
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'ログインに失敗しました')
-      }
-      
-      const data = await response.json()
-      console.log('Login successful:', data.user)
-      
-      // roleからaccount_statusを設定
-      if (data.user.role === 'manager' && data.user.account_status !== 'ACTIVE') {
-        data.user.account_status = 'ACTIVE'
-      }
-      
-      // ブラウザ環境の場合、ローカルストレージとCookieの両方に保存
-      if (isBrowser()) {
-        // ローカルストレージに保存
-        localStorage.setItem('token', data.token)
-        localStorage.setItem('user', JSON.stringify(data.user))
-        
-        // Cookieにも保存（ミドルウェア用）
-        Cookies.set('authToken', data.token, { expires: COOKIE_EXPIRY })
-        Cookies.set('user', JSON.stringify(data.user), { expires: COOKIE_EXPIRY })
-      }
-      
-      setUser(data.user)
-      
-      // ユーザーの権限に基づいてリダイレクト
-      // 少し遅延を入れて状態の更新が確実に反映されるようにする
-      setTimeout(() => {
-        if (checkIsManager(data.user)) {
-          router.push('/manager-dashboard')
-        } else {
-          router.push('/dashboard')
-        }
-        console.log('Redirecting to dashboard...')
-      }, 100)
-    } catch (error) {
-      console.error('Login error:', error)
-      throw error
-    } finally {
-      setLoading(false)
+const login = async (email: string, password: string) => {
+  setLoading(true)
+  try {
+    const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/users/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.error || 'ログインに失敗しました')
     }
+
+    const data = await response.json()
+    const user = data.user  
+
+    if (isBrowser()) {
+      localStorage.setItem('token', data.token ?? '')
+      localStorage.setItem('user', JSON.stringify(user))
+      Cookies.set('authToken', data.token ?? '', { expires: COOKIE_EXPIRY })
+      Cookies.set('user', JSON.stringify(user), { expires: COOKIE_EXPIRY })
+    }
+
+    setUser(user)
+
+    // is_manager フラグに応じて遷移
+    setTimeout(() => {
+      const isManager =
+        user.is_manager === true ||
+        user.is_manager === 'TRUE' ||
+        user.is_manager === 1
+
+      console.log('👉 isManager 判定:', isManager, '元の値:', user.is_manager, typeof user.is_manager)
+
+      if (isManager) {
+        router.push('/manager-dashboard')
+      } else {
+        router.push('/dashboard')
+      }
+    }, 100)
+  } catch (error) {
+    console.error('Login error:', error)
+    throw error
+  } finally {
+    setLoading(false)
   }
+}
 
   // ログアウト処理
   const logout = () => {
