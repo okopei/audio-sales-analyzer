@@ -234,7 +234,7 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
         rows = cursor.fetchall()
 
         if not rows:
-            logging.info("🎯 対象レコードなし（status = 'processing' または 'transcribed'）")
+            logging.info("🎯 対象レコードなし（status = 'processing' または 'transcribed','step1_completed','step2_completed','step3_completed','step4_completed','step5_completed'）")
             return
 
         speech_key = os.environ["SPEECH_KEY"]
@@ -601,7 +601,46 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                     """, (meeting_id,))
                     logging.info(f"✅ ステップ5完了 → status=step5_completed に更新 (meeting_id={meeting_id})")
 
+                # ステップ6: step5_completed の会議に対して フィラー削除処理を実施
+                elif current_status == 'step5_completed':
+                    cursor.execute("""
+                        SELECT id, merged_text
+                        FROM dbo.ConversationFinalSegments
+                        WHERE meeting_id = ?
+                    """, (meeting_id,))
+                    segments = cursor.fetchall()
 
+                    if not segments:
+                        logging.warning(f"⚠ ステップ6スキップ（ConversationFinalSegmentsが空）meeting_id={meeting_id}")
+                        cursor.execute("""
+                            UPDATE dbo.Meetings
+                            SET status = 'step6_completed', updated_datetime = GETDATE()
+                            WHERE meeting_id = ?
+                        """, (meeting_id,))
+                        continue
+
+                    # フィラー削除処理
+                    from openai_processing.openai_completion_step6 import remove_fillers_from_text
+                    for segment_id, merged_text in segments:
+                        try:
+                            cleaned = remove_fillers_from_text(merged_text)
+                        except Exception as e:
+                            logging.warning(f"❌ フィラー削除失敗 id={segment_id} error={e}")
+                            cleaned = merged_text  # フォールバック
+
+                        cursor.execute("""
+                            UPDATE dbo.ConversationFinalSegments
+                            SET cleaned_text = ?, updated_datetime = GETDATE()
+                            WHERE id = ?
+                        """, (cleaned, segment_id))
+
+                    # ステータス更新
+                    cursor.execute("""
+                        UPDATE dbo.Meetings
+                        SET status = 'step6_completed', updated_datetime = GETDATE()
+                        WHERE meeting_id = ?
+                    """, (meeting_id,))
+                    logging.info(f"✅ ステップ6完了 → status=step6_completed に更新 (meeting_id={meeting_id})")
 
 
             except Exception as inner_e:
