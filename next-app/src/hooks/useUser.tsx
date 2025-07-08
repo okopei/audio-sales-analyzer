@@ -8,7 +8,7 @@ interface User {
   user_id: number
   user_name: string
   email: string
-  role: string
+  is_manager?: boolean
   is_active: boolean
   account_status: string
   manager_name?: string
@@ -57,7 +57,7 @@ export function useUser() {
           user_id: user.user_id,
           user_name: user.user_name,
           email: user.email,
-          role: user.role || 'member',
+          is_manager: user.is_manager || false,
           is_active: true,
           account_status: 'active'
         })

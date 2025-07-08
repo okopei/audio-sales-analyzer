@@ -327,7 +327,7 @@ export default function NewMeetingPage() {
       // 成功メッセージ表示後、ダッシュボードに遷移
       console.log("🔄[UPLOAD] ダッシュボードへの遷移準備")
       setTimeout(() => {
-        if (user?.account_status === 'ACTIVE' && user?.role === 'manager') {
+        if (user?.account_status === 'ACTIVE' && user?.is_manager) {
           console.log("🔄[UPLOAD] マネージャーダッシュボードへ遷移")
           router.push('/manager-dashboard')
         } else {

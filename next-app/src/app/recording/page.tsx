@@ -469,7 +469,7 @@ function RecordingPageContent() {
         // 成功後、ダッシュボードに遷移
         setTimeout(() => {
           // ユーザーの権限に応じて適切なダッシュボードに遷移
-          if (user?.account_status === 'ACTIVE' && user?.role === 'manager') {
+          if (user?.account_status === 'ACTIVE' && user?.is_manager) {
             router.push('/manager-dashboard');
           } else {
             router.push('/dashboard');

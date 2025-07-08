@@ -15,7 +15,7 @@ export default function RegisterPage() {
     username: "",
     email: "",
     password: "",
-    role: "member", // デフォルトは一般ユーザー
+    is_manager: false, // デフォルトは一般ユーザー
     account_status: "ACTIVE",
   })
 
@@ -113,8 +113,8 @@ export default function RegisterPage() {
           <div className="space-y-2">
             <Label>ユーザータイプ</Label>
             <RadioGroup
-              value={formData.role}
-              onValueChange={(value) => setFormData({ ...formData, role: value })}
+              value={formData.is_manager ? "manager" : "member"}
+              onValueChange={(value) => setFormData({ ...formData, is_manager: value === "manager" })}
               className="flex space-x-4"
             >
               <div className="flex items-center space-x-2">

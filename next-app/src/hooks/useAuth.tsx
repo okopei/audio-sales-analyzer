@@ -68,7 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (storedUser && storedToken) {
             const parsedUser = JSON.parse(storedUser)
             
-            // ユーザーデータにaccount_statusがない場合、roleから設定
+            // ユーザーデータにaccount_statusがない場合、is_managerから設定
             if (parsedUser.is_manager === true && parsedUser.account_status !== 'ACTIVE') {
               parsedUser.account_status = 'ACTIVE'
             }
