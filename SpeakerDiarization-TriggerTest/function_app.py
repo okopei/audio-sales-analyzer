@@ -104,6 +104,12 @@ def trigger_transcription_job(event: func.EventGridEvent):
         container_name = path_parts[-2]
         blob_name = path_parts[-1]
 
+        # ✅ コンテナ名を環境変数で取得し一致しない場合スキップ
+        expected_container = os.environ.get("TRANSCRIPTION_CONTAINER")
+        if expected_container and container_name != expected_container:
+            logging.warning(f"🚫 対象外コンテナ {container_name} → スキップします")
+            return
+
         # .wav 以外はスキップ
         if not blob_name.lower().endswith('.wav'):
             logging.warning(f"❌ 非WAVファイルが検知されました: {blob_name} → スキップします")
