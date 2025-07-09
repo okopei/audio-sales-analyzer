@@ -435,18 +435,18 @@ def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
         )
 
 def generate_sas_url(container_name: str, blob_name: str) -> str:
-    account_name = "audiosalesanalyzeraudio"
-    account_key = os.environ.get("AZURE_STORAGE_KEY")
+    account_name = os.getenv("ALT_STORAGE_ACCOUNT_NAME")  # ← passrgmoc83cf
+    account_key = os.getenv("ALT_STORAGE_ACCOUNT_KEY")    # ← 対応するアクセスキー
+
+    if not account_name or not account_key:
+        raise Exception("ALT_STORAGE_ACCOUNT_NAME または ALT_STORAGE_ACCOUNT_KEY が未設定です")
+
     print('=== generate_sas_url START ===')
-    print('account_key:', account_key)
+    print('account_name:', account_name)
     print('container_name:', container_name)
     print('blob_name:', blob_name)
 
-    if not account_key:
-        raise Exception("AZURE_STORAGE_KEY is not set")
-
-    # file_pathからコンテナ名とblob名を抽出
-    # 例: "moc-audio/meeting_88_user_34_2025-05-21T07-18-44-213.wav"
+    # "meeting-audio/xxx.wav" のようなパスからコンテナ名とファイル名を抽出
     if "/" in blob_name:
         parts = blob_name.split("/", 1)
         actual_container = parts[0]
@@ -467,9 +467,7 @@ def generate_sas_url(container_name: str, blob_name: str) -> str:
             expiry=datetime.utcnow() + timedelta(hours=1)
         )
         print('sas_token generated successfully')
-        print('=== generate_sas_url SUCCESS ===')
     except Exception as e:
-        print('=== generate_sas_url ERROR ===')
         print('generate_blob_sas error:', e)
         raise
 
@@ -515,9 +513,10 @@ def get_conversation_segments_by_meeting_id(req: func.HttpRequest) -> func.HttpR
 
         # 各セグメントに対して SAS付きURLを生成して追加
         for segment in segments:
-            file_path = segment.get("file_path")
-            if file_path:
-                segment["audio_path"] = generate_sas_url("", file_path)
+            file_name = segment.get("file_name")
+            if file_name:
+                blob_path = f"meeting-audio/{file_name}"
+                segment["audio_path"] = generate_sas_url("", blob_path)
             else:
                 segment["audio_path"] = ""
 
