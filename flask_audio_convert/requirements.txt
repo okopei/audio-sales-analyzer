@@ -1,0 +1,5 @@
+flask
+azure-storage-blob
+ffmpeg-python
+gunicorn
+azure-identity
