@@ -326,6 +326,32 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                         logging.warning(f"⚠️ ステップ1の出力が空です (meeting_id={meeting_id})")
                         continue
 
+                    # 話者ごとの重複排除リストを作る
+                    unique_speakers = list(set(seg["speaker"] for seg in segments))
+
+                    # meeting_id から user_id を取得
+                    cursor.execute("SELECT user_id FROM dbo.BasicInfo WHERE meeting_id = ?", (meeting_id,))
+                    row = cursor.fetchone()
+                    user_id = row[0] if row else None
+
+                    for speaker_name in unique_speakers:
+                        # 同じ話者がすでに登録されているかチェック（meeting_id + speaker_name で一意とする）
+                        cursor.execute("""
+                            SELECT 1 FROM dbo.Speakers
+                            WHERE meeting_id = ? AND speaker_name = ? AND deleted_datetime IS NULL
+                        """, (meeting_id, speaker_name))
+                        exists = cursor.fetchone()
+                        if not exists:
+                            # 新規登録
+                            cursor.execute("""
+                                INSERT INTO dbo.Speakers (
+                                    speaker_name, speaker_role, user_id, meeting_id,
+                                    inserted_datetime, updated_datetime
+                                )
+                                VALUES (?, NULL, ?, ?, GETDATE(), GETDATE())
+                            """, (speaker_name, user_id, meeting_id))
+                            logging.info(f"👤 新しい話者をSpeakersテーブルに登録: {speaker_name}")
+
                     for line_no, seg in enumerate(segments, start=1):
                         speaker = seg["speaker"]
                         text = seg["text"]
@@ -344,6 +370,7 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                             meeting_id, line_no, speaker, text,
                             offset, is_filler
                         ))
+
                     # ✅ ステップ1完了 → Meetingsテーブルのステータス更新
                     cursor.execute("""
                         UPDATE dbo.Meetings
@@ -767,7 +794,7 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                     meeting_user_id, file_name, file_path, file_size, duration_seconds = meeting_row
 
                     for segment_id, speaker_raw, _, cleaned_text, summary, offset in final_segments:
-                        speaker_name = f"Speaker{speaker_raw}"
+                        speaker_name = str(speaker_raw)
 
                         # speaker_id を取得
                         cursor.execute("""
