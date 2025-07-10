@@ -160,6 +160,27 @@ def trigger_transcription_job(event: func.EventGridEvent):
         sas_url = f"https://{account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
         logging.info(f"✅ SAS URL 生成成功: {sas_url}")
 
+        # file_size を取得
+        blob_service_client = BlobServiceClient(account_url=f"https://{account_name}.blob.core.windows.net", credential=account_key)
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+        properties = blob_client.get_blob_properties()
+        file_size = properties.size  # バイト数
+
+        # duration_seconds を取得（WAVファイル限定）
+        import wave
+        import contextlib
+        import urllib.request
+
+        temp_wav_path = "/tmp/temp.wav"
+        urllib.request.urlretrieve(sas_url, temp_wav_path)
+
+        with contextlib.closing(wave.open(temp_wav_path, 'r')) as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            duration_seconds = int(frames / float(rate))
+
+        logging.info(f"📏 file_size={file_size} bytes, duration_seconds={duration_seconds} sec")
+
         # Speech-to-Text transcription job
         speech_key = os.environ["SPEECH_KEY"]
         region = os.environ["SPEECH_REGION"]
@@ -207,8 +228,8 @@ def trigger_transcription_job(event: func.EventGridEvent):
             "Auto generated meeting",
             blob_name,
             job_id,
-            0,  # file_size
-            0,  # duration_seconds
+            file_size,
+            duration_seconds,
             "processing",
             None,
             None,
