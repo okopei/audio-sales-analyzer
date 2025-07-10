@@ -4,21 +4,15 @@ OpenAI Processing Package
 This package contains modules for processing conversation data using OpenAI API.
 """
 
-from .openai_completion_core import clean_and_complete_conversation, load_transcript_segments
-from .openai_completion_step1 import step1_process_transcript as step1_format_with_offset
-from .openai_completion_step2 import step2_complete_incomplete_sentences
-from .openai_completion_step3 import step3_finalize_completion
-from .openai_completion_step4 import step4_merge_backchannel_with_next
-from .openai_completion_step5 import step5_merge_same_speaker_segments
-from .openai_completion_step6 import step6_remove_fillers
+from .openai_completion_step1 import step1_process_transcript
+from .openai_completion_step2 import evaluate_connection_naturalness_no_period
+from .openai_completion_step6 import remove_fillers_from_text
+from .openai_completion_step7 import generate_summary_title, extract_offset_from_line
 
 __all__ = [
-    'clean_and_complete_conversation',
-    'load_transcript_segments',
-    'step1_format_with_offset',
-    'step2_complete_incomplete_sentences',
-    'step3_finalize_completion',
-    'step4_merge_backchannel_with_next',
-    'step5_merge_same_speaker_segments',
-    'step6_remove_fillers'
+    'step1_process_transcript',
+    'evaluate_connection_naturalness_no_period',
+    'remove_fillers_from_text',
+    'generate_summary_title',
+    'extract_offset_from_line'
 ] 
