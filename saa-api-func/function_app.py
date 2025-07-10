@@ -483,7 +483,7 @@ def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
         log_trigger_error(
             event_type="error",
             table_name="BasicInfo",
-            record_id=meeting_id if 'meeting_id' in locals() else -1,
+            record_id=-1,  
             additional_info=f"[save_basic_info_func] {str(e)}"
         )
         return func.HttpResponse(
