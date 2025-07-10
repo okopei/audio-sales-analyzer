@@ -56,8 +56,13 @@ export function useMembersMeetings() {
         return
       }
       
+      // ステータスが'AllStepCompleted'の会議のみをフィルタリング
+      const completedMeetings = data.filter((meeting: Meeting) => 
+        meeting.status === 'AllStepCompleted'
+      )
+      
       // 日時でソートし、最新10件を取得
-      const sortedMeetings = data
+      const sortedMeetings = completedMeetings
         .sort((a: Meeting, b: Meeting) => 
           new Date(b.meeting_datetime).getTime() - new Date(a.meeting_datetime).getTime()
         )
