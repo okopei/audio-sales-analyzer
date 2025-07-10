@@ -1,10 +1,41 @@
 import re
 import logging
 import json
-from .openai_completion_core import client, log_token_usage, _parse_gpt_response
 import os
+import openai
 
 logger = logging.getLogger(__name__)
+
+# OpenAIクライアントの初期化
+client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+def log_token_usage(tokens: int, operation: str):
+    """トークン使用量を記録する"""
+    try:
+        logging.info(f"🔢 トークン使用量: {tokens} ({operation})")
+    except Exception as e:
+        logging.warning(f"トークン使用量記録エラー: {e}")
+
+def _parse_gpt_response(response_text: str) -> dict:
+    """GPTレスポンスをJSONとして解析する"""
+    try:
+        # JSONブロックを抽出
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            return json.loads(json_str)
+        else:
+            # JSONブロックが見つからない場合は、数値を抽出
+            numbers = re.findall(r'\d+\.?\d*', response_text)
+            if len(numbers) >= 2:
+                return {
+                    "front_score": float(numbers[0]),
+                    "back_score": float(numbers[1])
+                }
+        return None
+    except Exception as e:
+        logger.error(f"GPTレスポンス解析エラー: {e}")
+        return None
 
 def evaluate_connection_naturalness_no_period(front_text: str, bracket_text: str, back_text: str) -> dict:
     """

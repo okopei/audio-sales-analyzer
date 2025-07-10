@@ -2,11 +2,21 @@ import re
 import time
 import traceback
 from typing import List, Dict, Any, Tuple
-from .openai_completion_core import client, log_token_usage
 import os
 import logging
+import openai
 
 logger = logging.getLogger(__name__)
+
+# OpenAIクライアントの初期化
+client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+def log_token_usage(tokens: int, operation: str):
+    """トークン使用量を記録する"""
+    try:
+        logging.info(f"🔢 トークン使用量: {tokens} ({operation})")
+    except Exception as e:
+        logging.warning(f"トークン使用量記録エラー: {e}")
 
 def remove_fillers_from_text(text: str) -> str:
     """

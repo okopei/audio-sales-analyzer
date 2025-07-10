@@ -17,7 +17,6 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 from openai_processing.openai_completion_step1 import step1_process_transcript
 from openai_processing.openai_completion_step2 import evaluate_connection_naturalness_no_period
-# from openai_processing.openai_completion_core import clean_and_complete_conversation
 
 
 app = func.FunctionApp()
