@@ -86,6 +86,29 @@ def get_db_connection():
         logging.exception("詳細:")
         raise
 
+def log_trigger_error(event_type: str, table_name: str, record_id: int, additional_info: str):
+    """
+    TriggerLog テーブルにエラー情報を記録します。
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            insert_log_query = """
+                INSERT INTO dbo.TriggerLog (
+                    event_type, table_name, record_id, event_time, additional_info
+                ) VALUES (?, ?, ?, GETDATE(), ?)
+            """
+            cursor.execute(insert_log_query, (
+                event_type,
+                table_name,
+                record_id,
+                additional_info[:1000]  # 長すぎる場合は切り捨て
+            ))
+            conn.commit()
+            logging.info("⚠️ TriggerLog にエラー記録を挿入しました")
+    except Exception as log_error:
+        logging.error(f"🚨 TriggerLog への挿入に失敗: {log_error}")
+
 @app.function_name(name="TriggerTranscriptionJob")
 @app.event_grid_trigger(arg_name="event")
 def trigger_transcription_job(event: func.EventGridEvent):
@@ -243,6 +266,12 @@ def trigger_transcription_job(event: func.EventGridEvent):
 
     except Exception as e:
         logging.exception("❌ TriggerTranscriptionJob エラー:")
+        log_trigger_error(
+            event_type="error",
+            table_name="Meetings",
+            record_id=meeting_id if 'meeting_id' in locals() else -1,
+            additional_info=f"[trigger_transcription_job] {str(e)}"
+        )
 
 @app.function_name(name="PollingTranscriptionResults")
 @app.schedule(schedule="0 */5 * * * *", arg_name="timer", run_on_startup=False, use_monitor=False)
@@ -864,12 +893,24 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
 
             except Exception as inner_e:
                 logging.exception(f"⚠️ 個別処理エラー (meeting_id={meeting_id}): {inner_e}")
+                log_trigger_error(
+                    event_type="error",
+                    table_name="Meetings",
+                    record_id=meeting_id if meeting_id else -1,
+                    additional_info=f"[polling_transcription_results_inner] {str(inner_e)}"
+                )
 
         conn.commit()
         logging.info("🔁 Polling 処理完了")
 
     except Exception as e:
         logging.exception("❌ PollingTranscriptionResults 関数全体でエラーが発生")
+        log_trigger_error(
+            event_type="error",
+            table_name="System",
+            record_id=-1,
+            additional_info=f"[polling_transcription_results] {str(e)}"
+        )
 
 
 

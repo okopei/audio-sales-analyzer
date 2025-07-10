@@ -88,6 +88,29 @@ def get_db_connection():
         logging.exception("詳細:")
         raise
 
+def log_trigger_error(event_type: str, table_name: str, record_id: int, additional_info: str):
+    """
+    TriggerLog テーブルにエラー情報を記録します。
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            insert_log_query = """
+                INSERT INTO dbo.TriggerLog (
+                    event_type, table_name, record_id, event_time, additional_info
+                ) VALUES (?, ?, ?, GETDATE(), ?)
+            """
+            cursor.execute(insert_log_query, (
+                event_type,
+                table_name,
+                record_id,
+                additional_info[:1000]  # 長すぎる場合は切り捨て
+            ))
+            conn.commit()
+            logging.info("⚠️ TriggerLog にエラー記録を挿入しました")
+    except Exception as log_error:
+        logging.error(f"🚨 TriggerLog への挿入に失敗: {log_error}")
+
 def execute_query(query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """
     SQLクエリを実行し、結果を返します。
@@ -150,6 +173,12 @@ def test_db_connection(req: func.HttpRequest) -> func.HttpResponse:
     except Exception as e:
         logging.error("C: DB接続失敗")
         logging.exception("接続エラー詳細:")
+        log_trigger_error(
+            event_type="error",
+            table_name="System",
+            record_id=-1,
+            additional_info=f"[test_db_connection] {str(e)}"
+        )
         return func.HttpResponse(
             f"接続失敗: {str(e)}\n{traceback.format_exc()}",
             status_code=500
@@ -227,6 +256,12 @@ def login_user(req: func.HttpRequest) -> func.HttpResponse:
     except Exception as e:
         print(f"=== Login ERROR: {e} ===")
         logging.exception("ログイン処理でエラーが発生しました")
+        log_trigger_error(
+            event_type="error",
+            table_name="Users",
+            record_id=-1,
+            additional_info=f"[login_user] {str(e)}"
+        )
         return func.HttpResponse(
             json.dumps({"error": str(e)}, ensure_ascii=False), 
             status_code=500,
@@ -264,6 +299,12 @@ def get_user_by_id_func(req: func.HttpRequest) -> func.HttpResponse:
 
     except Exception as e:
         logging.exception("ユーザー取得エラー:")
+        log_trigger_error(
+            event_type="error",
+            table_name="Users",
+            record_id=user_id if user_id else -1,
+            additional_info=f"[get_user_by_id_func] {str(e)}"
+        )
         return func.HttpResponse(
             json.dumps({"error": str(e)}, ensure_ascii=False),
             mimetype="application/json",
@@ -317,6 +358,12 @@ def get_latest_comments(req: func.HttpRequest) -> func.HttpResponse:
 
     except Exception as e:
         logging.exception("コメント取得エラー:")
+        log_trigger_error(
+            event_type="error",
+            table_name="Comments",
+            record_id=-1,
+            additional_info=f"[get_latest_comments] {str(e)}"
+        )
         return func.HttpResponse(f"エラー: {str(e)}", status_code=500)
     
 @app.function_name(name="GetMembersMeetings")
@@ -351,6 +398,12 @@ def get_members_meetings(req: func.HttpRequest) -> func.HttpResponse:
 
     except Exception as e:
         logging.exception("メンバー会議取得エラー:")
+        log_trigger_error(
+            event_type="error",
+            table_name="Meetings",
+            record_id=-1,
+            additional_info=f"[get_members_meetings] {str(e)}"
+        )
         return func.HttpResponse(f"エラー: {str(e)}", status_code=500)
 
 @app.function_name(name="SaveBasicInfo")
@@ -427,6 +480,12 @@ def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
 
     except Exception as e:
         logging.exception("SaveBasicInfo エラー:")
+        log_trigger_error(
+            event_type="error",
+            table_name="BasicInfo",
+            record_id=meeting_id if 'meeting_id' in locals() else -1,
+            additional_info=f"[save_basic_info_func] {str(e)}"
+        )
         return func.HttpResponse(
             json.dumps({"error": str(e)}, ensure_ascii=False, default=str),
             mimetype="application/json",
@@ -530,6 +589,12 @@ def get_conversation_segments_by_meeting_id(req: func.HttpRequest) -> func.HttpR
     except Exception as e:
         print(f"=== GetConversationSegmentsByMeetingId ERROR: {e} ===")
         logging.exception("GetConversationSegments エラー:")
+        log_trigger_error(
+            event_type="error",
+            table_name="ConversationSegments",
+            record_id=meeting_id if 'meeting_id' in locals() else -1,
+            additional_info=f"[get_conversation_segments_by_meeting_id] {str(e)}"
+        )
         return func.HttpResponse(
             json.dumps({"error": str(e)}, ensure_ascii=False),
             mimetype="application/json",
@@ -566,6 +631,12 @@ def get_comments_by_segment_id(req: func.HttpRequest) -> func.HttpResponse:
             headers=build_cors_headers("GET, OPTIONS")
         )
     except Exception as e:
+        log_trigger_error(
+            event_type="error",
+            table_name="Comments",
+            record_id=segment_id if 'segment_id' in locals() else -1,
+            additional_info=f"[get_comments_by_segment_id] {str(e)}"
+        )
         return func.HttpResponse(
             json.dumps({"error": str(e)}, ensure_ascii=False),
             mimetype="application/json",
@@ -598,6 +669,12 @@ def create_comment(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(json.dumps({"success": True, "comment_id": comment_id}, ensure_ascii=False), status_code=201)
 
     except Exception as e:
+        log_trigger_error(
+            event_type="error",
+            table_name="Comments",
+            record_id=comment_id if 'comment_id' in locals() else -1,
+            additional_info=f"[create_comment] {str(e)}"
+        )
         return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
 
 # コメント既読
@@ -622,6 +699,12 @@ def mark_comment_as_read(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(json.dumps({"success": True, "message": "Marked as read"}, ensure_ascii=False), status_code=200)
 
     except Exception as e:
+        log_trigger_error(
+            event_type="error",
+            table_name="Comments",
+            record_id=comment_id if 'comment_id' in locals() else -1,
+            additional_info=f"[mark_comment_as_read] {str(e)}"
+        )
         return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
 
 # コメント削除（論理）
@@ -639,6 +722,12 @@ def delete_comment(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(json.dumps({"success": True, "message": "コメントを削除しました"}, ensure_ascii=False), status_code=200)
 
     except Exception as e:
+        log_trigger_error(
+            event_type="error",
+            table_name="Comments",
+            record_id=comment_id if 'comment_id' in locals() else -1,
+            additional_info=f"[delete_comment] {str(e)}"
+        )
         return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False), status_code=500)
 
 
