@@ -4,10 +4,15 @@ import re
 
 logger = logging.getLogger(__name__)
 
-def parse_transcript(text: str) -> List[Dict[str, any]]:
+def step1_process_transcript(transcript_text: str) -> Optional[List[Dict[str, Any]]]:
+    if not transcript_text:
+        logger.warning("⚠️ ステップ1：空のトランスクリプトを受信しました")
+        return None
+    
+    # パース処理
     pattern = re.compile(r"\(Speaker(\d+)\)\[(.*?)\]\(([\d.]+)\)")
     segments = []
-    for match in pattern.finditer(text):
+    for match in pattern.finditer(transcript_text):
         speaker = int(match.group(1))
         seg_text = match.group(2).strip()
         offset = float(match.group(3))
@@ -16,24 +21,7 @@ def parse_transcript(text: str) -> List[Dict[str, any]]:
             "text": seg_text,
             "offset": offset
         })
-    return segments
-
-def process_segments(segments: List[Dict[str, any]]) -> List[str]:
-    formatted_lines = []
-    for seg in segments:
-        text = seg["text"].strip()
-        if len(text) < 10:
-            text = f'（{text}）'
-        line = f'Speaker{seg["speaker"]}: {text}({seg["offset"]})'
-        formatted_lines.append(line)
-    return formatted_lines
-
-def step1_process_transcript(transcript_text: str) -> Optional[List[Dict[str, Any]]]:
-    if not transcript_text:
-        logger.warning("⚠️ ステップ1：空のトランスクリプトを受信しました")
-        return None
     
-    segments = parse_transcript(transcript_text)
     if not segments:
         logger.warning("⚠️ ステップ1：セグメントの抽出に失敗しました")
         return None
