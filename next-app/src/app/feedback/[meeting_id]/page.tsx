@@ -339,23 +339,23 @@ export default function FeedbackPage() {
                     }
 
                     // 通常のふきだし表示（user_id !== 0）
-                    const isCustomer = segment.speaker_role === 'Cust'
-                    const isSales = segment.speaker_role === 'Sale'
-                    const speakerName = segment.speaker_name || (isCustomer ? 'お客様' : '営業担当')
+                    const isSpeaker1 = segment.speaker_name === '1'
+                    const isSpeaker2 = segment.speaker_name === '2'
+                    const speakerName = segment.speaker_name || 'Unknown'
                     const commentCount = comments[segment.segment_id]?.length || 0
                     const displayContent = segment.content
                     
                     return (
-                      <div key={segment.segment_id} className={`flex ${isCustomer ? 'justify-start' : 'justify-end'}`}>
-                        <div className={`max-w-[75%] flex flex-col ${isCustomer ? 'items-start' : 'items-end'} break-words`}>
+                      <div key={segment.segment_id} className={`flex ${isSpeaker2 ? 'justify-start' : 'justify-end'}`}>
+                        <div className={`max-w-[75%] flex flex-col ${isSpeaker2 ? 'items-start' : 'items-end'} break-words`}>
                           {/* メッセージ本体 */}
                           <div className={`relative px-3 py-1.5 rounded-2xl shadow-lg w-full ${
-                            isCustomer 
+                            isSpeaker2 
                               ? 'bg-blue-100 rounded-tl-none chat-bubble-left' 
                               : 'bg-green-100 rounded-tr-none chat-bubble-right'
                           }`}>
                             <div className={`flex items-center gap-2 mb-0.5 ${
-                              isCustomer ? 'justify-start' : 'justify-end'
+                              isSpeaker2 ? 'justify-start' : 'justify-end'
                             }`}>
                               <div className="font-medium text-sm">{speakerName}</div>
                               <span className="text-xs text-gray-500">
@@ -366,7 +366,7 @@ export default function FeedbackPage() {
                           </div>
 
                           {/* コントロール部分 */}
-                          <div className={`flex items-center gap-2 mt-0.5 ${isCustomer ? 'justify-start' : 'justify-end'}`}>
+                          <div className={`flex items-center gap-2 mt-0.5 ${isSpeaker2 ? 'justify-start' : 'justify-end'}`}>
                             <AudioSegmentPlayer
                               segmentId={segment.segment_id}
                               startTime={segment.start_time}

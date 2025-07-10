@@ -42,8 +42,13 @@ export function useMeetings() {
       // APIレスポンスの形式をチェック（配列またはmeetingsプロパティを持つオブジェクト）
       const meetingsArray = Array.isArray(data) ? data : data.meetings || []
       
+      // ステータスが'AllStepCompleted'の会議のみをフィルタリング
+      const completedMeetings = meetingsArray.filter((meeting: Meeting) => 
+        meeting.status === 'AllStepCompleted'
+      )
+      
       // 日時でソートし、最新10件を取得
-      const sortedMeetings = meetingsArray
+      const sortedMeetings = completedMeetings
         .sort((a: Meeting, b: Meeting) => 
           new Date(b.meeting_datetime).getTime() - new Date(a.meeting_datetime).getTime()
         )

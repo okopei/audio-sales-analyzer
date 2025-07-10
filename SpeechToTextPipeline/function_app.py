@@ -775,7 +775,7 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                         logging.warning(f"⚠ ステップ8スキップ（ConversationFinalSegmentsなし）meeting_id={meeting_id}")
                         cursor.execute("""
                             UPDATE dbo.Meetings
-                            SET status = 'step8_completed', updated_datetime = GETDATE()
+                            SET status = 'AllStepCompleted', updated_datetime = GETDATE()
                             WHERE meeting_id = ?
                         """, (meeting_id,))
                         continue
@@ -850,102 +850,6 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
     except Exception as e:
         logging.exception("❌ PollingTranscriptionResults 関数全体でエラーが発生")
 
-
-
-
-# @app.function_name(name="TranscriptionCallback")
-# @app.route(route="transcription-callback", methods=["POST"])
-# def transcription_callback(req: func.HttpRequest) -> func.HttpResponse:
-#     try:
-#         data = req.get_json()
-#         transcription_url = data["self"]
-#         content_urls = data["contentUrls"]
-#         results_url = data["resultsUrls"].get("channel_0")
-#         if not results_url:
-#             return func.HttpResponse("Missing resultsUrl", status_code=400)
-
-#         file_name = content_urls[0].split("/")[-1]
-#         match = re.search(r"meeting_(\d+)_user_(\d+)", file_name)
-#         if not match:
-#             return func.HttpResponse("Invalid file name format", status_code=400)
-
-#         meeting_id = int(match.group(1))
-#         user_id = int(match.group(2))
-
-#         headers = {"Ocp-Apim-Subscription-Key": os.environ["SPEECH_KEY"]}
-#         status_resp = requests.get(transcription_url, headers=headers)
-#         if status_resp.json()["status"] != "Succeeded":
-#             return func.HttpResponse("Not ready", status_code=202)
-
-#         response = requests.get(results_url, headers=headers)
-#         result_json = response.json()
-
-#         transcript = []
-#         for phrase in result_json["recognizedPhrases"]:
-#             speaker = phrase.get("speaker", "Unknown")
-#             text = phrase["nBest"][0]["display"]
-#             offset = phrase.get("offset", "PT0S")
-#             try:
-#                 offset_seconds = round(isodate.parse_duration(offset).total_seconds(), 1)
-#             except:
-#                 offset_seconds = 0.0
-#             transcript.append(f"(Speaker{speaker})[{text}]({offset_seconds})")
-
-#         transcript_text = " ".join(transcript)
-
-#         conn = get_db_connection()
-#         cursor = conn.cursor()
-
-#         # BasicInfoから情報取得
-#         cursor.execute("""
-#             SELECT client_company_name, client_contact_name, meeting_datetime
-#             FROM dbo.BasicInfo
-#             WHERE meeting_id = ?
-#         """, meeting_id)
-#         row = cursor.fetchone()
-#         if not row:
-#             return func.HttpResponse(f"BasicInfo に meeting_id={meeting_id} が見つかりません", status_code=400)
-
-#         client_company_name, client_contact_name, meeting_datetime = row
-
-#         # 既存のレコードがないことを確認
-#         cursor.execute("""
-#             SELECT COUNT(*) FROM dbo.Meetings WHERE meeting_id = ? AND user_id = ?
-#         """, meeting_id, user_id)
-#         existing = cursor.fetchone()[0]
-#         if existing > 0:
-#             return func.HttpResponse(f"Meetings に meeting_id={meeting_id}, user_id={user_id} のレコードが既に存在しています", status_code=400)
-
-#         # INSERT
-#         title = "Auto generated meeting"
-#         file_path = content_urls[0]
-#         file_size = 0
-#         duration_seconds = 0
-
-#         insert_sql = """
-#         INSERT INTO dbo.Meetings (
-#             meeting_id, user_id, title, file_name, file_path,
-#             file_size, duration_seconds, status,
-#             client_company_name, client_contact_name,
-#             meeting_datetime, start_datetime, inserted_datetime,
-#             updated_datetime, transcript_text
-#         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE(), ?)
-#         """
-#         insert_params = (
-#             meeting_id, user_id, title, file_name, file_path,
-#             file_size, duration_seconds, 'completed',
-#             client_company_name, client_contact_name,
-#             meeting_datetime, meeting_datetime, transcript_text
-#         )
-
-#         cursor.execute(insert_sql, insert_params)
-#         conn.commit()
-
-#         return func.HttpResponse("OK", status_code=200)
-
-#     except Exception as e:
-#         logging.error(f"Callback error: {str(e)}")
-#         return func.HttpResponse("Error", status_code=500)
 
 
 
