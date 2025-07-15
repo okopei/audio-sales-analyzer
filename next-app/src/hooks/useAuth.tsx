@@ -1,8 +1,7 @@
 "use client"
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
-import { useRouter } from 'next/navigation'
-import Cookies from 'js-cookie'
+import { useRouter, usePathname } from 'next/navigation'
 
 // ユーザー情報の型定義
 interface User {
@@ -19,160 +18,143 @@ interface AuthContextType {
   user: User | null
   loading: boolean
   login: (email: string, password: string) => Promise<void>
-  logout: () => void
+  logout: () => Promise<void>
   isAuthenticated: boolean
   isManager: boolean
 }
 
-// 認証コンテキストの作成
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-// ブラウザ環境かどうかを確認する関数
-const isBrowser = () => typeof window !== 'undefined'
-
-// Cookieの有効期限（7日間）
-const COOKIE_EXPIRY = 7
-
-// 認証プロバイダーコンポーネント
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false) // middlewareで認証制御するためfalse
   const router = useRouter()
+  const pathname = usePathname()
 
-  // ユーザーがマネージャーかどうかを判定する関数
-  const checkIsManager = (userData: User): boolean => {
-    return userData.is_manager === true
-  }
+  const checkIsManager = (userData: User): boolean => userData.is_manager === true
 
-  // 初期化時にCookieとローカルストレージからユーザー情報を取得
+  // 認証チェックをスキップするパス
+  const skipAuthPaths = ['/', '/login', '/register']
+  const skipFetch = skipAuthPaths.includes(pathname)
+
+  // middlewareで認証制御するため、初期化時のfetch処理を削除
   useEffect(() => {
-    const loadUserFromStorage = () => {
+    if (skipFetch) {
+      console.log('⏩ useAuth: ログイン不要ページなので認証チェックスキップ', pathname)
+      return
+    }
+
+    // 状態復元処理：/api/auth/me を用いたリトライ戦略
+    let attempt = 0
+    const maxAttempts = 3
+
+    const restoreUserState = async () => {
       try {
-        if (isBrowser()) {
-          // まず、Cookieから取得を試みる
-          let storedUser = Cookies.get('user')
-          let storedToken = Cookies.get('authToken')
-          
-          // Cookieになければローカルストレージから取得
-          if (!storedUser || !storedToken) {
-            storedUser = localStorage.getItem('user') ?? undefined
-            storedToken = localStorage.getItem('token') ?? undefined
-            
-            // ローカルストレージにあればCookieにも保存
-            if (storedUser && storedToken) {
-              Cookies.set('user', storedUser, { expires: COOKIE_EXPIRY })
-              Cookies.set('authToken', storedToken, { expires: COOKIE_EXPIRY })
-            }
+        const res = await fetch('/api/auth/me', {
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json'
           }
-          
-          if (storedUser && storedToken) {
-            const parsedUser = JSON.parse(storedUser)
-            
-            // ユーザーデータにaccount_statusがない場合、is_managerから設定
-            if (parsedUser.is_manager === true && parsedUser.account_status !== 'ACTIVE') {
-              parsedUser.account_status = 'ACTIVE'
-            }
-            
-            setUser(parsedUser)
-            
-            // ユーザーがすでにログインしている場合、適切なダッシュボードにリダイレクト
-            // ただし、現在のパスがダッシュボードまたはマネージャーダッシュボードの場合はリダイレクトしない
-            const currentPath = window.location.pathname
-            if (currentPath === '/') {
-              // リダイレクト前に少し遅延を入れて、Reactの状態更新が反映されるようにする
-              setTimeout(() => {
-                if (checkIsManager(parsedUser)) {
-                  router.push('/manager-dashboard')
-                } else {
-                  router.push('/dashboard')
-                }
-              }, 100)
-            }
-          }
+        })
+        
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`)
         }
-      } catch (error) {
-        console.error('Error loading user from storage:', error)
-        // エラーが発生した場合はストレージをクリア
-        if (isBrowser()) {
-          localStorage.removeItem('user')
-          localStorage.removeItem('token')
-          Cookies.remove('user')
-          Cookies.remove('authToken')
+        
+        const data = await res.json()
+        
+        if (data?.user) {
+          console.log('✅ ユーザー状態復元成功')
+          setUser(data.user)
+          return true
+        } else {
+          throw new Error('レスポンスにuser情報が含まれていません')
         }
-      } finally {
-        setLoading(false)
+      } catch (err) {
+        console.warn(`⚠️ 状態復元試行 ${attempt + 1} 失敗:`, err)
+        attempt++
+        
+        if (attempt < maxAttempts) {
+          const delay = attempt * 1000 // 1秒 → 2秒 → 3秒
+          setTimeout(restoreUserState, delay)
+        } else {
+          console.error('❌ ユーザー状態復元に失敗しました（最大試行回数到達）')
+        }
+        return false
       }
     }
-    
-    loadUserFromStorage()
-  }, [router])
+
+    // 認証が必要なページでのみ状態復元を実行
+    if (!skipFetch) {
+      console.log('🔄 useAuth: 状態復元処理開始')
+      restoreUserState()
+    }
+  }, [pathname, router, skipFetch])
 
   // ログイン処理
-const login = async (email: string, password: string) => {
-  setLoading(true)
-  try {
-    const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/users/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    })
-
-    if (!response.ok) {
-      const errorData = await response.json()
-      throw new Error(errorData.error || 'ログインに失敗しました')
-    }
-
-    const data = await response.json()
-    const user = data.user  
-
-    if (isBrowser()) {
-      localStorage.setItem('token', data.token ?? '')
-      localStorage.setItem('user', JSON.stringify(user))
-      Cookies.set('authToken', data.token ?? '', { expires: COOKIE_EXPIRY })
-      Cookies.set('user', JSON.stringify(user), { expires: COOKIE_EXPIRY })
-    }
-
-    setUser(user)
-
-    // is_manager フラグに応じて遷移
-    setTimeout(() => {
-      const isManager =
-        user.is_manager === true ||
-        user.is_manager === 'TRUE' ||
-        user.is_manager === 1
-
-      console.log('👉 isManager 判定:', isManager, '元の値:', user.is_manager, typeof user.is_manager)
-
-      if (isManager) {
-        router.push('/manager-dashboard')
-      } else {
-        router.push('/dashboard')
+  const login = async (email: string, password: string) => {
+    console.log('🔍 login処理開始:', { email })
+    setLoading(true)
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      })
+      
+      console.log('🔍 login API レスポンス status:', response.status)
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('❌ login API エラー:', errorData)
+        throw new Error(errorData.error || 'ログインに失敗しました')
       }
-    }, 100)
-  } catch (error) {
-    console.error('Login error:', error)
-    throw error
-  } finally {
-    setLoading(false)
+      
+      const data = await response.json()
+      console.log('✅ login API 成功:', data)
+      
+      const user = data.user
+      if (user) {
+        console.log('✅ user情報取得成功:', user)
+        setUser(user)
+        
+        // ログイン成功後の画面遷移を追加
+        console.log('✅ login 成功、router.push 実行予定')
+        const isManager = checkIsManager(user)
+        console.log('🔍 isManager判定:', isManager)
+        
+        if (isManager) {
+          console.log('✅ マネージャーなので /manager-dashboard に遷移')
+          router.push('/manager-dashboard')
+        } else {
+          console.log('✅ 一般ユーザーなので /dashboard に遷移')
+          router.push('/dashboard')
+        }
+      } else {
+        console.error('❌ user情報が含まれていません')
+        setUser(null)
+        throw new Error('ログイン応答にユーザー情報が含まれていません')
+      }
+    } catch (error) {
+      console.error('❌ login処理でエラー:', error)
+      setUser(null)
+      throw error
+    } finally {
+      console.log('🔍 login処理完了、loading状態をfalseに')
+      setLoading(false)
+    }
   }
-}
 
   // ログアウト処理
-  const logout = () => {
-    if (isBrowser()) {
-      // ローカルストレージから削除
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
-      
-      // Cookieからも削除
-      Cookies.remove('authToken')
-      Cookies.remove('user')
-    }
+  const logout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' })
+    } catch (error) {}
     setUser(null)
     router.push('/')
   }
 
-  // コンテキスト値の作成
   const value = {
     user,
     loading,
@@ -185,7 +167,6 @@ const login = async (email: string, password: string) => {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
-// カスタムフック
 export function useAuth() {
   const context = useContext(AuthContext)
   if (context === undefined) {

@@ -25,11 +25,16 @@ function LoginPageContents() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
+    
+    console.log('🔍 handleSubmit開始:', { email })
 
     try {
+      console.log('🔍 login関数呼び出し開始')
       await login(email, password)
+      console.log('✅ login関数呼び出し完了')
       // リダイレクトは useAuth 内で処理されるため、ここでは何もしない
     } catch (err) {
+      console.error('❌ handleSubmitでエラー:', err)
       setError(err instanceof Error ? err.message : "ログインに失敗しました")
     }
   }

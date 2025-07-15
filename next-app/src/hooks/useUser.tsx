@@ -25,14 +25,21 @@ export function useUser() {
   const { user } = useAuth()
 
   const fetchUser = useCallback(async () => {
-    if (!user?.user_id) return
+    if (!user?.user_id) {
+      console.log("❌ useUser: user or user_id is null", user)
+      return
+    }
 
     try {
       setLoading(true)
       setError(null)
 
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:7071'
-      const response = await fetch(`${baseUrl}/users/id/${user.user_id}`)
+      const url = `${baseUrl}/users/id/${user.user_id}`
+      console.log("🔍 useUser fetching:", url)
+      console.log("🔍 baseUrl:", baseUrl)
+      
+      const response = await fetch(url)
       
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`)
@@ -71,7 +78,7 @@ export function useUser() {
     if (user?.user_id) {
       fetchUser()
     }
-  }, [user, fetchUser])
+  }, [user?.user_id, fetchUser])
 
   return {
     userInfo,

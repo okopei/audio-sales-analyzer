@@ -39,6 +39,23 @@ export default function ManagerDashboard() {
   const { meetings, loading, error } = useMembersMeetings()
   const [comments, setComments] = useState<Comment[]>([])
   const [loadingComments, setLoadingComments] = useState(false)
+  const [hasLogged, setHasLogged] = useState(false)
+
+  // デバッグログを初回マウント時のみ出力
+  useEffect(() => {
+    if (!hasLogged) {
+      console.log("🔍 ManagerDashboard Debug:", {
+        user: user,
+        userInfo: userInfo,
+        userLoading: userLoading,
+        meetings: meetings,
+        loading: loading,
+        error: error,
+        NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL
+      })
+      setHasLogged(true)
+    }
+  }, [user, userInfo, userLoading, meetings, loading, error, hasLogged])
 
   // 日付をフォーマットする関数
   const formatDateTime = (dateTimeStr: string) => {
@@ -138,15 +155,10 @@ export default function ManagerDashboard() {
     if (user?.user_id) {
       fetchComments()
     }
-  }, [user, userInfo])
+  }, [user?.user_id, userInfo])
 
-  if (!user) {
-    return (
-      <div className="p-4 text-center">
-        <p className="text-gray-600">ログインしてください</p>
-      </div>
-    )
-  }
+  // middlewareで認証制御されるため、userがnullの場合は表示しない
+  // 未認証の場合はmiddlewareでリダイレクトされる
 
   return (
     <ProtectedRoute requireManager={true}>
