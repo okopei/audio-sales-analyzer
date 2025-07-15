@@ -11,7 +11,10 @@ import struct
 from urllib.parse import urlparse, parse_qs
 from azure.storage.blob import generate_blob_sas, BlobSasPermissions
 from datetime import datetime, timedelta
-import bcrypt 
+import bcrypt
+import uuid
+import smtplib
+from email.mime.text import MIMEText 
 
 
 app = FunctionApp()
@@ -184,6 +187,235 @@ def test_db_connection(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500
         )
     
+@app.function_name(name="Register")
+@app.route(route="register", methods=["POST", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
+def register_user(req: func.HttpRequest) -> func.HttpResponse:
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=build_cors_headers("POST, OPTIONS"))
+
+    try:
+        logging.info("=== Register START ===")
+        data = req.get_json()
+        logging.info(f"Request data: {data}")
+        
+        email = data.get("email")
+        user_name = data.get("user_name")
+        password = data.get("password")
+        is_manager = data.get("is_manager", False)
+        logging.info(f"Email: {email}, UserName: {user_name}, IsManager: {is_manager}")
+
+        # 入力チェック
+        if not email or not user_name or not password:
+            logging.warning("Missing required fields")
+            return func.HttpResponse(
+                json.dumps({"success": False, "message": "email, user_name, password はすべて必須です"}, ensure_ascii=False),
+                status_code=400,
+                headers=build_cors_headers("POST, OPTIONS")
+            )
+
+        # メールアドレス重複チェック
+        check_query = "SELECT user_id FROM dbo.Users WHERE email = ?"
+        existing_user = execute_query(check_query, (email,))
+        
+        if existing_user:
+            logging.warning(f"Email already exists: {email}")
+            return func.HttpResponse(
+                json.dumps({"success": False, "message": "このメールアドレスはすでに登録されています"}, ensure_ascii=False),
+                status_code=409,
+                headers=build_cors_headers("POST, OPTIONS")
+            )
+
+        # パスワードハッシュ化
+        salt = bcrypt.gensalt()
+        password_hash = bcrypt.hashpw(password.encode(), salt)
+        
+        # 認証トークン生成
+        activation_token = str(uuid.uuid4())
+        
+        # 現在時刻取得
+        current_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 新規ユーザー作成（is_active=Falseで仮登録）
+        insert_query = """
+            INSERT INTO dbo.Users (
+                user_name, email, password_hash, salt, 
+                is_active, account_status, inserted_datetime, updated_datetime, 
+                is_manager, activation_token
+            ) VALUES (?, ?, ?, ?, 0, 'ACTIVE', ?, ?, ?, ?)
+        """
+        
+        execute_query(insert_query, (
+            user_name,
+            email,
+            password_hash.decode(),
+            salt.decode(),
+            current_time,
+            current_time,
+            is_manager,
+            activation_token
+        ))
+        
+        # 作成されたユーザーのIDを取得
+        user_query = "SELECT user_id FROM dbo.Users WHERE email = ?"
+        new_user = execute_query(user_query, (email,))
+        
+        if new_user:
+            user_id = new_user[0]["user_id"]
+            logging.info(f"=== Register SUCCESS - User ID: {user_id} ===")
+            
+            # 認証メール送信（エラーはログのみ、ユーザーには返さない）
+            try:
+                send_email_smtp(email, activation_token)
+            except Exception as email_error:
+                logging.error(f"❌ 認証メール送信エラー: {email_error}")
+            
+            return func.HttpResponse(
+                json.dumps({
+                    "success": True,
+                    "message": "ユーザー登録が完了しました。メールをご確認ください。",
+                    "user_id": user_id
+                }, ensure_ascii=False),
+                status_code=201,
+                headers=build_cors_headers("POST, OPTIONS")
+            )
+        else:
+            raise Exception("ユーザー作成後にID取得に失敗しました")
+
+    except Exception as e:
+        logging.error("=== Register ERROR ===")
+        logging.exception("登録エラー詳細:")
+        log_trigger_error(
+            event_type="error",
+            table_name="Users",
+            record_id=-1,
+            additional_info=f"[register_user] {str(e)}"
+        )
+        return func.HttpResponse(
+            json.dumps({"success": False, "message": "登録処理中にエラーが発生しました"}, ensure_ascii=False),
+            status_code=500,
+            headers=build_cors_headers("POST, OPTIONS")
+        )
+
+@app.function_name(name="ActivateUser")
+@app.route(route="activate", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def activate_user(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        logging.info("=== ActivateUser START ===")
+        
+        # クエリパラメータからトークンを取得
+        token = req.params.get("token")
+        logging.info(f"Token: {token}")
+        
+        if not token:
+            logging.warning("Token not provided")
+            return func.HttpResponse(
+                json.dumps({"success": False, "message": "トークンが指定されていません"}, ensure_ascii=False),
+                status_code=400,
+                mimetype="application/json"
+            )
+
+        # トークン検証
+        user_check = execute_query("SELECT user_id FROM dbo.Users WHERE activation_token = ?", (token,))
+        if not user_check:
+            logging.warning(f"Invalid or used token: {token}")
+            return func.HttpResponse(
+                json.dumps({"success": False, "message": "トークンが無効または既に使用されています"}, ensure_ascii=False),
+                status_code=404,
+                mimetype="application/json"
+            )
+
+        user_id = user_check[0]["user_id"]
+        logging.info(f"Valid token found for user_id: {user_id}")
+        
+        # ユーザーを有効化
+        update_query = """
+            UPDATE dbo.Users
+            SET is_active = 1, activation_token = NULL, updated_datetime = GETDATE()
+            WHERE user_id = ?
+        """
+        execute_query(update_query, (user_id,))
+        
+        logging.info(f"=== ActivateUser SUCCESS - User ID: {user_id} ===")
+        
+        # 成功時：HTMLページを直接返す
+        success_html = f"""
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>認証完了</title>
+    <style>
+      body {{
+        margin: 0;
+        padding: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+        background-color: #f5f5f5;
+        color: #333;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+      }}
+      .container {{
+        text-align: center;
+        background: #fff;
+        padding: 2rem;
+        border-radius: 12px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        max-width: 90%;
+        width: 400px;
+      }}
+      h2 {{
+        font-size: 1.8rem;
+        margin-bottom: 1rem;
+      }}
+      p {{
+        font-size: 1rem;
+        margin-bottom: 1.5rem;
+      }}
+      .button {{
+        background-color: #4CAF50;
+        color: white;
+        padding: 12px 24px;
+        border: none;
+        border-radius: 6px;
+        font-size: 1rem;
+        text-decoration: none;
+        display: inline-block;
+        transition: background-color 0.3s ease;
+      }}
+      .button:hover {{
+        background-color: #45a049;
+      }}
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h2>✅ 認証完了</h2>
+      <p>ご登録ありがとうございます。</p>
+      <a href="https://audio-sales-analyzer.vercel.app/" class="button">ログイン画面へ</a>
+    </div>
+  </body>
+</html>
+"""
+        return func.HttpResponse(success_html, status_code=200, mimetype="text/html")
+
+    except Exception as e:
+        logging.error("=== ActivateUser ERROR ===")
+        logging.exception("アクティベート処理失敗:")
+        log_trigger_error(
+            event_type="error",
+            table_name="Users",
+            record_id=-1,
+            additional_info=f"[activate_user] {str(e)}"
+        )
+        return func.HttpResponse(
+            json.dumps({"success": False, "message": "アクティベート処理中にエラーが発生しました"}, ensure_ascii=False),
+            status_code=500,
+            mimetype="application/json"
+        )
+
 @app.function_name(name="Login")
 @app.route(route="users/login", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def login_user(req: func.HttpRequest) -> func.HttpResponse:
@@ -206,7 +438,7 @@ def login_user(req: func.HttpRequest) -> func.HttpResponse:
         query = """
             SELECT user_id, user_name, email, password_hash, is_active, account_status, is_manager, manager_id
             FROM dbo.Users
-            WHERE email = ?
+            WHERE email = ? AND is_active = 1
         """
         print(f"Query: {query}")
         print(f"Query params: ({email},)")
@@ -492,6 +724,59 @@ def save_basic_info_func(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500,
             headers=build_cors_headers("POST, OPTIONS")
         )
+
+def send_email_smtp(to_email: str, token: str):
+    """
+    SMTPを使用して認証メールを送信する
+    """
+    # 🔹 ① 開始時ログ
+    logging.info(f"📧 send_email_smtp() 呼び出し開始 → 宛先: {to_email}")
+    
+    from_email = os.getenv("GMAIL_ADDRESS")
+    app_password = os.getenv("GMAIL_APP_PASSWORD")
+
+    if not from_email or not app_password:
+        logging.error("GMAIL_ADDRESS または GMAIL_APP_PASSWORD が未設定です")
+        return
+
+    activation_link = f"https://saa-api-func.azurewebsites.net/api/activate?token={token}"
+    body = f"""
+Audio Sales Analyzer にご登録いただきありがとうございます。
+
+以下のリンクをクリックして、アカウントを有効化してください：
+
+{activation_link}
+
+このリンクは一度限り有効です。
+"""
+
+    msg = MIMEText(body)
+    msg["Subject"] = "【AudioSales】アカウント認証のご案内"
+    msg["From"] = from_email
+    msg["To"] = to_email
+
+    # 🔹 1. 宛先ログの強化
+    logging.info(f"📤 認証メール送信先: {to_email}")
+    
+    # 🔹 2. メール本文ログ（本番環境ならコメントアウトOK）
+    logging.debug(f"📨 メール本文:\n{body}")
+
+    try:
+        # 🔹 ② サーバ接続直後ログ
+        logging.info("🔄 SMTPサーバ接続開始（smtp.gmail.com:587）")
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(from_email, app_password)
+            # 🔹 ③ ログイン成功後ログ
+            logging.info(f"🔐 SMTPログイン成功: {from_email}")
+            
+            # 🔹 ④ メール送信直後のステータス
+            response = server.send_message(msg)
+            logging.info(f"📤 メール送信処理完了 → response: {response}")
+            logging.info(f"✅ 認証メール送信完了: {to_email}")
+    except Exception as e:
+        # 🔹 ⑤ エラー時の詳細（既にある場合は補強）
+        logging.exception(f"🚨 SMTP送信エラー: {str(e)}")
 
 def generate_sas_url(container_name: str, blob_name: str) -> str:
     account_name = os.getenv("ALT_STORAGE_ACCOUNT_NAME")  # ← passrgmoc83cf

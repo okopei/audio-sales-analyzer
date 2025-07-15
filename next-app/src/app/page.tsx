@@ -18,7 +18,7 @@ function LoginPageContents() {
   useEffect(() => {
     const registered = searchParams.get("registered")
     if (registered === "true") {
-      setSuccessMessage("ユーザー登録が完了しました。ログインしてください。")
+      setSuccessMessage("ユーザー登録が完了しました。認証用メールをご確認ください。メール内のリンクをクリックするとログインできるようになります。")
     }
   }, [searchParams])
 
