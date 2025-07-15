@@ -26,7 +26,10 @@ export function useMembersMeetings() {
   const { user } = useAuth()
 
   const fetchMembersMeetings = useCallback(async () => {
-    if (!user) return
+    if (!user) {
+      console.log("❌ useMembersMeetings: user is null")
+      return
+    }
 
     try {
       setLoading(true)
@@ -37,6 +40,7 @@ export function useMembersMeetings() {
       
       console.log("🔗 Fetching from:", url)
       console.log("✅ useMembersMeetings manager_id:", user.user_id)
+      console.log("🔍 baseUrl:", baseUrl)
 
       const response = await fetch(url)
       
@@ -78,7 +82,7 @@ export function useMembersMeetings() {
   }, [user])
 
   useEffect(() => {
-    if (user) {
+    if (user?.user_id) {
       fetchMembersMeetings()
       
       // 1分ごとに自動更新
@@ -88,7 +92,7 @@ export function useMembersMeetings() {
       
       return () => clearInterval(intervalId)
     }
-  }, [user, fetchMembersMeetings])
+  }, [user?.user_id, fetchMembersMeetings])
 
   return {
     meetings,

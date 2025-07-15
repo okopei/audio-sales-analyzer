@@ -18,32 +18,35 @@ export default function ProtectedRoute({
   const [redirecting, setRedirecting] = useState(false)
 
   useEffect(() => {
-    if (!loading && !redirecting) {
-      if (!isAuthenticated) {
-        setRedirecting(true)
-        console.log('User is not authenticated, redirecting to home')
-        // 遅延を入れてリダイレクトを確実に実行
-        setTimeout(() => {
-          router.push('/')
-        }, 100)
-      } else if (requireManager && !isManager) {
-        setRedirecting(true)
-        console.log('User is not a manager, redirecting to dashboard', user)
-        // 遅延を入れてリダイレクトを確実に実行
-        setTimeout(() => {
-          router.push('/dashboard')
-        }, 100)
-      }
+    console.log("🔍 ProtectedRoute Debug:", {
+      loading,
+      redirecting,
+      isAuthenticated,
+      isManager,
+      requireManager,
+      user
+    })
+    
+    // middlewareで認証制御されるため、基本的には何もしない
+    // ただし、マネージャー権限チェックは残す
+    if (!loading && !redirecting && requireManager && isAuthenticated && !isManager) {
+      setRedirecting(true)
+      console.log('User is not a manager, redirecting to dashboard', user)
+      setTimeout(() => {
+        router.push('/dashboard')
+      }, 100)
     }
   }, [isAuthenticated, isManager, loading, requireManager, router, user, redirecting])
 
+  // ローディング中またはリダイレクト中
   if (loading || redirecting) {
     return <div className="flex items-center justify-center min-h-screen">
       <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
     </div>
   }
 
-  if (!isAuthenticated || (requireManager && !isManager)) {
+  // マネージャー権限が必要だが持っていない場合のみチェック
+  if (requireManager && isAuthenticated && !isManager) {
     return null
   }
 
