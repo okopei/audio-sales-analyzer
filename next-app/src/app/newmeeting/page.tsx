@@ -212,8 +212,8 @@ export default function NewMeetingPage() {
         // データベースへの反映を確実にするために少し待機
         setTimeout(() => {
           console.log("録音画面へ移動します")
-          // 録音ページへ移動
-          router.push(`/recording`)
+          // 録音ページへ移動（meetingIdとuserIdをURLパラメータとして渡す）
+          router.push(`/recording?meetingId=${response.meeting_id}&userId=${user.user_id}`)
         }, 1000)
       } else {
         // 保存成功メッセージを表示

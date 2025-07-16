@@ -1,12 +1,26 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { BlobServiceClient, StorageSharedKeyCredential, generateBlobSASQueryParameters, BlobSASPermissions } from '@azure/storage-blob'
 
 /**
  * Azure Blob StorageのSASトークンを生成するAPIエンドポイント
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     console.log('SASトークン生成開始')
+    
+    // クエリパラメータからファイル名を取得
+    const { searchParams } = new URL(request.url)
+    const fileName = searchParams.get('fileName')
+    
+    if (!fileName) {
+      console.error('ファイル名が指定されていません')
+      return NextResponse.json(
+        { error: 'ファイル名が指定されていません' },
+        { status: 400 }
+      )
+    }
+    
+    console.log('ファイル名:', fileName)
     
     const accountName = process.env.AZURE_STORAGE_ACCOUNT_NAME
     const accountKey = process.env.AZURE_STORAGE_ACCOUNT_KEY
@@ -47,20 +61,27 @@ export async function GET() {
     sasPermissions.write = true
     sasPermissions.create = true
     
-    // SASトークンを生成
+    // SASトークンを生成（特定のファイル用）
     const sasToken = generateBlobSASQueryParameters(
       {
         containerName,
+        blobName: fileName,
         permissions: sasPermissions,
         expiresOn: expiryTime,
       },
       sharedKeyCredential
     ).toString()
     
-    console.log('SASトークン生成成功')
+    // 完全なSAS URLを構築
+    const sasUrl = `https://${accountName}.blob.core.windows.net/${containerName}/${fileName}?${sasToken}`
+    
+    console.log('SAS URL生成成功:', {
+      fileName,
+      sasUrl: sasUrl.split('?')[0] // セキュリティのためSASトークン部分は省略
+    })
     
     return NextResponse.json(
-      { sasToken: `?${sasToken}` },
+      { sasUrl },
       { 
         headers: {
           'Access-Control-Allow-Origin': '*',

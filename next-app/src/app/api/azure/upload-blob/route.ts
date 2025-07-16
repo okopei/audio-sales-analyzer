@@ -25,16 +25,26 @@ export async function POST(request: NextRequest) {
     const fileName = formData.get('fileName') as string
     const sasToken = formData.get('sasToken') as string
     
-    if (!file || !fileName || !sasToken) {
-      console.error('必要なパラメータが不足しています', { 
-        hasFile: !!file, 
-        hasFileName: !!fileName, 
-        hasSasToken: !!sasToken,
-        fileSize: file ? file.size : 0,
-        fileType: file ? file.type : 'なし' 
-      })
+    console.log('📥 受信したパラメータ:', {
+      hasFile: !!file,
+      hasFileName: !!fileName,
+      hasSasToken: !!sasToken,
+      fileSize: file ? file.size : 0,
+      fileType: file ? file.type : 'なし'
+    })
+    
+    if (!file) {
+      console.error('❌ ファイルが受信されていません')
       return NextResponse.json(
-        { error: '必要なパラメータが不足しています' },
+        { error: 'ファイルが受信されていません' },
+        { status: 400 }
+      )
+    }
+    
+    if (!fileName) {
+      console.error('❌ ファイル名が指定されていません')
+      return NextResponse.json(
+        { error: 'ファイル名が指定されていません' },
         { status: 400 }
       )
     }
