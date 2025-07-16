@@ -1,13 +1,12 @@
 "use client"
-import { useState, useCallback } from "react"
+import { useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/hooks/useAuth"
 import { useRecording } from "@/hooks/useRecording"
-import { uploadToAzureStorage } from "@/lib/utils/azure-storage"
 
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Mic, MicOff, Play, Square, Upload } from "lucide-react"
+import { Mic, Square } from "lucide-react"
 
 export default function RecordingPage() {
   const router = useRouter()
