@@ -289,7 +289,7 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
         rows = cursor.fetchall()
 
         if not rows:
-            logging.info("🎯 対象レコードなし（status = 'processing' または 'transcribed','step1_completed','step2_completed','step3_completed','step4_completed','step5_completed'）")
+            logging.info("🎯 対象レコードなし（status = 'processing' または 'transcribed','step1_completed','step2_completed','step3_completed','step4_completed','step5_completed','step6_completed','step7_completed'）")
             return
 
         speech_key = os.environ["SPEECH_KEY"]
@@ -563,11 +563,9 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                     """, (meeting_id,))
                     logging.info(f"✅ ステップ3完了 → status=step3_completed に更新 (meeting_id={meeting_id})")
 
-               # ステップ4: step3_completed の会議に対して ConversationMergedSegments を生成
-                # function_app.py の PollingTranscriptionResults 関数内、step3 完了直後に追加
-
+                # ステップ4: step3_completed の会議に対して ConversationMergedSegments を生成
                 elif current_status == 'step3_completed':
-                # ConversationMergedSegments に既にデータがあればスキップ
+                    # ConversationMergedSegments に既にデータがあればスキップ
                     cursor.execute("""
                         SELECT COUNT(*) FROM dbo.ConversationMergedSegments WHERE meeting_id = ?
                     """, (meeting_id,))
@@ -635,7 +633,7 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                     """, (meeting_id,))
                     logging.info(f"✅ ステップ4完了 → status=step4_completed に更新 (meeting_id={meeting_id})")
 
-                 # ステップ5: step4_completed の会議に対して 同一話者セグメントを統合し ConversationFinalSegments に挿入
+                # ステップ5: step4_completed の会議に対して 同一話者セグメントを統合し ConversationFinalSegments に挿入
                 elif current_status == 'step4_completed':
                     # ConversationFinalSegments に既にデータがあればスキップ
                     cursor.execute("""
