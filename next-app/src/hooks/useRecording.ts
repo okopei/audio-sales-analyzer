@@ -20,7 +20,7 @@ interface UploadResponse {
   error?: string
 }
 
-export const useRecording = () => {
+export const useRecording = (meetingId?: string, userId?: string) => {
   const router = useRouter()
   const [isRecording, setIsRecording] = useState(false)
   const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null)
@@ -138,16 +138,20 @@ export const useRecording = () => {
       mediaStreamRef.current = stream
       
       // AudioContextとAnalyserNodeをセットアップ
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
-      analyserRef.current = audioContextRef.current.createAnalyser()
-      analyserRef.current.fftSize = 256
-      
-      const source = audioContextRef.current.createMediaStreamSource(stream)
-      source.connect(analyserRef.current)
+      if (typeof window !== 'undefined') {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
+        analyserRef.current = audioContextRef.current.createAnalyser()
+        analyserRef.current.fftSize = 256
+        
+        const source = audioContextRef.current.createMediaStreamSource(stream)
+        source.connect(analyserRef.current)
+      }
       
       // FFTデータ配列を作成
-      const bufferLength = analyserRef.current.frequencyBinCount
-      audioDataRef.current = new Uint8Array(bufferLength)
+      if (analyserRef.current) {
+        const bufferLength = analyserRef.current.frequencyBinCount
+        audioDataRef.current = new Uint8Array(bufferLength)
+      }
       
       // 音声レベル監視を開始
       animationFrameRef.current = requestAnimationFrame(updateAudioLevel)
@@ -505,11 +509,6 @@ export const useRecording = () => {
         hasUploaded
       })
       
-      // URLパラメータからmeetingIdとuserIdを取得
-      const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
-      const meetingId = urlParams.get('meetingId')
-      const userId = urlParams.get('userId')
-      
       console.log('🔍 自動アップロード時のパラメータ:', {
         meetingId,
         userId,
@@ -518,10 +517,10 @@ export const useRecording = () => {
       })
       
       // meetingIdとuserIdを渡してアップロード
-      sendAudioToServer(recordingBlob, meetingId || undefined, userId || undefined)
+      sendAudioToServer(recordingBlob, meetingId, userId)
       setHasUploaded(true) // 一度だけ実行するためのフラグ
     }
-  }, [isRecording, recordingBlob, isUploading, hasUploaded])
+  }, [isRecording, recordingBlob, isUploading, hasUploaded, meetingId, userId])
 
   return {
     isRecording,

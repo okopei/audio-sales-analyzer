@@ -1,5 +1,5 @@
 "use client"
-import { useState } from "react"
+import { useState, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/hooks/useAuth"
 import { useRecording } from "@/hooks/useRecording"
@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Mic, Square } from "lucide-react"
 
-export default function RecordingPage() {
+// 録音ページのメインコンポーネント
+function RecordingPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user } = useAuth()
@@ -50,7 +51,7 @@ export default function RecordingPage() {
     isUploading,
     processingStatus,
     sendAudioToServer
-  } = useRecording()
+  } = useRecording(meetingId || undefined, userId || undefined)
 
 
 
@@ -154,5 +155,22 @@ export default function RecordingPage() {
         </Button>
       </div>
     </div>
+  )
+}
+
+// Suspenseでラップした録音ページ
+export default function RecordingPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-zinc-50 flex items-center justify-center p-4">
+        <div className="flex flex-col items-center justify-center py-10 w-full max-w-md">
+          <div className="text-center">
+            <p>読み込み中...</p>
+          </div>
+        </div>
+      </div>
+    }>
+      <RecordingPageContent />
+    </Suspense>
   )
 }
