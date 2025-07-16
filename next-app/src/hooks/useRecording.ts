@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { BlockBlobClient } from '@azure/storage-blob'
+import { useRouter } from 'next/navigation'
 
 interface TranscriptionResponse {
   status: string
@@ -12,10 +14,21 @@ interface TranscriptionResponse {
   }
 }
 
-export const useRecording = () => {
+interface UploadResponse {
+  success: boolean
+  url?: string
+  error?: string
+}
+
+export const useRecording = (meetingId?: string, userId?: string) => {
+  const router = useRouter()
   const [isRecording, setIsRecording] = useState(false)
   const [transcription, setTranscription] = useState<TranscriptionResponse | null>(null)
   const [processingStatus, setProcessingStatus] = useState('')
+  const [uploadStatus, setUploadStatus] = useState<UploadResponse | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [hasUploaded, setHasUploaded] = useState(false) // 一度だけアップロードするためのフラグ
+  const [hasNavigated, setHasNavigated] = useState(false) // 一度だけ遷移するためのフラグ
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const [isPaused, setIsPaused] = useState(false)
@@ -98,6 +111,8 @@ export const useRecording = () => {
       setRecordingBlob(null);
       recordingBlobRef.current = null;
       chunksRef.current = [];
+      setHasUploaded(false); // アップロードフラグをリセット
+      setHasNavigated(false); // 遷移フラグをリセット
       
       console.log("録音を開始します: 初期化完了");
       
@@ -123,16 +138,20 @@ export const useRecording = () => {
       mediaStreamRef.current = stream
       
       // AudioContextとAnalyserNodeをセットアップ
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
-      analyserRef.current = audioContextRef.current.createAnalyser()
-      analyserRef.current.fftSize = 256
-      
-      const source = audioContextRef.current.createMediaStreamSource(stream)
-      source.connect(analyserRef.current)
+      if (typeof window !== 'undefined') {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
+        analyserRef.current = audioContextRef.current.createAnalyser()
+        analyserRef.current.fftSize = 256
+        
+        const source = audioContextRef.current.createMediaStreamSource(stream)
+        source.connect(analyserRef.current)
+      }
       
       // FFTデータ配列を作成
-      const bufferLength = analyserRef.current.frequencyBinCount
-      audioDataRef.current = new Uint8Array(bufferLength)
+      if (analyserRef.current) {
+        const bufferLength = analyserRef.current.frequencyBinCount
+        audioDataRef.current = new Uint8Array(bufferLength)
+      }
       
       // 音声レベル監視を開始
       animationFrameRef.current = requestAnimationFrame(updateAudioLevel)
@@ -338,28 +357,106 @@ export const useRecording = () => {
     }
   }
 
-  const sendAudioToServer = async (audioBlob: Blob) => {
+  const sendAudioToServer = async (audioBlob: Blob, meetingId?: string, userId?: string): Promise<UploadResponse> => {
     try {
-      setProcessingStatus(`音声データを送信中... (形式: ${audioBlob.type}, サイズ: ${(audioBlob.size / 1024 / 1024).toFixed(2)}MB)`)
-      const formData = new FormData()
-      formData.append('audio', audioBlob)
-
-      const response = await fetch('/api/transcribe', {
-        method: 'POST',
-        body: formData,
+      console.log('🔵 アップロード開始:', {
+        blobSize: audioBlob.size,
+        blobType: audioBlob.type,
+        timestamp: new Date().toISOString(),
+        meetingId,
+        userId,
+        hasMeetingId: !!meetingId,
+        hasUserId: !!userId
       })
-
-      const data: TranscriptionResponse = await response.json()
-      setTranscription(data)
       
-      if (data.status === 'error') {
-        setProcessingStatus(`エラーが発生しました: ${data.error}`)
-      } else {
-        setProcessingStatus('処理完了')
+      setIsUploading(true)
+      setProcessingStatus(`音声データをアップロード中... (形式: ${audioBlob.type}, サイズ: ${(audioBlob.size / 1024 / 1024).toFixed(2)}MB)`)
+      
+      // ファイル名生成の共通関数
+      const formatTimestamp = (date: Date): string => {
+        return date.toISOString().replace(/:/g, '-').replace(/\..+/, match =>
+          `-${match.slice(1, -1)}`
+        )
       }
+      
+      const generateFileName = (meetingId: string | undefined, userId: string | undefined, extension: string = '.webm'): string => {
+        const timestamp = formatTimestamp(new Date())
+        
+        if (meetingId && userId) {
+          return `meeting_${meetingId}_user_${userId}_${timestamp}${extension}`
+        } else if (userId) {
+          return `recording_user_${userId}_${timestamp}${extension}`
+        } else {
+          return `recording_${timestamp}${extension}`
+        }
+      }
+      
+      // ファイル名を決定
+      const fileName = generateFileName(meetingId, userId, '.webm')
+      console.log('📁 生成されたファイル名:', {
+        fileName,
+        meetingId,
+        userId,
+        timestamp: formatTimestamp(new Date())
+      })
+      const file = new File([audioBlob], fileName, { type: 'audio/webm' })
+      
+      console.log('📁 ファイル作成:', {
+        fileName,
+        fileSize: file.size,
+        fileType: file.type
+      })
+      
+      // SASトークンを取得
+      console.log('🔑 SASトークン取得開始')
+      const sasResponse = await fetch(`/api/azure/get-sas-token?fileName=${encodeURIComponent(fileName)}`)
+      
+      if (!sasResponse.ok) {
+        const errorText = await sasResponse.text()
+        console.error('❌ SASトークン取得エラー:', {
+          status: sasResponse.status,
+          errorText
+        })
+        throw new Error(`SASトークンの取得に失敗しました: ${sasResponse.status} ${errorText}`)
+      }
+      
+      const { sasUrl } = await sasResponse.json()
+      console.log('✅ SAS URL取得成功:', sasUrl.split('?')[0]) // セキュリティのためSASトークン部分は省略
+      
+      // BlockBlobClientを使用して直接アップロード
+      console.log('📤 Azure Storage直接アップロード開始')
+      const blobClient = new BlockBlobClient(sasUrl)
+      
+      await blobClient.uploadData(file, {
+        blobHTTPHeaders: {
+          blobContentType: file.type
+        }
+      })
+      
+      console.log('✅ アップロード成功')
+      
+      setProcessingStatus('アップロード完了')
+      setUploadStatus({ success: true, url: sasUrl.split('?')[0] }) // SASトークンなしのURLを返す
+      
+      // アップロード成功後、2秒後にダッシュボードに自動遷移
+      setTimeout(() => {
+        if (!hasNavigated) {
+          console.log('🔄 ダッシュボードに自動遷移')
+          setHasNavigated(true)
+          router.push('/dashboard')
+        }
+      }, 2000)
+      
+      return { success: true, url: sasUrl.split('?')[0] }
     } catch (error) {
-      setProcessingStatus('エラーが発生しました')
-      console.error('Error sending audio:', error)
+      const errorMessage = error instanceof Error ? error.message : 'アップロードに失敗しました'
+      console.error('❌ Error uploading audio:', error)
+      setProcessingStatus('アップロードに失敗しました')
+      setUploadStatus({ success: false, error: errorMessage })
+      
+      return { success: false, error: errorMessage }
+    } finally {
+      setIsUploading(false)
     }
   }
 
@@ -401,10 +498,37 @@ export const useRecording = () => {
     }
   }
 
+  // 録音停止時の自動アップロード処理
+  useEffect(() => {
+    if (!isRecording && recordingBlob && !isUploading && !hasUploaded) {
+      console.log('🔄 録音停止を検知、自動アップロードを開始')
+      console.log('📊 アップロード条件確認:', {
+        isRecording,
+        hasRecordingBlob: !!recordingBlob,
+        isUploading,
+        hasUploaded
+      })
+      
+      console.log('🔍 自動アップロード時のパラメータ:', {
+        meetingId,
+        userId,
+        hasMeetingId: !!meetingId,
+        hasUserId: !!userId
+      })
+      
+      // meetingIdとuserIdを渡してアップロード
+      sendAudioToServer(recordingBlob, meetingId, userId)
+      setHasUploaded(true) // 一度だけ実行するためのフラグ
+    }
+  }, [isRecording, recordingBlob, isUploading, hasUploaded, meetingId, userId])
+
   return {
     isRecording,
     transcription,
     processingStatus,
+    uploadStatus,
+    isUploading,
+    hasUploaded,
     startRecording,
     stopRecording,
     isPaused,
@@ -417,6 +541,7 @@ export const useRecording = () => {
     getRecordingData,
     recordingBlob,
     audioLevel, // 音声レベルの配列を返す
-    testMicrophone // マイクテスト関数を追加
+    testMicrophone, // マイクテスト関数を追加
+    sendAudioToServer // 手動アップロード用
   }
 } 

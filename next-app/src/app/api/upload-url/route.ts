@@ -6,6 +6,9 @@ import {
   SASProtocol
 } from "@azure/storage-blob"
 
+// 動的レンダリングを強制
+export const dynamic = 'force-dynamic'
+
 const accountName = "audiosalesanalyzeraudio"
 const accountKey = process.env.AZURE_STORAGE_ACCOUNT_KEY!
 const containerName = "moc-audio"
