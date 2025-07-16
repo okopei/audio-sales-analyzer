@@ -506,7 +506,7 @@ export const useRecording = () => {
       })
       
       // URLパラメータからmeetingIdとuserIdを取得
-      const urlParams = new URLSearchParams(window.location.search)
+      const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
       const meetingId = urlParams.get('meetingId')
       const userId = urlParams.get('userId')
       
