@@ -438,7 +438,12 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                     filler_segments = cursor.fetchall()
 
                     if not filler_segments:
-                        logging.info(f"🟡 filler セグメントなし → スキップ (meeting_id={meeting_id})")
+                        logging.info(f"🟡 filler セグメントなし → ステータスを step2_completed に更新 (meeting_id={meeting_id})")
+                        cursor.execute("""
+                            UPDATE dbo.Meetings
+                            SET status = 'step2_completed', updated_datetime = GETDATE()
+                            WHERE meeting_id = ?
+                        """, (meeting_id,))
                         continue
 
                     for (line_no, text) in filler_segments:
@@ -490,7 +495,12 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                     filler_segments = cursor.fetchall()
 
                     if not filler_segments:
-                        logging.info(f"🟡 ステップ3: filler セグメントなし → スキップ (meeting_id={meeting_id})")
+                        logging.info(f"🟡 ステップ3: filler セグメントなし → ステータスを step3_completed に更新 (meeting_id={meeting_id})")
+                        cursor.execute("""
+                            UPDATE dbo.Meetings
+                            SET status = 'step3_completed', updated_datetime = GETDATE()
+                            WHERE meeting_id = ?
+                        """, (meeting_id,))
                         continue
 
                     for line_no, text, front_score, after_score in filler_segments:
@@ -885,10 +895,10 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                     # ステータス更新
                     cursor.execute("""
                         UPDATE dbo.Meetings
-                        SET status = 'step8_completed', updated_datetime = GETDATE()
+                        SET status = 'AllStepCompleted', updated_datetime = GETDATE()
                         WHERE meeting_id = ?
                     """, (meeting_id,))
-                    logging.info(f"✅ ステップ8完了 → status=step8_completed に更新 (meeting_id={meeting_id})")
+                    logging.info(f"✅ ステップ8完了 → status=AllStepCompleted に更新 (meeting_id={meeting_id})")
 
             except Exception as inner_e:
                 logging.exception(f"⚠️ 個別処理エラー (meeting_id={meeting_id}): {inner_e}")
