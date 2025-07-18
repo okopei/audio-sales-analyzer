@@ -6,9 +6,12 @@ import struct
 import uuid
 import re
 import requests
+import json
+import openai
 from datetime import datetime, timezone, timedelta
 from azure.identity import ClientSecretCredential
 from azure.storage.blob import BlobServiceClient, BlobSasPermissions, generate_blob_sas
+from azure.storage.queue import QueueServiceClient
 import isodate
 import sys
 from pathlib import Path
@@ -84,6 +87,75 @@ def get_db_connection():
         logging.error("[DB接続] エラー発生")
         logging.exception("詳細:")
         raise
+
+def get_queue_service_client():
+    """
+    Azure Storage Queue Service Client を取得します。
+    """
+    try:
+        connection_string = os.environ.get("AzureWebJobsStorage")
+        if not connection_string:
+            raise ValueError("AzureWebJobsStorage 環境変数が設定されていません")
+        
+        return QueueServiceClient.from_connection_string(connection_string)
+    except Exception as e:
+        logging.error(f"[Queue Service] 接続エラー: {e}")
+        raise
+
+def send_queue_message(queue_name: str, message: dict):
+    """
+    指定されたキューにメッセージを送信します。
+    """
+    try:
+        queue_service = get_queue_service_client()
+        queue_client = queue_service.get_queue_client(queue_name)
+        
+        # メッセージをJSON文字列に変換
+        message_json = json.dumps(message)
+        queue_client.send_message(message_json)
+        
+        logging.info(f"✅ キュー '{queue_name}' にメッセージ送信完了: {message}")
+    except Exception as e:
+        logging.error(f"❌ キュー '{queue_name}' へのメッセージ送信失敗: {e}")
+        raise
+
+def get_naturalness_score(text: str) -> float:
+    """
+    OpenAI APIを使用して日本語文の自然さを評価し、0.0〜1.0のスコアを返します。
+    """
+    if not text or not text.strip():
+        return 0.5  # 空文字の場合はデフォルトスコア
+    
+    prompt = f"""
+次の日本語文の自然さを評価してください。
+語順、意味の流れ、文脈のつながりを考慮し、
+0.0〜1.0 のスコアで返答してください。
+
+文：{text}
+
+※スコアのみを返してください（例：0.7）
+    """.strip()
+    
+    try:
+        # OpenAI client を初期化
+        client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        
+        response = client.chat.completions.create(
+            model=os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
+            messages=[
+                {"role": "system", "content": "あなたは日本語の文の自然さを評価するAIです。"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0
+        )
+        
+        content = response.choices[0].message.content.strip()
+        score = float(content)
+        
+        return score
+    except Exception as e:
+        logging.error(f"[OpenAI] API call failed: {e}")
+        return 0.5  # 応答異常時のフォールバックスコア
 
 def log_trigger_error(event_type: str, table_name: str, record_id: int, additional_info: str):
     """
@@ -633,6 +705,7 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
                     """, (meeting_id,))
                     logging.info(f"✅ ステップ4完了 → status=step4_completed に更新 (meeting_id={meeting_id})")
 
+
                 # ステップ5: step4_completed の会議に対して 同一話者セグメントを統合し ConversationFinalSegments に挿入
                 elif current_status == 'step4_completed':
                     # ConversationFinalSegments に既にデータがあればスキップ
@@ -919,7 +992,858 @@ def polling_transcription_results(timer: func.TimerRequest) -> None:
             additional_info=f"[polling_transcription_results] {str(e)}"
         )
 
+# ============================================================================
+# 🔄 Queue Trigger ベースの新しい処理関数群
+# ============================================================================
 
+@app.function_name(name="QueuePreprocessingFunc")
+@app.queue_trigger(arg_name="message", queue_name="queue-preprocessing", connection="AzureWebJobsStorage")
+def queue_preprocessing_func(message: func.QueueMessage):
+    """
+    ステップ1-3: セグメント化、フィラースコア、補完候補を TranscriptProcessingSegments に保存
+    """
+    try:
+        logging.info("=== QueuePreprocessingFunc 開始 ===")
+        
+        # メッセージから meeting_id を取得
+        message_data = json.loads(message.get_body().decode('utf-8'))
+        meeting_id = message_data.get("meeting_id")
+        
+        if not meeting_id:
+            raise ValueError("メッセージに meeting_id が含まれていません")
+        
+        logging.info(f"🎯 処理対象: meeting_id={meeting_id}")
+        
+        # ステータスを preprocessing_in_progress に更新
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            UPDATE dbo.Meetings
+            SET status = 'preprocessing_in_progress', updated_datetime = GETDATE()
+            WHERE meeting_id = ?
+        """, (meeting_id,))
+        
+        # transcript_text を取得
+        cursor.execute("""
+            SELECT transcript_text FROM dbo.Meetings WHERE meeting_id = ?
+        """, (meeting_id,))
+        row = cursor.fetchone()
+        
+        if not row or not row[0]:
+            logging.warning(f"⚠️ transcript_text が存在しません (meeting_id={meeting_id})")
+            cursor.execute("""
+                UPDATE dbo.Meetings
+                SET status = 'preprocessing_completed', updated_datetime = GETDATE()
+                WHERE meeting_id = ?
+            """, (meeting_id,))
+            conn.commit()
+            return
+        
+        transcript_text = row[0]
+        
+        # ステップ1: セグメント化処理
+        segments = step1_process_transcript(transcript_text)
+        
+        if not segments:
+            logging.warning(f"⚠️ ステップ1の出力が空です (meeting_id={meeting_id})")
+            cursor.execute("""
+                UPDATE dbo.Meetings
+                SET status = 'preprocessing_completed', updated_datetime = GETDATE()
+                WHERE meeting_id = ?
+            """, (meeting_id,))
+            conn.commit()
+            return
+        
+        # 話者ごとの重複排除リストを作る
+        unique_speakers = list(set(seg["speaker"] for seg in segments))
+        
+        # meeting_id から user_id を取得
+        cursor.execute("SELECT user_id FROM dbo.BasicInfo WHERE meeting_id = ?", (meeting_id,))
+        row = cursor.fetchone()
+        user_id = row[0] if row else None
+        
+        # Speakers テーブルに話者を登録
+        for speaker_name in unique_speakers:
+            cursor.execute("""
+                SELECT 1 FROM dbo.Speakers
+                WHERE meeting_id = ? AND speaker_name = ? AND deleted_datetime IS NULL
+            """, (meeting_id, speaker_name))
+            exists = cursor.fetchone()
+            if not exists:
+                cursor.execute("""
+                    INSERT INTO dbo.Speakers (
+                        speaker_name, speaker_role, user_id, meeting_id,
+                        inserted_datetime, updated_datetime
+                    )
+                    VALUES (?, NULL, ?, ?, GETDATE(), GETDATE())
+                """, (speaker_name, user_id, meeting_id))
+                logging.info(f"👤 新しい話者をSpeakersテーブルに登録: {speaker_name}")
+        
+        # TranscriptProcessingSegments に挿入
+        for line_no, seg in enumerate(segments, start=1):
+            speaker = seg["speaker"]
+            text = seg["text"]
+            offset = seg["offset"]
+            is_filler = 1 if len(text.strip("（）")) < 10 else 0
+            
+            cursor.execute("""
+                INSERT INTO dbo.TranscriptProcessingSegments (
+                    meeting_id, line_no, speaker, transcript_text_segment,
+                    offset_seconds, is_filler,
+                    front_score, after_score,
+                    inserted_datetime, updated_datetime
+                )
+                VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, GETDATE(), GETDATE())
+            """, (
+                meeting_id, line_no, speaker, text,
+                offset, is_filler
+            ))
+            
+            logging.info(f"[DB] Inserted TranscriptProcessingSegment: meeting_id={meeting_id}, line_no={line_no}, speaker={speaker}")
+        
+        # ステップ2: フィラースコアリング
+        cursor.execute("""
+            SELECT line_no, transcript_text_segment
+            FROM dbo.TranscriptProcessingSegments
+            WHERE meeting_id = ? AND is_filler = 1
+            ORDER BY line_no
+        """, (meeting_id,))
+        filler_segments = cursor.fetchall()
+        
+        for (line_no, text) in filler_segments:
+            logging.info(f"[FILLER] Processing line {line_no}, text: '{text}'")
+            
+            # 前後のセグメントを取得
+            cursor.execute("""
+                SELECT transcript_text_segment FROM dbo.TranscriptProcessingSegments
+                WHERE meeting_id = ? AND line_no = ?
+            """, (meeting_id, line_no - 1))
+            prev_row = cursor.fetchone()
+            prev_text = prev_row[0] if prev_row else ""
 
+            cursor.execute("""
+                SELECT transcript_text_segment FROM dbo.TranscriptProcessingSegments
+                WHERE meeting_id = ? AND line_no = ?
+            """, (meeting_id, line_no + 1))
+            next_row = cursor.fetchone()
+            next_text = next_row[0] if next_row else ""
 
+            front_text = prev_text.strip("。")
+            back_text = next_text.strip("。")
+            bracket_text = text.strip("（）")
 
+            # フィラー判定補助カラムの構築
+            merged_text_with_prev = ""
+            merged_text_with_next = ""
+
+            # merged_text_with_prev: 前のセグメントの最後の文 + 現在の文
+            if prev_text and prev_text.strip():
+                prev_sentences = [s.strip() for s in prev_text.strip().split("。") if s.strip()]
+                if prev_sentences:
+                    prev_last_sentence = prev_sentences[-1]
+                    merged_text_with_prev = prev_last_sentence + bracket_text
+                else:
+                    logging.warning(f"[FILLER] No valid sentences found in prev_text")
+            else:
+                logging.warning(f"[FILLER] Prev text is empty for line {line_no - 1}")
+
+            # merged_text_with_next: 現在の文（。を除く）+ 次のセグメントの最初の文
+            if next_text and next_text.strip():
+                next_sentences = [s.strip() for s in next_text.strip().split("。") if s.strip()]
+                if next_sentences:
+                    next_first_sentence = next_sentences[0]
+                    merged_text_with_next = bracket_text.strip("。") + next_first_sentence
+                else:
+                    logging.warning(f"[FILLER] No valid sentences found in next_text")
+            else:
+                logging.warning(f"[FILLER] Next text is empty for line {line_no + 1}")
+
+            # merged_text_with_prev/nextを使用してOpenAI APIで自然さスコア判定
+            front_score = 0.0
+            back_score = 0.0
+            
+            if merged_text_with_prev and merged_text_with_prev.strip():
+                try:
+                    front_score = get_naturalness_score(merged_text_with_prev)
+                except Exception as e:
+                    logging.warning(f"[FILLER] Front score calculation failed: {e}")
+                    front_score = 0.5  # フォールバックスコア
+            else:
+                front_score = 0.5
+
+            if merged_text_with_next and merged_text_with_next.strip():
+                try:
+                    back_score = get_naturalness_score(merged_text_with_next)
+                except Exception as e:
+                    logging.warning(f"[FILLER] Back score calculation failed: {e}")
+                    back_score = 0.5  # フォールバックスコア
+            else:
+                back_score = 0.5
+
+            # DB更新（補助カラムも含めて）
+            cursor.execute("""
+                UPDATE dbo.TranscriptProcessingSegments
+                SET front_score = ?, after_score = ?, 
+                    merged_text_with_prev = ?, merged_text_with_next = ?,
+                    updated_datetime = GETDATE()
+                WHERE meeting_id = ? AND line_no = ?
+            """, (front_score, back_score, merged_text_with_prev, merged_text_with_next, meeting_id, line_no))
+
+            logging.info(f"[FILLER] Updated line {line_no} with scores: front={front_score}, back={back_score}")
+        
+        # ステップ3: 補完候補挿入
+        cursor.execute("""
+            SELECT line_no, transcript_text_segment, front_score, after_score
+            FROM dbo.TranscriptProcessingSegments
+            WHERE meeting_id = ? AND is_filler = 1
+            ORDER BY line_no
+        """, (meeting_id,))
+        filler_segments = cursor.fetchall()
+        
+        for line_no, text, front_score, after_score in filler_segments:
+            logging.info(f"[REVISION] Processing line {line_no}, front_score={front_score}, after_score={after_score}")
+            
+            # merged_text_with_prev/nextを取得
+            cursor.execute("""
+                SELECT merged_text_with_prev, merged_text_with_next FROM dbo.TranscriptProcessingSegments
+                WHERE meeting_id = ? AND line_no = ?
+            """, (meeting_id, line_no))
+            row = cursor.fetchone()
+            merged_text_with_prev = row[0] if row and row[0] else ""
+            merged_text_with_next = row[1] if row and row[1] else ""
+            
+            delete_candidate = None
+            
+            # 前後のセグメントを再取得（delete_candidate_word生成用）
+            cursor.execute("""
+                SELECT transcript_text_segment FROM dbo.TranscriptProcessingSegments
+                WHERE meeting_id = ? AND line_no = ?
+            """, (meeting_id, line_no - 1))
+            prev_row = cursor.fetchone()
+            prev_text = prev_row[0] if prev_row else ""
+
+            cursor.execute("""
+                SELECT transcript_text_segment FROM dbo.TranscriptProcessingSegments
+                WHERE meeting_id = ? AND line_no = ?
+            """, (meeting_id, line_no + 1))
+            next_row = cursor.fetchone()
+            next_text = next_row[0] if next_row else ""
+            
+            # 前後の文から構成元を抽出
+            prev_last_sentence = ""
+            next_first_sentence = ""
+            
+            if prev_text and prev_text.strip():
+                prev_sentences = [s.strip() for s in prev_text.strip().split("。") if s.strip()]
+                if prev_sentences:
+                    prev_last_sentence = prev_sentences[-1]
+            
+            if next_text and next_text.strip():
+                next_sentences = [s.strip() for s in next_text.strip().split("。") if s.strip()]
+                if next_sentences:
+                    next_first_sentence = next_sentences[0]
+            
+            # スコアに基づいて補完に使われた文を特定し、その構成元をdelete_candidate_wordに格納
+            if front_score > after_score:
+                # front_scoreが高い（より自然）→ merged_text_with_prevが採用された
+                if merged_text_with_prev and merged_text_with_prev.strip():
+                    delete_candidate = prev_last_sentence.rstrip("。") + "。"  # 前の文の最後の文を削除候補とする（語尾に「。」を付与）
+                    logging.info(f"[REVISION] Using merged_text_with_prev (front_score={front_score} > after_score={after_score}), delete_candidate: '{delete_candidate}'")
+                else:
+                    logging.warning(f"[REVISION] merged_text_with_prev is empty")
+            else:
+                # after_scoreが高い（より自然）→ merged_text_with_nextが採用された
+                if merged_text_with_next and merged_text_with_next.strip():
+                    delete_candidate = next_first_sentence.rstrip("。") + "。"  # 次の文の最初の文を削除候補とする（語尾に「。」を付与）
+                    logging.info(f"[REVISION] Using merged_text_with_next (front_score={front_score} <= after_score={after_score}), delete_candidate: '{delete_candidate}'")
+                else:
+                    logging.warning(f"[REVISION] merged_text_with_next is empty")
+            
+            # filler 行に delete_candidate_word のみを更新（revised_text_segment は使用しない）
+            cursor.execute("""
+                UPDATE dbo.TranscriptProcessingSegments
+                SET delete_candidate_word = ?, updated_datetime = GETDATE()
+                WHERE meeting_id = ? AND line_no = ?
+            """, (delete_candidate, meeting_id, line_no))
+        
+        # ステータス更新
+        cursor.execute("""
+            UPDATE dbo.Meetings
+            SET status = 'preprocessing_completed', updated_datetime = GETDATE()
+            WHERE meeting_id = ?
+        """, (meeting_id,))
+        
+        conn.commit()
+        logging.info(f"✅ Preprocessing完了 → status=preprocessing_completed (meeting_id={meeting_id})")
+        
+        # 次のキューにメッセージ送信
+        send_queue_message("queue-merging", {"meeting_id": meeting_id})
+        
+    except Exception as e:
+        logging.exception(f"❌ QueuePreprocessingFunc エラー (meeting_id={meeting_id if 'meeting_id' in locals() else 'unknown'}): {e}")
+        log_trigger_error(
+            event_type="error",
+            table_name="TranscriptProcessingSegments",
+            record_id=meeting_id if 'meeting_id' in locals() else -1,
+            additional_info=f"[queue_preprocessing_func] {str(e)}"
+        )
+        
+        # エラー時はステータスを failed に更新
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE dbo.Meetings
+                SET status = 'preprocessing_failed', updated_datetime = GETDATE()
+                WHERE meeting_id = ?
+            """, (meeting_id,))
+            conn.commit()
+        except Exception as update_error:
+            logging.error(f"❌ ステータス更新失敗: {update_error}")
+
+@app.function_name(name="QueueMergingAndCleanupFunc")
+@app.queue_trigger(arg_name="message", queue_name="queue-merging", connection="AzureWebJobsStorage")
+def queue_merging_and_cleanup_func(message: func.QueueMessage):
+    """
+    ステップ4-6: セグメント統合、話者ごと整形、OpenAIフィラー除去 → ProcessedTranscriptSegments に保存
+    """
+    try:
+        logging.info("=== QueueMergingAndCleanupFunc 開始 ===")
+        
+        # メッセージから meeting_id を取得
+        message_data = json.loads(message.get_body().decode('utf-8'))
+        meeting_id = message_data.get("meeting_id")
+        
+        if not meeting_id:
+            raise ValueError("メッセージに meeting_id が含まれていません")
+        
+        logging.info(f"🎯 処理対象: meeting_id={meeting_id}")
+        
+        # ステータスを merging_in_progress に更新
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            UPDATE dbo.Meetings
+            SET status = 'merging_in_progress', updated_datetime = GETDATE()
+            WHERE meeting_id = ?
+        """, (meeting_id,))
+        
+        # TranscriptProcessingSegments からデータ取得
+        cursor.execute("""
+            SELECT line_no, speaker, transcript_text_segment, merged_text_with_prev, merged_text_with_next, offset_seconds
+            FROM dbo.TranscriptProcessingSegments
+            WHERE meeting_id = ?
+            ORDER BY line_no
+        """, (meeting_id,))
+        segments = cursor.fetchall()
+        
+        if not segments:
+            logging.warning(f"⚠️ TranscriptProcessingSegments にデータがありません (meeting_id={meeting_id})")
+            cursor.execute("""
+                UPDATE dbo.Meetings
+                SET status = 'merging_completed', updated_datetime = GETDATE()
+                WHERE meeting_id = ?
+            """, (meeting_id,))
+            conn.commit()
+            return
+        
+        # ステップ4: セグメント統合処理
+        merged_segments = []
+        for idx, (line_no, speaker, transcript_text, merged_text_with_prev, merged_text_with_next, offset_seconds) in enumerate(segments):
+            logging.info(f"[MERGING] Processing line {line_no}, speaker={speaker}")
+            
+            # delete_candidate_word を取得
+            cursor.execute("""
+                SELECT delete_candidate_word FROM dbo.TranscriptProcessingSegments
+                WHERE meeting_id = ? AND line_no = ?
+            """, (meeting_id, line_no))
+            del_row = cursor.fetchone()
+            delete_word = del_row[0] if del_row else None
+            
+            # 現在の行の merged_text_with_prev/next を活用
+            current_merged_text = None
+            if merged_text_with_prev or merged_text_with_next:
+                # スコアを取得して選択
+                cursor.execute("""
+                    SELECT front_score, after_score FROM dbo.TranscriptProcessingSegments
+                    WHERE meeting_id = ? AND line_no = ?
+                """, (meeting_id, line_no))
+                score_row = cursor.fetchone()
+                if score_row:
+                    front_score, after_score = score_row
+                    if front_score > after_score and merged_text_with_prev and merged_text_with_prev.strip():
+                        current_merged_text = merged_text_with_prev
+                        logging.info(f"[MERGING] Using merged_text_with_prev (front_score={front_score} > after_score={after_score})")
+                    elif merged_text_with_next and merged_text_with_next.strip():
+                        current_merged_text = merged_text_with_next
+                        logging.info(f"[MERGING] Using merged_text_with_next (front_score={front_score} <= after_score={after_score})")
+                    else:
+                        logging.warning(f"[MERGING] No valid merged_text available for line {line_no}")
+            
+            # 1行先の merged_text_with_prev/next を取得（存在すれば）
+            next_merged_text = None
+            if idx + 1 < len(segments):
+                next_segment = segments[idx + 1]
+                # 次の行がfillerの場合、スコアに基づいて選択されたテキストを使用
+                if next_segment[3] or next_segment[4]:  # merged_text_with_prev または merged_text_with_next が存在
+                    # スコアを取得して選択
+                    cursor.execute("""
+                        SELECT front_score, after_score FROM dbo.TranscriptProcessingSegments
+                        WHERE meeting_id = ? AND line_no = ?
+                    """, (meeting_id, next_segment[0]))
+                    score_row = cursor.fetchone()
+                    if score_row:
+                        front_score, after_score = score_row
+                        if front_score > after_score and next_segment[3] and next_segment[3].strip():
+                            next_merged_text = next_segment[3]  # merged_text_with_prev
+                            logging.info(f"[MERGING] Next line using merged_text_with_prev")
+                        elif next_segment[4] and next_segment[4].strip():
+                            next_merged_text = next_segment[4]  # merged_text_with_next
+                            logging.info(f"[MERGING] Next line using merged_text_with_next")
+            
+            # delete_word を除去し、merged_text を構成
+            cleaned_text = transcript_text.replace(delete_word or "", "")
+            merged_text = cleaned_text
+            
+            # 現在の行のmerged_textを優先的に使用
+            if current_merged_text and current_merged_text.strip():
+                merged_text = current_merged_text
+                logging.info(f"[MERGING] Using current_merged_text: '{merged_text}'")
+            elif next_merged_text and next_merged_text.strip():
+                merged_text += f"({next_merged_text})"
+                logging.info(f"[MERGING] Using next_merged_text: '{merged_text}'")
+            else:
+                logging.info(f"[MERGING] Using original text: '{merged_text}'")
+            
+            merged_segments.append((meeting_id, line_no, speaker, merged_text, offset_seconds))
+        
+        # ステップ5: 同一話者セグメント統合
+        final_segments = []
+        current_speaker = None
+        current_offset = None
+        sentence_set = set()
+        sentence_list = []
+        
+        for meeting_id, line_no, speaker, text, offset in merged_segments:
+            # 文単位に分割（「。」で区切り）
+            sentences = [s.strip() + "。" for s in text.split("。") if s.strip()]
+            
+            if speaker == current_speaker:
+                for sentence in sentences:
+                    if sentence not in sentence_set:
+                        sentence_set.add(sentence)
+                        sentence_list.append(sentence)
+            else:
+                if current_speaker is not None:
+                    combined_text = " ".join(sentence_list).strip()
+                    final_segments.append((meeting_id, current_speaker, combined_text, current_offset))
+                
+                current_speaker = speaker
+                current_offset = offset
+                sentence_set = set(sentences)
+                sentence_list = sentences.copy()
+        
+        # 最後のセグメントも保存
+        if current_speaker is not None and sentence_list:
+            combined_text = " ".join(sentence_list).strip()
+            final_segments.append((meeting_id, current_speaker, combined_text, current_offset))
+        
+        # ProcessedTranscriptSegments に挿入
+        for meeting_id, speaker, merged_text, offset_seconds in final_segments:
+            cursor.execute("""
+                INSERT INTO dbo.ProcessedTranscriptSegments (
+                    meeting_id, speaker, merged_text, offset_seconds,
+                    inserted_datetime, updated_datetime
+                ) VALUES (?, ?, ?, ?, GETDATE(), GETDATE())
+            """, (meeting_id, speaker, merged_text, offset_seconds))
+            logging.info(f"[DB] Inserted ProcessedTranscriptSegment: meeting_id={meeting_id}, speaker={speaker}, merged_text='{merged_text[:100]}...'")
+        
+        # ステップ6: OpenAIフィラー除去
+        cursor.execute("""
+            SELECT id, merged_text
+            FROM dbo.ProcessedTranscriptSegments
+            WHERE meeting_id = ?
+        """, (meeting_id,))
+        segments = cursor.fetchall()
+        
+        # OpenAIクライアントの初期化
+        client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        
+        def remove_fillers_from_text_inline(text: str) -> str:
+            """
+            OpenAI APIを使用して単一テキストのフィラーを削除する（インライン実装）
+            """
+            system_message = """以下の発話から、自然な会話の流れを崩さずに「えっと」「あの」「まあ」「その」「ですけど」などのフィラーを削除してください。
+
+削除対象のフィラー例：
+- えっと（最も一般的）
+- あの（会話の冒頭など）
+- まあ（話のつなぎによく使われる）
+- その（内容が曖昧なとき）
+- ですけど（文末に多用されるが曖昧な接続語）
+
+注意事項：
+- 会話の意味や意図は変更しない
+- 自然な日本語の流れを維持する
+- フィラーを削除した結果、不自然になる場合は削除しない
+- 出力は修正後のテキストのみを返す（説明不要）
+- 出力時に「」は使用しない"""
+
+            user_message = f"""元の発話：
+{text}
+
+修正後："""
+
+            try:
+                response = client.chat.completions.create(
+                    model=os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
+                    messages=[
+                        {"role": "system", "content": system_message},
+                        {"role": "user", "content": user_message}
+                    ],
+                    temperature=0.1,  # 低い温度で一貫性を保つ
+                    max_tokens=200    # 短い応答に制限
+                )
+
+                # トークン使用量を取得（エラーハンドリング付き）
+                try:
+                    tokens_used = response.usage.total_tokens
+                    logging.info(f"🔢 トークン使用量: {tokens_used} (フィラー削除)")
+                except (AttributeError, KeyError):
+                    tokens_used = 0
+
+                result = response.choices[0].message.content.strip()
+                
+                # 「」を削除する処理
+                result = result.strip('「」')
+                
+                # 結果が空でない場合は返す
+                if result:
+                    return result
+                else:
+                    return text
+                    
+            except Exception as e:
+                logging.warning(f"フィラー削除失敗: {e}")
+                return text  # フォールバック
+        
+        for segment_id, merged_text in segments:
+            logging.info(f"[CLEANUP] Processing segment_id={segment_id}, merged_text='{merged_text[:100]}...'")
+            try:
+                cleaned = remove_fillers_from_text_inline(merged_text)
+                logging.info(f"[CLEANUP] Cleaned text: '{cleaned[:100]}...'")
+            except Exception as e:
+                logging.warning(f"❌ フィラー削除失敗 id={segment_id} error={e}")
+                cleaned = merged_text  # フォールバック
+            
+            cursor.execute("""
+                UPDATE dbo.ProcessedTranscriptSegments
+                SET cleaned_text = ?, updated_datetime = GETDATE()
+                WHERE id = ?
+            """, (cleaned, segment_id))
+            logging.info(f"[DB] Updated ProcessedTranscriptSegment: id={segment_id}, cleaned_text='{cleaned[:100]}...'")
+        
+        # ステータス更新
+        cursor.execute("""
+            UPDATE dbo.Meetings
+            SET status = 'merging_completed', updated_datetime = GETDATE()
+            WHERE meeting_id = ?
+        """, (meeting_id,))
+        
+        conn.commit()
+        logging.info(f"✅ MergingAndCleanup完了 → status=merging_completed (meeting_id={meeting_id})")
+        
+        # 次のキューにメッセージ送信
+        send_queue_message("queue-summary", {"meeting_id": meeting_id})
+        
+    except Exception as e:
+        logging.exception(f"❌ QueueMergingAndCleanupFunc エラー (meeting_id={meeting_id if 'meeting_id' in locals() else 'unknown'}): {e}")
+        log_trigger_error(
+            event_type="error",
+            table_name="ProcessedTranscriptSegments",
+            record_id=meeting_id if 'meeting_id' in locals() else -1,
+            additional_info=f"[queue_merging_and_cleanup_func] {str(e)}"
+        )
+        
+        # エラー時はステータスを failed に更新
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE dbo.Meetings
+                SET status = 'merging_failed', updated_datetime = GETDATE()
+                WHERE meeting_id = ?
+            """, (meeting_id,))
+            conn.commit()
+        except Exception as update_error:
+            logging.error(f"❌ ステータス更新失敗: {update_error}")
+
+@app.function_name(name="QueueSummarizationFunc")
+@app.queue_trigger(arg_name="message", queue_name="queue-summary", connection="AzureWebJobsStorage")
+def queue_summarization_func(message: func.QueueMessage):
+    """
+    ステップ7: ブロック要約タイトル生成 → ConversationSummaries に保存
+    """
+    try:
+        logging.info("=== QueueSummarizationFunc 開始 ===")
+        
+        # メッセージから meeting_id を取得
+        message_data = json.loads(message.get_body().decode('utf-8'))
+        meeting_id = message_data.get("meeting_id")
+        
+        if not meeting_id:
+            raise ValueError("メッセージに meeting_id が含まれていません")
+        
+        logging.info(f"🎯 処理対象: meeting_id={meeting_id}")
+        
+        # ステータスを summary_in_progress に更新
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            UPDATE dbo.Meetings
+            SET status = 'summary_in_progress', updated_datetime = GETDATE()
+            WHERE meeting_id = ?
+        """, (meeting_id,))
+        
+        # ProcessedTranscriptSegments からデータ取得
+        cursor.execute("""
+            SELECT id, speaker, cleaned_text, offset_seconds
+            FROM dbo.ProcessedTranscriptSegments
+            WHERE meeting_id = ?
+            ORDER BY offset_seconds
+        """, (meeting_id,))
+        rows = cursor.fetchall()
+        
+        if not rows:
+            logging.warning(f"⚠️ ProcessedTranscriptSegments にデータがありません (meeting_id={meeting_id})")
+            cursor.execute("""
+                UPDATE dbo.Meetings
+                SET status = 'summary_completed', updated_datetime = GETDATE()
+                WHERE meeting_id = ?
+            """, (meeting_id,))
+            conn.commit()
+            return
+        
+        # openai_completion_step7 から処理関数をインポート
+        from openai_processing.openai_completion_step7 import generate_summary_title, extract_offset_from_line
+        
+        # テキスト形式に変換してブロック化処理用に準備
+        lines = []
+        for row in rows:
+            segment_id, speaker, text, offset = row
+            if text:
+                lines.append((segment_id, f"Speaker{speaker}: {text}({offset})"))
+        
+        # ブロック化（300秒単位）
+        blocks = []
+        current_block = {
+            "lines": [],
+            "block_index": 0,
+            "start_offset": 0.0
+        }
+        for seg_id, line in lines:
+            body, offset = extract_offset_from_line(line)
+            if offset is None:
+                continue
+            block_index = int(offset // 300)
+            if block_index != current_block["block_index"]:
+                if current_block["lines"]:
+                    blocks.append(current_block.copy())
+                current_block = {
+                    "lines": [],
+                    "block_index": block_index,
+                    "start_offset": offset
+                }
+            current_block["lines"].append((seg_id, line))
+        if current_block["lines"]:
+            blocks.append(current_block)
+        
+        # 各ブロックに対してタイトルを生成し、ConversationSummaries に挿入
+        for i, block in enumerate(blocks):
+            lines_only = [line for _, line in block["lines"]]
+            conversation_text = "\n".join(lines_only)
+            title = generate_summary_title(conversation_text, i, len(blocks))
+            
+            # サマリ行を挿入
+            cursor.execute("""
+                INSERT INTO dbo.ConversationSummaries (
+                    meeting_id, speaker, content, offset_seconds, is_summary,
+                    inserted_datetime, updated_datetime
+                ) VALUES (?, ?, ?, ?, ?, GETDATE(), GETDATE())
+            """, (meeting_id, 0, title, block["start_offset"], 1))
+            
+            # 各セグメントも挿入
+            for seg_id, line in block["lines"]:
+                body, offset = extract_offset_from_line(line)
+                speaker = int(line.split(":")[0].replace("Speaker", ""))
+                content = line.split(":")[1].split("(")[0].strip()
+                
+                cursor.execute("""
+                    INSERT INTO dbo.ConversationSummaries (
+                        meeting_id, speaker, content, offset_seconds, is_summary,
+                        inserted_datetime, updated_datetime
+                    ) VALUES (?, ?, ?, ?, ?, GETDATE(), GETDATE())
+                """, (meeting_id, speaker, content, offset, 0))
+        
+        # ステータス更新
+        cursor.execute("""
+            UPDATE dbo.Meetings
+            SET status = 'summary_completed', updated_datetime = GETDATE()
+            WHERE meeting_id = ?
+        """, (meeting_id,))
+        
+        conn.commit()
+        logging.info(f"✅ Summarization完了 → status=summary_completed (meeting_id={meeting_id})")
+        
+        # 次のキューにメッセージ送信
+        send_queue_message("queue-export", {"meeting_id": meeting_id})
+        
+    except Exception as e:
+        logging.exception(f"❌ QueueSummarizationFunc エラー (meeting_id={meeting_id if 'meeting_id' in locals() else 'unknown'}): {e}")
+        log_trigger_error(
+            event_type="error",
+            table_name="ConversationSummaries",
+            record_id=meeting_id if 'meeting_id' in locals() else -1,
+            additional_info=f"[queue_summarization_func] {str(e)}"
+        )
+        
+        # エラー時はステータスを failed に更新
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE dbo.Meetings
+                SET status = 'summary_failed', updated_datetime = GETDATE()
+                WHERE meeting_id = ?
+            """, (meeting_id,))
+            conn.commit()
+        except Exception as update_error:
+            logging.error(f"❌ ステータス更新失敗: {update_error}")
+
+@app.function_name(name="QueueExportFunc")
+@app.queue_trigger(arg_name="message", queue_name="queue-export", connection="AzureWebJobsStorage")
+def queue_export_func(message: func.QueueMessage):
+    """
+    ステップ8: ConversationSummaries から ConversationSegments にコピー
+    """
+    try:
+        logging.info("=== QueueExportFunc 開始 ===")
+        
+        # メッセージから meeting_id を取得
+        message_data = json.loads(message.get_body().decode('utf-8'))
+        meeting_id = message_data.get("meeting_id")
+        
+        if not meeting_id:
+            raise ValueError("メッセージに meeting_id が含まれていません")
+        
+        logging.info(f"🎯 処理対象: meeting_id={meeting_id}")
+        
+        # ステータスを export_in_progress に更新
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            UPDATE dbo.Meetings
+            SET status = 'export_in_progress', updated_datetime = GETDATE()
+            WHERE meeting_id = ?
+        """, (meeting_id,))
+        
+        # ConversationSummaries からデータ取得
+        cursor.execute("""
+            SELECT speaker, content, offset_seconds, is_summary
+            FROM dbo.ConversationSummaries
+            WHERE meeting_id = ?
+            ORDER BY offset_seconds, is_summary DESC
+        """, (meeting_id,))
+        summaries = cursor.fetchall()
+        
+        if not summaries:
+            logging.warning(f"⚠️ ConversationSummaries にデータがありません (meeting_id={meeting_id})")
+            cursor.execute("""
+                UPDATE dbo.Meetings
+                SET status = 'AllStepCompleted', updated_datetime = GETDATE()
+                WHERE meeting_id = ?
+            """, (meeting_id,))
+            conn.commit()
+            return
+        
+        # Meetingsテーブルからユーザー・音声情報を取得
+        cursor.execute("""
+            SELECT user_id, file_name, file_path, file_size, duration_seconds
+            FROM dbo.Meetings
+            WHERE meeting_id = ?
+        """, (meeting_id,))
+        meeting_row = cursor.fetchone()
+        if not meeting_row:
+            logging.warning(f"⚠️ ミーティング情報取得失敗 meeting_id={meeting_id}")
+            return
+        
+        meeting_user_id, file_name, file_path, file_size, duration_seconds = meeting_row
+        
+        # ConversationSegments にデータを挿入
+        for speaker_raw, content, offset, is_summary in summaries:
+            speaker_name = str(speaker_raw)
+            
+            # speaker_id を取得
+            speaker_id = 0
+            if not is_summary:
+                cursor.execute("""
+                    SELECT speaker_id FROM dbo.Speakers
+                    WHERE meeting_id = ? AND speaker_name = ?
+                """, (meeting_id, speaker_name))
+                speaker_row = cursor.fetchone()
+                speaker_id = speaker_row[0] if speaker_row else 0
+            
+            # ConversationSegments に挿入
+            cursor.execute("""
+                INSERT INTO dbo.ConversationSegments (
+                    user_id, speaker_id, meeting_id, content, file_name, file_path, file_size,
+                    duration_seconds, status, inserted_datetime, updated_datetime,
+                    start_time, end_time
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', GETDATE(), GETDATE(), ?, NULL)
+            """, (
+                meeting_user_id if not is_summary else 0,
+                speaker_id,
+                meeting_id,
+                content,
+                file_name,
+                file_path,
+                file_size,
+                duration_seconds,
+                offset
+            ))
+        
+        # ステータス更新
+        cursor.execute("""
+            UPDATE dbo.Meetings
+            SET status = 'AllStepCompleted', updated_datetime = GETDATE()
+            WHERE meeting_id = ?
+        """, (meeting_id,))
+        
+        conn.commit()
+        logging.info(f"✅ Export完了 → status=AllStepCompleted (meeting_id={meeting_id})")
+        
+    except Exception as e:
+        logging.exception(f"❌ QueueExportFunc エラー (meeting_id={meeting_id if 'meeting_id' in locals() else 'unknown'}): {e}")
+        log_trigger_error(
+            event_type="error",
+            table_name="ConversationSegments",
+            record_id=meeting_id if 'meeting_id' in locals() else -1,
+            additional_info=f"[queue_export_func] {str(e)}"
+        )
+        
+        # エラー時はステータスを failed に更新
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE dbo.Meetings
+                SET status = 'export_failed', updated_datetime = GETDATE()
+                WHERE meeting_id = ?
+            """, (meeting_id,))
+            conn.commit()
+        except Exception as update_error:
+            logging.error(f"❌ ステータス更新失敗: {update_error}")
