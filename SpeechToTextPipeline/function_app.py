@@ -1698,6 +1698,9 @@ def queue_summarization_func(message: func.QueueMessage):
         """, (meeting_id,))
         rows = cursor.fetchall()
         
+        # 1. rows = cursor.fetchall() 直後のログ追加
+        logging.info(f"[DEBUG] ProcessedTranscriptSegments 抽出行数: {len(rows)}")
+        
         if not rows:
             logging.warning(f"⚠️ ProcessedTranscriptSegments にデータがありません (meeting_id={meeting_id})")
             cursor.execute("""
@@ -1727,7 +1730,9 @@ def queue_summarization_func(message: func.QueueMessage):
         }
         for seg_id, line in lines:
             body, offset = extract_offset_from_line(line)
+            # 3. extract_offset_from_line() 呼び出し結果が None の場合のログ追加
             if offset is None:
+                logging.warning(f"[WARN] extract_offset_from_line が offset=None を返した line: {line}")
                 continue
             block_index = int(offset // 300)
             if block_index != current_block["block_index"]:
@@ -1746,7 +1751,17 @@ def queue_summarization_func(message: func.QueueMessage):
         for i, block in enumerate(blocks):
             lines_only = [line for _, line in block["lines"]]
             conversation_text = "\n".join(lines_only)
+            
+            # 2. generate_summary_title() 呼び出し直前のログ追加
+            logging.info(f"[DEBUG] block_index={i}, block_lines={len(lines_only)}")
+            logging.info(f"[DEBUG] conversation_text[:200]: {conversation_text[:200]}")
+            
             title = generate_summary_title(conversation_text, i, len(blocks))
+            
+            # title が None または空の場合のチェック
+            if not title or not title.strip():
+                logging.warning(f"[WARN] generate_summary_title が空のタイトルを返しました: block_index={i}")
+                title = f"ブロック{i+1}の要約"  # フォールバックタイトル
             
             # サマリ行を挿入
             cursor.execute("""
@@ -1756,11 +1771,36 @@ def queue_summarization_func(message: func.QueueMessage):
                 ) VALUES (?, ?, ?, ?, ?, GETDATE(), GETDATE())
             """, (meeting_id, 0, title, block["start_offset"], 1))
             
+            # 4. INSERT INTO dbo.ConversationSummaries 成功のログ追加
+            logging.info(f"[DB] サマリ挿入完了: title='{title[:100]}...' offset={block['start_offset']}")
+            
             # 各セグメントも挿入
             for seg_id, line in block["lines"]:
                 body, offset = extract_offset_from_line(line)
-                speaker = int(line.split(":")[0].replace("Speaker", ""))
-                content = line.split(":")[1].split("(")[0].strip()
+                
+                # segment_id から元の cleaned_text を再取得
+                cursor.execute("""
+                    SELECT speaker, cleaned_text, offset_seconds 
+                    FROM dbo.ProcessedTranscriptSegments 
+                    WHERE id = ?
+                """, (seg_id,))
+                seg_row = cursor.fetchone()
+                
+                if not seg_row:
+                    logging.warning(f"[WARN] ProcessedTranscriptSegments にid={seg_id}が見つかりません")
+                    continue
+                
+                speaker, cleaned_text, offset = seg_row
+                content = cleaned_text
+                
+                # speaker と content の妥当性チェック
+                if speaker is None or not isinstance(speaker, int):
+                    logging.warning(f"[WARN] 不正なspeaker値: {speaker}, seg_id: {seg_id}")
+                    speaker = 0  # フォールバック
+                
+                if not content or not content.strip():
+                    logging.warning(f"[WARN] 空のcontent: seg_id={seg_id}")
+                    content = "（内容なし）"  # フォールバック
                 
                 cursor.execute("""
                     INSERT INTO dbo.ConversationSummaries (
@@ -1768,6 +1808,9 @@ def queue_summarization_func(message: func.QueueMessage):
                         inserted_datetime, updated_datetime
                     ) VALUES (?, ?, ?, ?, ?, GETDATE(), GETDATE())
                 """, (meeting_id, speaker, content, offset, 0))
+                
+                # 4. INSERT INTO dbo.ConversationSummaries 成功のログ追加
+                logging.info(f"[INSERT] ConversationSummaries: speaker={speaker}, content='{content[:80]}...' offset={offset}")
         
         # ステータス更新
         cursor.execute("""
@@ -1783,6 +1826,8 @@ def queue_summarization_func(message: func.QueueMessage):
         send_queue_message("queue-export", {"meeting_id": meeting_id})
         
     except Exception as e:
+        # 5. except 節内の例外ログ拡充
+        logging.error(f"[EXCEPTION] queue_summarization_func failed for meeting_id={meeting_id}")
         logging.exception(f"❌ QueueSummarizationFunc エラー (meeting_id={meeting_id if 'meeting_id' in locals() else 'unknown'}): {e}")
         log_trigger_error(
             event_type="error",
