@@ -1330,9 +1330,10 @@ def queue_merging_and_cleanup_func(message: func.QueueMessage):
             WHERE meeting_id = ?
         """, (meeting_id,))
         
-        # TranscriptProcessingSegments からデータ取得
+        # TranscriptProcessingSegments からデータ取得（バッチ処理で最適化）
         cursor.execute("""
-            SELECT line_no, speaker, transcript_text_segment, merged_text_with_prev, merged_text_with_next, offset_seconds
+            SELECT line_no, speaker, transcript_text_segment, merged_text_with_prev, merged_text_with_next, 
+                   offset_seconds, delete_candidate_word, front_score, after_score
             FROM dbo.TranscriptProcessingSegments
             WHERE meeting_id = ?
             ORDER BY line_no
@@ -1349,116 +1350,200 @@ def queue_merging_and_cleanup_func(message: func.QueueMessage):
             conn.commit()
             return
         
-        # ステップ4: セグメント統合処理
-        merged_segments = []
-        for idx, (line_no, speaker, transcript_text, merged_text_with_prev, merged_text_with_next, offset_seconds) in enumerate(segments):
-            logging.info(f"[MERGING] Processing line {line_no}, speaker={speaker}")
+        # ステップ4: 話者連続ブロック構造でのフィラー除去・文脈補完付きセグメント整形
+        
+        # ステップ①：発話ブロックの構築（is_filler=Falseの行のみ対象）
+        speaker_blocks = []
+        current_block = None
+        
+        for idx, (line_no, speaker, transcript_text, merged_text_with_prev, merged_text_with_next, 
+                  offset_seconds, delete_candidate_word, front_score, after_score) in enumerate(segments):
             
-            # delete_candidate_word を取得
+            # is_filler判定
             cursor.execute("""
-                SELECT delete_candidate_word FROM dbo.TranscriptProcessingSegments
+                SELECT is_filler FROM dbo.TranscriptProcessingSegments 
                 WHERE meeting_id = ? AND line_no = ?
             """, (meeting_id, line_no))
-            del_row = cursor.fetchone()
-            delete_word = del_row[0] if del_row else None
+            is_filler_row = cursor.fetchone()
+            is_filler = is_filler_row[0] if is_filler_row else 0
             
-            # 現在の行の merged_text_with_prev/next を活用
-            current_merged_text = None
-            if merged_text_with_prev or merged_text_with_next:
-                # スコアを取得して選択
-                cursor.execute("""
-                    SELECT front_score, after_score FROM dbo.TranscriptProcessingSegments
-                    WHERE meeting_id = ? AND line_no = ?
-                """, (meeting_id, line_no))
-                score_row = cursor.fetchone()
-                if score_row:
-                    front_score, after_score = score_row
-                    if front_score > after_score and merged_text_with_prev and merged_text_with_prev.strip():
-                        current_merged_text = merged_text_with_prev
-                        logging.info(f"[MERGING] Using merged_text_with_prev (front_score={front_score} > after_score={after_score})")
-                    elif merged_text_with_next and merged_text_with_next.strip():
-                        current_merged_text = merged_text_with_next
-                        logging.info(f"[MERGING] Using merged_text_with_next (front_score={front_score} <= after_score={after_score})")
-                    else:
-                        logging.warning(f"[MERGING] No valid merged_text available for line {line_no}")
-            
-            # 1行先の merged_text_with_prev/next を取得（存在すれば）
-            next_merged_text = None
-            if idx + 1 < len(segments):
-                next_segment = segments[idx + 1]
-                # 次の行がfillerの場合、スコアに基づいて選択されたテキストを使用
-                if next_segment[3] or next_segment[4]:  # merged_text_with_prev または merged_text_with_next が存在
-                    # スコアを取得して選択
-                    cursor.execute("""
-                        SELECT front_score, after_score FROM dbo.TranscriptProcessingSegments
-                        WHERE meeting_id = ? AND line_no = ?
-                    """, (meeting_id, next_segment[0]))
-                    score_row = cursor.fetchone()
-                    if score_row:
-                        front_score, after_score = score_row
-                        if front_score > after_score and next_segment[3] and next_segment[3].strip():
-                            next_merged_text = next_segment[3]  # merged_text_with_prev
-                            logging.info(f"[MERGING] Next line using merged_text_with_prev")
-                        elif next_segment[4] and next_segment[4].strip():
-                            next_merged_text = next_segment[4]  # merged_text_with_next
-                            logging.info(f"[MERGING] Next line using merged_text_with_next")
-            
-            # delete_word を除去し、merged_text を構成
-            cleaned_text = transcript_text.replace(delete_word or "", "")
-            merged_text = cleaned_text
-            
-            # 現在の行のmerged_textを優先的に使用
-            if current_merged_text and current_merged_text.strip():
-                merged_text = current_merged_text
-                logging.info(f"[MERGING] Using current_merged_text: '{merged_text}'")
-            elif next_merged_text and next_merged_text.strip():
-                merged_text += f"({next_merged_text})"
-                logging.info(f"[MERGING] Using next_merged_text: '{merged_text}'")
-            else:
-                logging.info(f"[MERGING] Using original text: '{merged_text}'")
-            
-            merged_segments.append((meeting_id, line_no, speaker, merged_text, offset_seconds))
+            # is_filler=Falseの行のみをブロック対象とする
+            if not is_filler:
+                if current_block is None:
+                    # 新しいブロック開始
+                    current_block = {
+                        "speaker": speaker,
+                        "start_line_no": line_no,
+                        "end_line_no": line_no,
+                        "start_offset": offset_seconds
+                    }
+                elif current_block["speaker"] == speaker:
+                    # 同一話者のブロック継続
+                    current_block["end_line_no"] = line_no
+                else:
+                    # 話者が変わった場合、前のブロックを保存して新しいブロック開始
+                    speaker_blocks.append(current_block)
+                    current_block = {
+                        "speaker": speaker,
+                        "start_line_no": line_no,
+                        "end_line_no": line_no,
+                        "start_offset": offset_seconds
+                    }
         
-        # ステップ5: 同一話者セグメント統合
-        final_segments = []
-        current_speaker = None
-        current_offset = None
-        sentence_set = set()
-        sentence_list = []
+        # 最後のブロックも忘れずに保存
+        if current_block is not None:
+            speaker_blocks.append(current_block)
         
-        for meeting_id, line_no, speaker, text, offset in merged_segments:
-            # 文単位に分割（「。」で区切り）
-            sentences = [s.strip() + "。" for s in text.split("。") if s.strip()]
+        logging.info(f"[STEP4] Created {len(speaker_blocks)} speaker blocks: {speaker_blocks}")
+        
+        # ステップ②：各ブロック内のマージ済み発話を構築
+        processed_blocks = []
+        
+        for block in speaker_blocks:
+            speaker = block["speaker"]
+            start_line_no = block["start_line_no"]
+            end_line_no = block["end_line_no"]
+            start_offset = block["start_offset"]
             
-            if speaker == current_speaker:
-                for sentence in sentences:
-                    if sentence not in sentence_set:
-                        sentence_set.add(sentence)
-                        sentence_list.append(sentence)
-            else:
-                if current_speaker is not None:
-                    combined_text = " ".join(sentence_list).strip()
-                    final_segments.append((meeting_id, current_speaker, combined_text, current_offset))
+            logging.info(f"[STEP4] Processing block: speaker={speaker}, lines={start_line_no}-{end_line_no}")
+            
+            # ブロック内の全セグメントを取得（is_filler=Trueも含む）
+            cursor.execute("""
+                SELECT line_no, transcript_text_segment, merged_text_with_prev, merged_text_with_next,
+                       delete_candidate_word, front_score, after_score, is_filler
+                FROM dbo.TranscriptProcessingSegments
+                WHERE meeting_id = ? AND line_no BETWEEN ? AND ?
+                ORDER BY line_no
+            """, (meeting_id, start_line_no, end_line_no))
+            block_segments = cursor.fetchall()
+            
+            logging.info(f"[STEP4] Found {len(block_segments)} segments in block {start_line_no}-{end_line_no}")
+            
+            merged_text_parts = []
+            
+            for seg_idx, (line_no, transcript_text, merged_text_with_prev, merged_text_with_next,
+                         delete_candidate_word, front_score, after_score, is_filler) in enumerate(block_segments):
                 
-                current_speaker = speaker
-                current_offset = offset
-                sentence_set = set(sentences)
-                sentence_list = sentences.copy()
+                logging.info(f"[STEP4] Processing segment {line_no}, is_filler={is_filler}, "
+                           f"front_score={front_score}, after_score={after_score}")
+                
+                if not is_filler:
+                    # 非フィラー行：そのまま追加
+                    merged_text_parts.append(transcript_text)
+                    logging.info(f"[STEP4] Added non-filler text: '{transcript_text[:50]}...'")
+                    
+                    # 前のフィラー行からの補完テキストがある場合は追加
+                    if seg_idx > 0:
+                        prev_seg = block_segments[seg_idx - 1]
+                        prev_line_no, prev_transcript_text, prev_merged_text_with_prev, prev_merged_text_with_next, \
+                        prev_delete_candidate_word, prev_front_score, prev_after_score, prev_is_filler = prev_seg
+                        
+                        if prev_is_filler and prev_after_score >= prev_front_score:
+                            # 前のフィラー行がafter_score >= front_scoreの場合、補完テキストを追加
+                            if prev_merged_text_with_next and prev_merged_text_with_next.strip():
+                                complement_text = f"({prev_merged_text_with_next})"
+                            else:
+                                complement_text = f"({prev_transcript_text})"
+                            
+                            merged_text_parts[-1] = f"{merged_text_parts[-1]}{complement_text}"
+                            logging.info(f"[STEP4] Added complement from previous filler: '{complement_text[:100]}...'")
+                
+                else:
+                    # フィラー行：補完処理
+                    if delete_candidate_word and delete_candidate_word.strip():
+                        logging.info(f"[STEP4] Processing filler with delete_candidate_word: '{delete_candidate_word}'")
+                        
+                        if front_score > after_score:
+                            # front_score > after_score: 前の文からdelete_candidate_wordを削除し、merged_text_with_prevを挿入
+                            if seg_idx > 0 and merged_text_parts:
+                                # 前の文からdelete_candidate_wordを削除
+                                delete_pattern = re.escape(delete_candidate_word.strip())
+                                prev_text = merged_text_parts[-1]
+                                cleaned_prev_text = re.sub(f"{delete_pattern}[。]?\\s*", "", prev_text)
+                                
+                                logging.info(f"[STEP4] Removed '{delete_candidate_word}' from prev_text: '{prev_text}' -> '{cleaned_prev_text}'")
+                                
+                                # 補完テキストを結合（前の文に追加）
+                                if merged_text_with_prev and merged_text_with_prev.strip():
+                                    complement_text = f"({merged_text_with_prev})"
+                                else:
+                                    complement_text = f"({transcript_text})"
+                                
+                                merged_text_parts[-1] = f"{cleaned_prev_text}{complement_text}"
+                                logging.info(f"[STEP4] Applied front_score > after_score merge: '{merged_text_parts[-1][:100]}...'")
+                            
+                        elif after_score >= front_score:
+                            # after_score >= front_score: 次の文にmerged_text_with_nextを付加し、次のセグメントのdelete_candidate_wordを削除
+                            
+                            # 次のセグメントが存在し、非フィラーの場合
+                            if seg_idx + 1 < len(block_segments):
+                                next_seg = block_segments[seg_idx + 1]
+                                next_line_no, next_transcript_text, next_merged_text_with_prev, next_merged_text_with_next, \
+                                next_delete_candidate_word, next_front_score, next_after_score, next_is_filler = next_seg
+                                
+                                if not next_is_filler:
+                                    # 次の文からdelete_candidate_wordを削除
+                                    if next_delete_candidate_word and next_delete_candidate_word.strip():
+                                        delete_pattern = re.escape(next_delete_candidate_word.strip())
+                                        cleaned_next_text = re.sub(f"{delete_pattern}[。]?\\s*", "", next_transcript_text)
+                                        
+                                        logging.info(f"[STEP4] Removed '{next_delete_candidate_word}' from next_text: '{next_transcript_text}' -> '{cleaned_next_text}'")
+                                        
+                                        # 次のセグメントを更新（後で処理される）
+                                        block_segments[seg_idx + 1] = (next_line_no, cleaned_next_text, next_merged_text_with_prev, 
+                                                                       next_merged_text_with_next, next_delete_candidate_word, 
+                                                                       next_front_score, next_after_score, next_is_filler)
+                                    
+                                    # 次の文に補完テキストを追加
+                                    if merged_text_with_next and merged_text_with_next.strip():
+                                        complement_text = f"({merged_text_with_next})"
+                                    else:
+                                        complement_text = f"({transcript_text})"
+                                    
+                                    # 次のセグメントの処理時に反映されるよう、一時的に保存
+                                    # 実際の処理は次のセグメントのループで行われる
+                                    logging.info(f"[STEP4] Will add complement to next segment: '{complement_text[:100]}...'")
+                                    
+                                    # 次のセグメントの処理時に補完テキストを追加するよう、フラグを設定
+                                    # この処理は次のセグメントのループで行われる
+                                
+                            else:
+                                # 次のセグメントが存在しない場合
+                                logging.info(f"[STEP4] No next segment available for after_score >= front_score merge")
+                        
+                        else:
+                            # スコアが同じ場合やdelete_candidate_wordがNoneの場合
+                            logging.info(f"[STEP4] Skipping filler line {line_no} (no clear score difference or no delete_candidate_word)")
+                    else:
+                        # delete_candidate_wordがNoneの場合
+                        logging.info(f"[STEP4] Skipping filler line {line_no} (no delete_candidate_word)")
+            
+            # ブロック内のテキストを結合
+            final_merged_text = " ".join(merged_text_parts).strip()
+            
+            processed_blocks.append({
+                "meeting_id": meeting_id,
+                "line_no": start_line_no,  # ブロック内の最初の行を代表として使用
+                "speaker": speaker,
+                "merged_text": final_merged_text,
+                "offset_seconds": start_offset  # ブロック内の最初の行のoffsetを使用
+            })
+            
+            logging.info(f"[STEP4] Final block text: speaker={speaker}, text='{final_merged_text[:100]}...'")
         
-        # 最後のセグメントも保存
-        if current_speaker is not None and sentence_list:
-            combined_text = " ".join(sentence_list).strip()
-            final_segments.append((meeting_id, current_speaker, combined_text, current_offset))
-        
-        # ProcessedTranscriptSegments に挿入
-        for meeting_id, speaker, merged_text, offset_seconds in final_segments:
+        # ステップ③：マージ済みテキストの登録
+        for block in processed_blocks:
             cursor.execute("""
                 INSERT INTO dbo.ProcessedTranscriptSegments (
-                    meeting_id, speaker, merged_text, offset_seconds,
+                    meeting_id, line_no, speaker, merged_text, offset_seconds,
                     inserted_datetime, updated_datetime
-                ) VALUES (?, ?, ?, ?, GETDATE(), GETDATE())
-            """, (meeting_id, speaker, merged_text, offset_seconds))
-            logging.info(f"[DB] Inserted ProcessedTranscriptSegment: meeting_id={meeting_id}, speaker={speaker}, merged_text='{merged_text[:100]}...'")
+                ) VALUES (?, ?, ?, ?, ?, GETDATE(), GETDATE())
+            """, (block["meeting_id"], block["line_no"], block["speaker"], 
+                  block["merged_text"], block["offset_seconds"]))
+            
+            logging.info(f"[DB] Inserted ProcessedTranscriptSegment: meeting_id={block['meeting_id']}, "
+                        f"line_no={block['line_no']}, speaker={block['speaker']}, "
+                        f"merged_text='{block['merged_text'][:100]}...'")
         
         # ステップ6: OpenAIフィラー除去
         cursor.execute("""
@@ -1471,27 +1556,24 @@ def queue_merging_and_cleanup_func(message: func.QueueMessage):
         # OpenAIクライアントの初期化
         client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         
-        def remove_fillers_from_text_inline(text: str) -> str:
+        def improve_text_with_openai(text: str) -> str:
             """
-            OpenAI APIを使用して単一テキストのフィラーを削除する（インライン実装）
+            OpenAI APIを使用して話し言葉を自然で読みやすい文章に整形する
             """
-            system_message = """以下の発話から、自然な会話の流れを崩さずに「えっと」「あの」「まあ」「その」「ですけど」などのフィラーを削除してください。
+            user_message = f"""以下の文字起こし結果を、できるだけ元の口調や文体（常体・丁寧語）を維持しながら、読みやすく自然な文章に整えてください。
 
-削除対象のフィラー例：
-- えっと（最も一般的）
-- あの（会話の冒頭など）
-- まあ（話のつなぎによく使われる）
-- その（内容が曖昧なとき）
-- ですけど（文末に多用されるが曖昧な接続語）
+- 「あ、」「うん。」など、一文字＋読点・句点のフィラーは削除してください  
+- 話し言葉の崩れ（接続詞の繰り返しや、文の論理のズレなど）は必要最小限の範囲で整えてください  
+- 句読点や空白は自然な形に整えてください  
+- 常体で話されている部分は常体のまま、丁寧語の部分は丁寧語のままで残してください（例：「ですよ」は「です」に変えないでください）  
+- 話者の口癖や語尾の特徴（例：「〜ですよ」「〜だよね」など）はなるべく保持してください  
+- 意味の通る自然な構文になる場合には、前後の文脈を読み取って文を補ったり整理して構いません  
+- 括弧付きの補完語句（例：「（こんにちは。）」）は削除せずにそのまま保持してください
+- あ、あの、えっと、うーん、なんか、そのー、うん、はい、えー、ま、まあ、
+- 上記に句読点が付いたパターン（例：「あ、」「うーん。」「えっと、」など）もすべて削除してください
+- 不要な接続詞の繰り返し（例：「で、で、」「その、そのー」）も1つにまとめてください
 
-注意事項：
-- 会話の意味や意図は変更しない
-- 自然な日本語の流れを維持する
-- フィラーを削除した結果、不自然になる場合は削除しない
-- 出力は修正後のテキストのみを返す（説明不要）
-- 出力時に「」は使用しない"""
-
-            user_message = f"""元の発話：
+文字起こし結果：
 {text}
 
 修正後："""
@@ -1500,17 +1582,16 @@ def queue_merging_and_cleanup_func(message: func.QueueMessage):
                 response = client.chat.completions.create(
                     model=os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
                     messages=[
-                        {"role": "system", "content": system_message},
                         {"role": "user", "content": user_message}
                     ],
-                    temperature=0.1,  # 低い温度で一貫性を保つ
-                    max_tokens=200    # 短い応答に制限
+                    temperature=0.6,  # 話者の口調を保持するため適度な温度に設定
+                    max_tokens=300    # 適度な長さの応答に制限
                 )
 
                 # トークン使用量を取得（エラーハンドリング付き）
                 try:
                     tokens_used = response.usage.total_tokens
-                    logging.info(f"🔢 トークン使用量: {tokens_used} (フィラー削除)")
+                    logging.info(f"🔢 トークン使用量: {tokens_used} (文章整形)")
                 except (AttributeError, KeyError):
                     tokens_used = 0
 
@@ -1526,16 +1607,16 @@ def queue_merging_and_cleanup_func(message: func.QueueMessage):
                     return text
                     
             except Exception as e:
-                logging.warning(f"フィラー削除失敗: {e}")
+                logging.warning(f"文章整形失敗: {e}")
                 return text  # フォールバック
         
         for segment_id, merged_text in segments:
             logging.info(f"[CLEANUP] Processing segment_id={segment_id}, merged_text='{merged_text[:100]}...'")
             try:
-                cleaned = remove_fillers_from_text_inline(merged_text)
-                logging.info(f"[CLEANUP] Cleaned text: '{cleaned[:100]}...'")
+                cleaned = improve_text_with_openai(merged_text)
+                logging.info(f"[CLEANUP] Improved text: '{cleaned[:100]}...'")
             except Exception as e:
-                logging.warning(f"❌ フィラー削除失敗 id={segment_id} error={e}")
+                logging.warning(f"❌ 文章整形失敗 id={segment_id} error={e}")
                 cleaned = merged_text  # フォールバック
             
             cursor.execute("""
