@@ -27,13 +27,15 @@ def extract_offset_from_line(line: str) -> tuple[str, float]:
     Returns:
         tuple[str, float]: (本文, offset) または (元の行, None) のタプル
     """
-    match = re.match(r"(Speaker\d+: .+?)\(([\d.]+)\)$", line)
-    if match:
-        body = match.group(1).rstrip()    # ex. 'Speaker1: こんにちは。'
-        offset = float(match.group(2))    # ex. 12.5
-        return body, offset
-    else:
+    # 最後の括弧内が整数または小数の形式 "(12)" "(12.5)" に一致
+    match = re.search(r"\((\d+(?:\.\d+)?)\)\s*$", line)
+    if not match:
         return line, None  # offsetなし行
+    
+    offset = float(match.group(1))
+    # 末尾の (数値) を除去して本文を取得
+    body = re.sub(r"\(\d+(?:\.\d+)?\)\s*$", "", line).strip()
+    return body, offset
 
 def generate_summary_title(conversation_text: str, block_index: int, total_blocks: int) -> str:
     """OpenAI APIを使用して会話ブロックのタイトルを生成する

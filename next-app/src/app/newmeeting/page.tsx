@@ -272,6 +272,8 @@ export default function NewMeetingPage() {
   }, [])
 
   const handleFileUpload = async (file: File) => {
+    console.log("🟡[UPLOAD] ユーザー情報:", user)
+    console.log("🟡[UPLOAD] ファイル情報:", file)
     console.log("🔍[UPLOAD] 受け取ったファイル:", file)
     console.log("🔍[UPLOAD] ファイル名:", file.name)
     console.log("🔍[UPLOAD] MIMEタイプ:", file.type)
@@ -310,9 +312,11 @@ export default function NewMeetingPage() {
       const timestamp = now.toISOString().replace(/[:.]/g, '-').replace('Z', '')
       const fileName = `meeting_${meetingId}_user_${userId}_${timestamp}${file.name.substring(file.name.lastIndexOf('.'))}`
       
+      console.log("🟡[UPLOAD] 生成されたファイル名:", fileName)
       console.log("📝[UPLOAD] アップロード用ファイル名:", fileName)
       
       // Azure Blob Storageにアップロード（変換せずそのまま）
+      console.log("🟡[UPLOAD] Azure Storageアップロード開始: fileName=", fileName)
       console.log("📤[UPLOAD] Azure Blob Storageへのアップロード開始")
       const blobUrl = await uploadToAzureStorage(file, fileName)
       

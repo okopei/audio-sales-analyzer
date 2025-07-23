@@ -10,3 +10,4 @@ azure-storage-blob
 isodate
 demjson3
 openai
+azure-storage-queue

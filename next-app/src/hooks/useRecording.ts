@@ -409,7 +409,13 @@ export const useRecording = (meetingId?: string, userId?: string) => {
       
       // SASトークンを取得
       console.log('🔑 SASトークン取得開始')
-      const sasResponse = await fetch(`/api/azure/get-sas-token?fileName=${encodeURIComponent(fileName)}`)
+      const sasResponse = await fetch('/api/azure/get-sas-token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ fileName })
+      })
       
       if (!sasResponse.ok) {
         const errorText = await sasResponse.text()
