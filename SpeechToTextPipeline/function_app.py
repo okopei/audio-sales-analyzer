@@ -102,21 +102,32 @@ def get_queue_service_client():
         logging.error(f"[Queue Service] 接続エラー: {e}")
         raise
 
-def send_queue_message(queue_name: str, message: dict):
+def send_queue_message(queue_name: str, payload: dict):
     """
     指定されたキューにメッセージを送信します。
     """
     try:
-        queue_service = get_queue_service_client()
-        queue_client = queue_service.get_queue_client(queue_name)
+        import base64
+        from azure.storage.queue import QueueClient
         
-        # メッセージをJSON文字列に変換
-        message_json = json.dumps(message)
-        queue_client.send_message(message_json)
+        # 接続文字列を取得
+        conn_str = os.environ.get("AzureWebJobsStorage")
+        if not conn_str:
+            raise ValueError("AzureWebJobsStorage 環境変数が設定されていません")
         
-        logging.info(f"✅ キュー '{queue_name}' にメッセージ送信完了: {message}")
+        # キュークライアントを作成
+        queue_client = QueueClient.from_connection_string(conn_str, queue_name)
+        
+        # メッセージをJSON文字列に変換し、明示的にBase64エンコード
+        json_message = json.dumps(payload)
+        base64_encoded = base64.b64encode(json_message.encode("utf-8")).decode("utf-8")
+        
+        # メッセージを送信
+        queue_client.send_message(base64_encoded)
+        
+        logging.info(f"✅ キュー '{queue_name}' に送信成功: {json_message}")
     except Exception as e:
-        logging.error(f"❌ キュー '{queue_name}' へのメッセージ送信失敗: {e}")
+        logging.exception(f"[ERROR] キュー '{queue_name}' へのメッセージ送信に失敗しました")
         raise
 
 def get_naturalness_score(text: str) -> float:
@@ -334,6 +345,14 @@ def trigger_transcription_job(event: func.EventGridEvent):
         ))
         conn.commit()
         logging.info("✅ Meetings テーブルにレコード挿入完了")
+        
+        # Speech-to-Text ジョブ登録完了後、queue-preprocessing へメッセージ送信
+        try:
+            send_queue_message("queue-preprocessing", {"meeting_id": meeting_id})
+            logging.info(f"✅ queue-preprocessing へメッセージ送信完了: meeting_id={meeting_id}")
+        except Exception as queue_error:
+            logging.error(f"❌ queue-preprocessing へのメッセージ送信失敗: {queue_error}")
+            # メッセージ送信失敗でも処理は継続（後で手動で再実行可能）
 
     except Exception as e:
         logging.exception("❌ TriggerTranscriptionJob エラー:")
@@ -344,9 +363,10 @@ def trigger_transcription_job(event: func.EventGridEvent):
             additional_info=f"[trigger_transcription_job] {str(e)}"
         )
 
-@app.function_name(name="PollingTranscriptionResults")
-@app.schedule(schedule="0 */5 * * * *", arg_name="timer", run_on_startup=False, use_monitor=False)
-def polling_transcription_results(timer: func.TimerRequest) -> None:
+# PollingTranscriptionResults を停止（イベント駆動に変更）
+# @app.function_name(name="PollingTranscriptionResults")
+# @app.schedule(schedule="0 */5 * * * *", arg_name="timer", run_on_startup=False, use_monitor=False)
+# def polling_transcription_results(timer: func.TimerRequest) -> None:
     try:
         logging.info("🕓 PollingTranscriptionResults 開始")
 
@@ -1823,7 +1843,9 @@ def queue_summarization_func(message: func.QueueMessage):
         logging.info(f"✅ Summarization完了 → status=summary_completed (meeting_id={meeting_id})")
         
         # 次のキューにメッセージ送信
-        send_queue_message("queue-export", {"meeting_id": meeting_id})
+        export_message = {"meeting_id": meeting_id}
+        logging.info(f"[DEBUG] queue-export送信メッセージ: {export_message}")
+        send_queue_message("queue-export", export_message)
         
     except Exception as e:
         # 5. except 節内の例外ログ拡充
@@ -1858,8 +1880,12 @@ def queue_export_func(message: func.QueueMessage):
     try:
         logging.info("=== QueueExportFunc 開始 ===")
         
+        # 受信メッセージのログ追加
+        raw_message = message.get_body().decode('utf-8')
+        logging.info(f"[DEBUG] Raw message: {raw_message}")
+        
         # メッセージから meeting_id を取得
-        message_data = json.loads(message.get_body().decode('utf-8'))
+        message_data = json.loads(raw_message)
         meeting_id = message_data.get("meeting_id")
         
         if not meeting_id:

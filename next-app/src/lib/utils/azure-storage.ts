@@ -27,14 +27,16 @@ export async function uploadToAzureStorage(file: File, fileName?: string): Promi
 
     // SASトークンを取得するAPIエンドポイント
     console.log('SASトークン取得開始')
+    console.log("🟡[AZURE] SASトークン取得リクエスト送信: fileName=", fileName)
     let sasResponse;
     try {
       sasResponse = await fetch('/api/azure/get-sas-token', {
-        method: 'GET',
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Cache-Control': 'no-cache'
-        }
+        },
+        body: JSON.stringify({ fileName })
       })
     } catch (fetchError) {
       console.error('SASトークン取得時のネットワークエラー:', fetchError)
@@ -56,9 +58,9 @@ export async function uploadToAzureStorage(file: File, fileName?: string): Promi
     }
 
     console.log('SASトークン取得成功')
-    const { sasToken } = sasData
+    const { sasUrl } = sasData
     
-    if (!sasToken) {
+    if (!sasUrl) {
       console.error('SASトークンがレスポンスに含まれていません:', sasData)
       throw new Error('SASトークンがレスポンスに含まれていません')
     }
@@ -67,7 +69,7 @@ export async function uploadToAzureStorage(file: File, fileName?: string): Promi
     const blobServiceEndpoint = `https://${accountName}.blob.core.windows.net`
     
     // Blobのアップロード先URL
-    const blobUrl = `${blobServiceEndpoint}/${containerName}/${blobName}${sasToken}`
+    const blobUrl = sasUrl
     console.log('アップロード先URL (トークン部分なし):', blobUrl.split('?')[0])
     
     // CORS問題を回避するため、サーバーサイドでアップロードを行う
@@ -75,7 +77,7 @@ export async function uploadToAzureStorage(file: File, fileName?: string): Promi
     const formData = new FormData()
     formData.append('file', file)
     formData.append('fileName', blobName)
-    formData.append('sasToken', sasToken)
+    formData.append('sasToken', sasUrl.split('?')[1] || '')
     
     let uploadResponse;
     try {
@@ -117,17 +119,21 @@ export async function getAzureStorageDownloadUrl(blobName: string): Promise<stri
     
     // SASトークンを取得するAPIエンドポイント
     const sasResponse = await fetch('/api/azure/get-sas-token', {
-      method: 'GET',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ fileName: blobName })
     })
     
     if (!sasResponse.ok) {
       throw new Error('SASトークンの取得に失敗しました')
     }
     
-    const { sasToken } = await sasResponse.json()
+    const { sasUrl } = await sasResponse.json()
     
     // ダウンロード用のURL
-    return `https://${accountName}.blob.core.windows.net/${containerName}/${blobName}${sasToken}`
+    return sasUrl
   } catch (error) {
     console.error('ダウンロードURLの取得エラー:', error)
     throw error
